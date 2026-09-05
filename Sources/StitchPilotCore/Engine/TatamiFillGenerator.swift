@@ -7,13 +7,14 @@ import Foundation
 /// special-casing: a hole's boundary just contributes scanline crossings
 /// that toggle the inside/outside state like any other edge.
 ///
-/// Algorithm: rotate the shape so the fill angle becomes horizontal, walk
-/// scanlines at `fillSpacingMM` intervals computing edge-crossing intervals
-/// (standard even-odd scanline fill), resample each interval into stitches
-/// at `stitchLengthMM`, alternate direction each row (boustrophedon, so
-/// consecutive rows connect with a short stitch instead of a jump), stagger
-/// the stitch phase between rows so seams don't line up into a visible
-/// grid, then rotate the result back.
+/// Algorithm: rotate the shape so the fill angle becomes horizontal, grow
+/// the boundary for pull compensation, walk scanlines at `fillSpacingMM`
+/// intervals computing edge-crossing intervals (standard even-odd scanline
+/// fill), shrink each row's overall span for push compensation, resample
+/// each interval into stitches at `stitchLengthMM`, alternate direction
+/// each row (boustrophedon, so consecutive rows connect with a short
+/// stitch instead of a jump), stagger the stitch phase between rows so
+/// seams don't line up into a visible grid, then rotate the result back.
 public enum TatamiFillGenerator {
     public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
         guard !shape.subPaths.isEmpty else { return [] }
@@ -52,12 +53,29 @@ public enum TatamiFillGenerator {
         let stitchLength = max(parameters.stitchLengthMM, 0.3)
         let stagger = parameters.fillRowStaggerMM
 
+        // Push compensation: fabric pushes apart *along* the stitching
+        // direction (as opposed to pull, which narrows a design
+        // perpendicular to it — see `PullCompensationCalculator`). Rows run
+        // horizontally in this rotated space, so push acts along x: shrink
+        // each row's *overall* span by insetting only its outermost start
+        // and end, before resampling — not every enter/exit pair, which
+        // would incorrectly nibble at a hole's boundary too. `box.width` is
+        // the shape's extent along the row direction, the relevant "length"
+        // axis for this effect (as opposed to `box.height`, along which
+        // pull compensation above already grew the boundary).
+        let pushCompMM = parameters.pushCompensationMM
+            ?? PullCompensationCalculator.estimatePush(stitchType: .tatamiFill, densityMM: spacing, objectLengthMM: box.width)
+
         var rows: [[Point2D]] = [] // each row: resampled stitch points, in rotated space, in walking order
         var rowIndex = 0
         var y = box.minY + spacing / 2 // center rows within the shape rather than starting exactly on the edge
 
         while y < box.maxY {
-            let crossings = scanlineCrossings(polygons: rotatedPolygons, y: y)
+            var crossings = scanlineCrossings(polygons: rotatedPolygons, y: y)
+            if pushCompMM > 0, crossings.count >= 2, crossings.last! - crossings.first! > pushCompMM {
+                crossings[0] += pushCompMM / 2
+                crossings[crossings.count - 1] -= pushCompMM / 2
+            }
             var rowPoints: [Point2D] = []
             let phase = (Double(rowIndex) * stagger).truncatingRemainder(dividingBy: stitchLength)
 

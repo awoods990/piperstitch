@@ -2,9 +2,9 @@ import Testing
 @testable import StitchPilotCore
 
 struct TatamiFillGeneratorTests {
-    /// Pull compensation defaults to off here so these tests check pure
-    /// fill geometry against exact bounds; `pullCompensationGrowsFillOutward`
-    /// below tests compensation itself.
+    /// Pull and push compensation default to off here so these tests check
+    /// pure fill geometry against exact bounds; `pullCompensationGrowsFillOutward`
+    /// and `pushCompensationShrinksRowSpan` below test compensation itself.
     func squareParams(spacing: Double = 0.4, stitchLength: Double = 3.0, angle: Double = 0) -> StitchGenerationParameters {
         var p = StitchGenerationParameters()
         p.fillSpacingMM = spacing
@@ -12,7 +12,28 @@ struct TatamiFillGeneratorTests {
         p.fillAngleDegrees = angle
         p.fillRowStaggerMM = 1.2
         p.pullCompensationMM = 0
+        p.pushCompensationMM = 0
         return p
+    }
+
+    @Test func pushCompensationShrinksRowSpan() {
+        // angle: 0 -- rows run horizontally (along x), so push compensation
+        // (which acts along the row direction) should pull both the left
+        // and right edges of the fill inward, without affecting its height.
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20),
+        ], closed: true)])
+        var params = squareParams()
+        params.pushCompensationMM = 0.5
+
+        let plain = TatamiFillGenerator.generate(for: square, parameters: squareParams())
+        let shrunk = TatamiFillGenerator.generate(for: square, parameters: params)
+
+        let plainBox = BoundingBox(points: plain)
+        let shrunkBox = BoundingBox(points: shrunk)
+        #expect(shrunkBox.minX > plainBox.minX + 0.15)
+        #expect(shrunkBox.maxX < plainBox.maxX - 0.15)
+        #expect(abs(shrunkBox.height - plainBox.height) < 0.05, "push compensation shouldn't affect the perpendicular (row-stacking) axis")
     }
 
     @Test func pullCompensationGrowsFillOutward() {

@@ -79,10 +79,10 @@ doesn't need to.
   Ink/Stitch tracks `pull_compensation_px` and `push_compensation_px`
   separately (pull narrows a column from the sides; push affects it along
   the stitch direction as stitches physically displace fabric forward).
-  StitchPilot currently only models pull compensation
-  (`PullCompensationCalculator`) — push compensation is recorded here as a
-  known gap, not implemented this round (see "Known remaining
-  weaknesses").
+  This round adds push compensation to `PullCompensationCalculator`
+  (`estimatePush`, reusing the same formula as pull rather than inventing
+  a differently-shaped one with no calibration data to justify it) — see
+  "Algorithms improved this round" below.
 - **Randomized width/spacing jitter** (`random_width_decrease`,
   `random_zigzag_spacing`, etc.) to avoid a mechanically perfect look.
   Deliberately not adopted: it's a real technique but orthogonal to the
@@ -251,10 +251,25 @@ come from.
    (which still throws `columnTooWide` for any violation, whole-object) is
    kept as the strict variant for direct/test use and any future
    validation check that wants a hard yes/no answer.
+8. **Push compensation** (`PullCompensationCalculator.estimatePush`, this
+   round): fabric pushes apart *along* the stitching direction (as opposed
+   to pull, which narrows a design perpendicular to it), so satin/fill
+   objects now shorten slightly along their length before sewing, the
+   same way they already widen slightly across their width for pull. For
+   satin, this can't be done by trimming the rail *polylines* by arc
+   length — each rail's first/last few millimeters are a perpendicular
+   "jog" from the shared end-cap midpoint out to the boundary corner (see
+   `SatinColumnGenerator`'s own doc comment on tapered end caps), not
+   travel along the column's real length, so arc-length trimming would eat
+   into that sideways jog almost without shortening the column at all.
+   Instead, crossings are dropped based on their midpoint's projection
+   onto the column's principal axis — the real length axis, immune to the
+   end-cap jog. For fill, each scanline row's overall span (not each
+   individual enter/exit pair, which would incorrectly nibble at a hole's
+   boundary) is inset at its two outermost ends before resampling.
 
 ## Known remaining weaknesses
 
-- No push compensation (pull compensation only).
 - Object sequencing is a greedy heuristic (color match, then nearest
   bounding-box center), not a real graph-based router over actual
   generated stitch-path endpoints the way Ink/Stitch's `auto_satin` builds
@@ -284,20 +299,29 @@ come from.
 - No physical stitch-out calibration exists for any of this — all
   compensation/density values remain rule-based estimates pending real
   sew-out data, consistent with `PullCompensationCalculator`'s existing
-  documented caveat.
+  documented caveat. Push compensation reuses pull's exact formula (just
+  measured along the length axis instead of the width axis) for the same
+  reason: no calibration data exists yet to justify a differently-shaped
+  one.
+- Push and pull compensation are estimated independently per object/
+  sub-region without accounting for how they interact — e.g. a satin
+  column's width-aware fill sub-region (`generatePartial`) has both
+  zeroed out explicitly (since they're already baked into its boundary by
+  the parent column), but two adjacent *unrelated* objects each getting
+  their own independent push/pull estimate could still compound in ways
+  neither estimate alone accounts for.
 
 ## Recommended next improvements, in priority order
 
-1. Push compensation.
-2. Contour fill, once a real polygon-offset primitive exists.
-3. Tighten `ObjectSequencer`'s containment check from bounding-box to
+1. Contour fill, once a real polygon-offset primitive exists.
+2. Tighten `ObjectSequencer`'s containment check from bounding-box to
    actual polygon containment.
-4. Move `ObjectSequencer`'s proximity heuristic from bounding-box centers
+3. Move `ObjectSequencer`'s proximity heuristic from bounding-box centers
    to actual generated stitch-path endpoints (the point a machine would
    really jump from/to), and consider a real graph-based router over those
    endpoints for satin objects specifically, the way `auto_satin.py` does —
    the bounding-box-center version above is a real improvement over
    authoring order but still a proxy, not the thing itself.
-5. Smooth the stitch-density transition at a width-aware satin split's
+4. Smooth the stitch-density transition at a width-aware satin split's
    narrow/wide seam (see `generatePartial`'s known limitation above) —
    currently a clean but abrupt technique change at the boundary.

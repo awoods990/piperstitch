@@ -76,6 +76,26 @@ public enum SatinColumnGenerator {
     }
 
     public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
+        let crossings = try computeCrossings(for: shape, parameters: parameters)
+
+        let maxWidth = crossings.widths.max() ?? 0
+        if maxWidth > parameters.maxSatinWidthMM {
+            throw SatinGenerationError.columnTooWide(maxWidthMM: maxWidth, limitMM: parameters.maxSatinWidthMM)
+        }
+
+        var stitches: [Point2D] = []
+        for i in 0..<crossings.expandedA.count {
+            stitches.append(crossings.expandedA[i])
+            stitches.append(crossings.expandedB[i])
+        }
+        return stitches
+    }
+
+    /// Resampled, compensated rail crossings shared by `generate` and
+    /// `generatePartial` — the two differ only in what they do once they
+    /// know each crossing's final (post-compensation) width, not in how
+    /// that width is computed.
+    private static func computeCrossings(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double]) {
         let (railA, railB) = try computeRails(for: shape)
 
         let density = max(parameters.satinDensityMM, 0.1)
@@ -85,14 +105,47 @@ public enum SatinColumnGenerator {
         let resampledA = PolygonGeometry.resampleByCount(railA, count: crossingCount)
         let resampledB = PolygonGeometry.resampleByCount(railB, count: crossingCount)
 
-        let widths = zip(resampledA, resampledB).map { $0.distance(to: $1) }
-        let averageWidth = widths.reduce(0, +) / Double(max(1, widths.count))
-        let compensation = parameters.pullCompensationMM
+        // Push compensation: fabric pushes apart *along* the stitching
+        // direction (as opposed to pull, which narrows a design
+        // perpendicular to it — see `PullCompensationCalculator`), so drop
+        // crossings from both ends of the column before sewing, so it sews
+        // at its intended length after that push. This can't be done by
+        // trimming the raw rail *polylines* by arc length: each rail's
+        // first/last few millimeters are the perpendicular "jog" from the
+        // shared end-cap midpoint out to the boundary corner (see this
+        // type's own doc comment on tapered end caps), not travel along the
+        // column's actual length — arc-length trimming would eat into that
+        // sideways jog almost without moving along the column at all.
+        // Instead, measure each crossing by projecting its midpoint onto
+        // the column's principal axis, and drop crossings whose projection
+        // falls within the compensation distance of the column's true
+        // (projected) extremes — immune to the end-cap jog since it
+        // measures the real length axis directly.
+        let (axis, mean) = PolygonGeometry.principalAxis(railA + railB)
+        func projection(_ p: Point2D) -> Double { (p.x - mean.x) * axis.x + (p.y - mean.y) * axis.y }
+        let midpointProjections = (0...crossingCount).map { projection(midpoint(resampledA[$0], resampledB[$0])) }
+
+        let pushCompMM = parameters.pushCompensationMM
+            ?? PullCompensationCalculator.estimatePush(stitchType: .satin, densityMM: density, objectLengthMM: approxLength)
+
+        var lo = 0, hi = crossingCount
+        if pushCompMM > 0, let minProj = midpointProjections.min(), let maxProj = midpointProjections.max(), maxProj - minProj > pushCompMM {
+            let loTarget = minProj + pushCompMM / 2
+            let hiTarget = maxProj - pushCompMM / 2
+            lo = midpointProjections.firstIndex(where: { $0 >= loTarget }) ?? 0
+            hi = midpointProjections.lastIndex(where: { $0 <= hiTarget }) ?? crossingCount
+            if lo >= hi { lo = 0; hi = crossingCount } // degenerate guard: keep everything rather than nothing
+        }
+
+        let rawWidths = (lo...hi).map { resampledA[$0].distance(to: resampledB[$0]) }
+        let averageWidth = rawWidths.reduce(0, +) / Double(max(1, rawWidths.count))
+        let pullCompMM = parameters.pullCompensationMM
             ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth)
 
-        var maxWidth = 0.0
-        var stitches: [Point2D] = []
-        for i in 0...crossingCount {
+        var expandedA: [Point2D] = []
+        var expandedB: [Point2D] = []
+        var widths: [Double] = []
+        for i in lo...hi {
             let a = resampledA[i], b = resampledB[i]
             // Pull compensation (spec §17): push each rail point outward,
             // away from the crossing's midpoint, so the column sews at the
@@ -100,18 +153,13 @@ public enum SatinColumnGenerator {
             // symmetrically about the midpoint keeps the centerline (and
             // therefore the underlay generated from these same rails)
             // exactly where it was digitized.
-            let expandedA = pushOutward(a, from: b, by: compensation / 2)
-            let expandedB = pushOutward(b, from: a, by: compensation / 2)
-            maxWidth = max(maxWidth, expandedA.distance(to: expandedB))
-            stitches.append(expandedA)
-            stitches.append(expandedB)
+            let ea = pushOutward(a, from: b, by: pullCompMM / 2)
+            let eb = pushOutward(b, from: a, by: pullCompMM / 2)
+            expandedA.append(ea)
+            expandedB.append(eb)
+            widths.append(ea.distance(to: eb))
         }
-
-        if maxWidth > parameters.maxSatinWidthMM {
-            throw SatinGenerationError.columnTooWide(maxWidthMM: maxWidth, limitMM: parameters.maxSatinWidthMM)
-        }
-
-        return stitches
+        return (expandedA, expandedB, widths)
     }
 
     /// Like `generate`, but never rejects a column for being too wide:
@@ -135,33 +183,10 @@ public enum SatinColumnGenerator {
     /// otherwise a good satin candidate can have. A real fill sub-region
     /// only forms from two or more consecutive over-width crossings.
     public static func generatePartial(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
-        let (railA, railB) = try computeRails(for: shape)
+        let crossings = try computeCrossings(for: shape, parameters: parameters)
+        let expandedA = crossings.expandedA, expandedB = crossings.expandedB
 
-        let density = max(parameters.satinDensityMM, 0.1)
-        let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
-        let crossingCount = max(2, Int((approxLength / density).rounded()))
-
-        let resampledA = PolygonGeometry.resampleByCount(railA, count: crossingCount)
-        let resampledB = PolygonGeometry.resampleByCount(railB, count: crossingCount)
-
-        let rawWidths = zip(resampledA, resampledB).map { $0.distance(to: $1) }
-        let averageWidth = rawWidths.reduce(0, +) / Double(max(1, rawWidths.count))
-        let compensation = parameters.pullCompensationMM
-            ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth)
-
-        var expandedA: [Point2D] = []
-        var expandedB: [Point2D] = []
-        var widths: [Double] = []
-        for i in 0...crossingCount {
-            let a = resampledA[i], b = resampledB[i]
-            let ea = pushOutward(a, from: b, by: compensation / 2)
-            let eb = pushOutward(b, from: a, by: compensation / 2)
-            expandedA.append(ea)
-            expandedB.append(eb)
-            widths.append(ea.distance(to: eb))
-        }
-
-        var isWide = widths.map { $0 > parameters.maxSatinWidthMM }
+        var isWide = crossings.widths.map { $0 > parameters.maxSatinWidthMM }
         for i in 0..<isWide.count where isWide[i] {
             let prevWide = i > 0 && isWide[i - 1]
             let nextWide = i < isWide.count - 1 && isWide[i + 1]
@@ -200,7 +225,13 @@ public enum SatinColumnGenerator {
 
         let polygon = VectorShape(subPaths: [SubPath(points: points, closed: true)])
         var subParameters = parameters
+        // Both compensations were already baked into expandedA/expandedB by
+        // the caller (pull via the rail-level outward push, push via the
+        // rail-length trim); applying either again here, independently, on
+        // this sub-region's own local axes would double up on the same two
+        // effects rather than adding anything new.
         subParameters.pullCompensationMM = 0
+        subParameters.pushCompensationMM = 0
         return TatamiFillGenerator.generate(for: polygon, parameters: subParameters)
     }
 

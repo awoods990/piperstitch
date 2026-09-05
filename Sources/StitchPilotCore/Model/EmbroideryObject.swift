@@ -62,6 +62,14 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// to satin/fill; running stitch has no "width" to compensate.
     public var pullCompensationMM: Double? = nil
 
+    /// Push compensation: fabric pushes apart *along* the stitching
+    /// direction (as opposed to pull, which narrows a design perpendicular
+    /// to it), so satin/fill sews slightly longer than digitized unless
+    /// shortened first. `nil` = automatic (see
+    /// `PullCompensationCalculator.estimatePush`). Only applies to
+    /// satin/fill, same as pull.
+    public var pushCompensationMM: Double? = nil
+
     // Phase 3 — reserved for object overlap / inset-outset (next).
 
     public init() {}

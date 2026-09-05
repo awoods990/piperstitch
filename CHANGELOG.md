@@ -4,6 +4,42 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Push compensation (stitch-conversion performance)
+
+### Added
+- `PullCompensationCalculator.estimatePush`: push compensation's
+  counterpart to the existing pull estimate. Pull narrows a design
+  perpendicular to the stitching direction (already handled); push is the
+  complementary effect — fabric pushes apart *along* the stitching
+  direction — so a satin column or fill region sews slightly longer than
+  digitized unless shortened first. Reuses pull's exact formula rather
+  than inventing a differently-shaped one with no calibration data to
+  justify it.
+- `SatinColumnGenerator` and `TatamiFillGenerator` now both apply push
+  compensation. Satin drops rail crossings based on their midpoint's
+  projection onto the column's principal axis (not by trimming the rail
+  polylines by raw arc length — a first attempt at that was caught by a
+  failing test: each rail's first/last few millimeters are a
+  perpendicular "jog" from the shared end-cap midpoint out to the
+  boundary corner, not travel along the column's real length, so
+  arc-length trimming barely shortened the column at all). Fill insets
+  each scanline row's outermost start/end before resampling, leaving
+  internal hole-boundary crossings untouched.
+- `StitchGenerationParameters` gained `pushCompensationMM: Double?` (`nil`
+  = automatic), mirroring `pullCompensationMM`.
+- 2 new tests (`pushCompensationShortensColumn`,
+  `pushCompensationShrinksRowSpan`); both `params()`/`squareParams()` test
+  helpers now default `pushCompensationMM = 0` alongside the existing
+  `pullCompensationMM = 0`, so all pre-existing exact-geometry tests stay
+  deterministic against the new default-on automatic behavior.
+
+### Known limitations at this stage
+- Reuses pull's formula verbatim; no calibration data exists yet to
+  justify push and pull having differently-shaped curves.
+- Push and pull are estimated independently per object; two adjacent
+  unrelated objects each getting their own estimate could still compound
+  in ways neither accounts for.
+
 ## Width-aware satin splitting (stitch-conversion performance)
 
 ### Added

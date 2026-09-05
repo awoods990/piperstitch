@@ -32,4 +32,18 @@ public enum PullCompensationCalculator {
 
         return min(maxCompensationMM, (baseCompensationMM + densityFactor) * widthFactor)
     }
+
+    /// Push compensation's counterpart to `estimate` above: fabric doesn't
+    /// only pull together perpendicular to the stitching direction, it also
+    /// pushes apart *along* it, so a satin column or fill region sews
+    /// slightly longer (in its direction of travel) than digitized unless
+    /// that length is shortened first. Same two physical drivers as pull
+    /// (denser stitching distorts more; a shorter object is distorted
+    /// proportionally more for the same absolute push), just measured along
+    /// the length axis instead of the width axis — reuses the identical
+    /// formula rather than inventing a differently-shaped one with no
+    /// calibration data to justify it (see this type's own caveat above).
+    public static func estimatePush(stitchType: StitchType, densityMM: Double, objectLengthMM: Double) -> Double {
+        estimate(stitchType: stitchType, densityMM: densityMM, objectWidthMM: objectLengthMM)
+    }
 }

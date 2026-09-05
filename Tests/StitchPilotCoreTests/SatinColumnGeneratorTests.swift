@@ -2,14 +2,15 @@ import Testing
 @testable import StitchPilotCore
 
 struct SatinColumnGeneratorTests {
-    /// Pull compensation defaults to off here so these tests check pure
-    /// satin geometry against exact bounds; `pullCompensationWidensColumn`
-    /// below tests compensation itself.
+    /// Pull and push compensation default to off here so these tests check
+    /// pure satin geometry against exact bounds; `pullCompensationWidensColumn`
+    /// and `pushCompensationShortensColumn` below test compensation itself.
     func params(density: Double = 0.4, maxWidth: Double = 12.0) -> StitchGenerationParameters {
         var p = StitchGenerationParameters()
         p.satinDensityMM = density
         p.maxSatinWidthMM = maxWidth
         p.pullCompensationMM = 0
+        p.pushCompensationMM = 0
         return p
     }
 
@@ -28,6 +29,25 @@ struct SatinColumnGeneratorTests {
         let plainWidth = plain[mid].distance(to: plain[mid + 1])
         let widenedWidth = widened[mid].distance(to: widened[mid + 1])
         #expect(widenedWidth - plainWidth > 0.3)
+    }
+
+    @Test func pushCompensationShortensColumn() throws {
+        let rect = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        var compensated = params()
+        compensated.pushCompensationMM = 0.5
+
+        let plain = try SatinColumnGenerator.generate(for: rect, parameters: params())
+        let shortened = try SatinColumnGenerator.generate(for: rect, parameters: compensated)
+
+        let plainBox = BoundingBox(points: plain)
+        let shortenedBox = BoundingBox(points: shortened)
+        // Push compensation trims both ends along the column's length (x),
+        // without touching its width (y).
+        #expect(shortenedBox.minX > plainBox.minX + 0.15)
+        #expect(shortenedBox.maxX < plainBox.maxX - 0.15)
+        #expect(abs(shortenedBox.height - plainBox.height) < 0.05)
     }
 
     /// A 30mm x 4mm rectangle is the simplest possible satin column: two

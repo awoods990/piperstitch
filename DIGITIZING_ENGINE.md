@@ -428,12 +428,40 @@ section exceeds the limit. `generate` (strict, throws on any violation,
 whole-object) is kept for direct/test use and any future preflight check
 that wants a hard "would this fit as clean satin?" answer.
 
+## Phase 3 (continued) — push compensation (implemented)
+
+`PullCompensationCalculator` gained `estimatePush`, and both
+`SatinColumnGenerator` and `TatamiFillGenerator` now apply it alongside
+the existing pull compensation. Pull narrows a design perpendicular to
+the stitching direction (already handled); push is the complementary
+effect — fabric pushes apart *along* the stitching direction — so a
+column or fill region sews slightly longer than digitized unless
+shortened first.
+
+For satin, this can't be implemented by trimming the rail *polylines* by
+arc length: each rail's first/last few millimeters are a perpendicular
+"jog" from the shared end-cap midpoint out to the boundary corner (see
+`SatinColumnGenerator`'s own doc comment on tapered end caps), not travel
+along the column's real length — arc-length trimming would eat into that
+sideways jog almost without shortening the column at all (this was caught
+by a failing test during development, not spotted by inspection).
+Instead, crossings are dropped based on their midpoint's projection onto
+the column's principal axis — the real length axis, immune to the
+end-cap jog artifact. For fill, each scanline row's *overall* span (its
+outermost start and end only, not every enter/exit pair, which would
+incorrectly nibble at a hole's boundary too) is inset before resampling.
+
+`estimatePush` reuses `estimate`'s exact formula rather than inventing a
+differently-shaped one — there's no calibration data yet to justify pull
+and push having different curves, consistent with this calculator's
+existing "heuristic, not calibrated" caveat.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later
-stitching instead of jumping), corner handling, and push compensation
-(see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next
-improvements" for the full prioritized list).
+stitching instead of jumping), corner handling, and contour fill (see
+`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements" for
+the full prioritized list).
 
 ## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
 
