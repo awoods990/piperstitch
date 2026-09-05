@@ -4,6 +4,38 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Sequencing generalization (stitch-conversion performance)
+
+### Added
+- Generalized `ObjectSequencer` from a pairwise containment-swap loop into
+  a real constraint-respecting scheduler, aimed squarely at reducing
+  what a machine actually pays for at sew time: thread color changes and
+  same-color jump distance. Containment (a shape that geometrically
+  contains another) still defines a strict "must sew before" order that's
+  never violated — computed once as a dependency graph instead of
+  discovered by repeated swapping — but objects with no containment
+  relationship to each other are now free to be reordered, and the
+  scheduler greedily prefers (1) matching the previous object's thread
+  color, to consolidate scattered same-color objects into one run instead
+  of paying a trim/color-change every time the design happens to alternate
+  colors, then (2) whichever candidate is nearest (bounding-box center
+  distance) to what was just placed, to shorten the jumps a machine
+  executes without operator intervention. Directly closes a "planned
+  next" gap noted in `DIGITIZING_ENGINE.md` (spec §24, registration-aware
+  color-run reordering) that had been open since Phase 3.
+- `BoundingBox` gained a `center` property, needed for the proximity
+  heuristic above and generically useful.
+- 3 new tests (`groupsSameColorObjectsToMinimizeColorChanges`,
+  `prefersNearestSameColorCandidateToMinimizeJumpDistance`,
+  `containmentStillWinsOverColorGrouping`) plus 1 for `BoundingBox.center`;
+  all 6 pre-existing `ObjectSequencerTests` still pass unchanged against
+  the new algorithm.
+
+### Known limitations at this stage
+- Still a greedy heuristic over bounding-box centers, not real generated
+  stitch-path endpoints, and not a full graph-based router — see
+  `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements."
+
 ## Reference-informed algorithm improvements (studying Ink/Stitch, EmbroidePy, pyembroidery)
 
 Per an explicit instruction to study legitimate public embroidery-digitizing

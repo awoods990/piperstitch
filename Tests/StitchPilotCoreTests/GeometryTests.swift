@@ -17,6 +17,11 @@ struct GeometryTests {
         #expect(b.union(a) == b)
     }
 
+    @Test func boundingBoxCenter() {
+        let box = BoundingBox(minX: 0, minY: 10, maxX: 20, maxY: 30)
+        #expect(box.center == Point2D(10, 20))
+    }
+
     @Test func subPathLengthOpenVsClosed() {
         let open = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 10)], closed: false)
         #expect(abs(open.length - 20) <= 0.0001)

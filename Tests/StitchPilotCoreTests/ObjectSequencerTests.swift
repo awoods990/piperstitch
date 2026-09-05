@@ -2,11 +2,11 @@ import Testing
 @testable import StitchPilotCore
 
 struct ObjectSequencerTests {
-    private func square(_ minX: Double, _ minY: Double, _ size: Double, name: String) -> EmbroideryObject {
+    private func square(_ minX: Double, _ minY: Double, _ size: Double, name: String, color: UInt32 = 0x000000) -> EmbroideryObject {
         let shape = VectorShape(subPaths: [SubPath(points: [
             Point2D(minX, minY), Point2D(minX + size, minY), Point2D(minX + size, minY + size), Point2D(minX, minY + size),
         ], closed: true)])
-        return EmbroideryObject(name: name, shape: shape, stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: 0x000000)))
+        return EmbroideryObject(name: name, shape: shape, stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: color)))
     }
 
     @Test func movesContainingObjectBeforeTheObjectItContains() {
@@ -51,6 +51,45 @@ struct ObjectSequencerTests {
         let b = square(0, 0, 10.0, name: "b")
         let sequenced = ObjectSequencer.sequence([b, a])
         #expect(sequenced.map { $0.name } == ["b", "a"])
+    }
+
+    @Test func groupsSameColorObjectsToMinimizeColorChanges() {
+        // Red, blue, red, authored in that order, with no containment
+        // relationship between any of them -- free to reorder. Grouping the
+        // two reds together drops the design from 2 color changes to 1.
+        let red1 = square(0, 0, 5, name: "red1", color: 0xFF0000)
+        let blue = square(50, 0, 5, name: "blue", color: 0x0000FF)
+        let red2 = square(0, 50, 5, name: "red2", color: 0xFF0000)
+
+        let sequenced = ObjectSequencer.sequence([red1, blue, red2])
+        #expect(sequenced.map { $0.name } == ["red1", "red2", "blue"])
+    }
+
+    @Test func prefersNearestSameColorCandidateToMinimizeJumpDistance() {
+        // Three same-color, mutually non-containing squares; "b" is
+        // authored second but is far away, while "c" (authored third) sits
+        // right next to "a". A jump-minimizing sequence visits c before b.
+        let a = square(0, 0, 10, name: "a")
+        let b = square(100, 100, 10, name: "b")
+        let c = square(20, 20, 10, name: "c")
+
+        let sequenced = ObjectSequencer.sequence([a, b, c])
+        #expect(sequenced.map { $0.name } == ["a", "c", "b"])
+    }
+
+    @Test func containmentStillWinsOverColorGrouping() {
+        // "outer" (blue) must be sewn before "inner" (black) because it
+        // contains it, even though there's an unrelated free-standing black
+        // square that color-grouping alone would otherwise pull forward.
+        let inner = square(45, 45, 10, name: "inner", color: 0x000000)
+        let freeBlack = square(200, 200, 5, name: "freeBlack", color: 0x000000)
+        var outer = square(0, 0, 100, name: "outer")
+        outer.threadColor = .generic(RGBColor(hex: 0x0000FF))
+
+        let sequenced = ObjectSequencer.sequence([inner, freeBlack, outer])
+        let outerPos = sequenced.firstIndex { $0.name == "outer" }!
+        let innerPos = sequenced.firstIndex { $0.name == "inner" }!
+        #expect(outerPos < innerPos)
     }
 
     @Test func integratesWithDigitizePipelineColorSequenceConsistently() throws {

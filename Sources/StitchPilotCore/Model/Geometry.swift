@@ -90,6 +90,7 @@ public struct BoundingBox: Codable, Hashable, Sendable {
     public var width: Double { maxX - minX }
     public var height: Double { maxY - minY }
     public var isEmpty: Bool { minX > maxX || minY > maxY }
+    public var center: Point2D { Point2D((minX + maxX) / 2, (minY + maxY) / 2) }
 
     public func union(_ other: BoundingBox) -> BoundingBox {
         if isEmpty { return other }

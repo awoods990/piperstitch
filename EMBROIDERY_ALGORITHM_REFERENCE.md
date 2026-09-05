@@ -222,14 +222,32 @@ come from.
    (background) object sews first — a conservative first step toward the
    graph-based sequencing `auto_satin.py`'s routing approach points toward
    (see "Recommended next improvements").
+6. **Generalized `ObjectSequencer` scheduler** (this round): replaced the
+   pairwise containment-swap loop with a proper topological scheduler —
+   containment still defines a strict "must sew before" partial order (it
+   can't cycle, since the containment test requires a >5% area margin),
+   but objects with no containment relationship to each other are now free
+   to be reordered, and the scheduler greedily picks, from whatever's
+   currently sewable, (a) the same thread color as whatever was just
+   placed — every color switch costs a trim and a manual machine stop for
+   a thread change, the single most expensive thing in the sequencing
+   budget — then (b) whichever candidate is nearest (bounding-box center
+   distance) to what was just placed, to shorten the same-color jumps a
+   machine executes without operator intervention. This is a genuine
+   step toward the jump/color-minimizing goal `auto_satin.py`'s routing
+   points at, though it's still a greedy heuristic over a cheap geometric
+   proxy (bounding-box centers), not the real graph-based routing over
+   actual stitch-path endpoints that item #1 below still describes.
 
 ## Known remaining weaknesses
 
 - No push compensation (pull compensation only).
-- No *general* graph-based object sequencing — `ObjectSequencer` only
-  fixes the specific, safe case of one object's bounding box containing
-  another's; it doesn't attempt jump/trim-minimizing routing the way
-  Ink/Stitch's `auto_satin` does for arbitrary object arrangements.
+- Object sequencing is a greedy heuristic (color match, then nearest
+  bounding-box center), not a real graph-based router over actual
+  generated stitch-path endpoints the way Ink/Stitch's `auto_satin` builds
+  for satin columns specifically — it doesn't guarantee a jump-minimal
+  order, only a better one than authoring order, and it can't reorder
+  across a containment constraint (nor should it).
 - No contour fill (needs a robust repeated polygon-offset primitive this
   project doesn't have yet).
 - Satin "too wide" handling falls back to *whole-object* fill rather than
@@ -251,13 +269,14 @@ come from.
 
 ## Recommended next improvements, in priority order
 
-1. Generalize `ObjectSequencer` toward real graph-based routing informed
-   by `auto_satin.py`'s approach (highest expected impact on perceived
-   "professional" output quality per unit effort, since it's the area with
-   the clearest reference technique and the current implementation, while
-   safe, only handles one specific case).
-2. Width-aware satin splitting (partial fallback instead of whole-object).
-3. Push compensation.
-4. Contour fill, once a real polygon-offset primitive exists.
-5. Tighten `ObjectSequencer`'s containment check from bounding-box to
+1. Width-aware satin splitting (partial fallback instead of whole-object).
+2. Push compensation.
+3. Contour fill, once a real polygon-offset primitive exists.
+4. Tighten `ObjectSequencer`'s containment check from bounding-box to
    actual polygon containment.
+5. Move `ObjectSequencer`'s proximity heuristic from bounding-box centers
+   to actual generated stitch-path endpoints (the point a machine would
+   really jump from/to), and consider a real graph-based router over those
+   endpoints for satin objects specifically, the way `auto_satin.py` does —
+   the bounding-box-center version above is a real improvement over
+   authoring order but still a proxy, not the thing itself.

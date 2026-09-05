@@ -376,12 +376,40 @@ the embedded PEC block, which happened to match only this project's own
 minimal writer output, and silently mis-parsed any real PES file carrying
 different metadata before the PEC block.
 
+## Phase 3 (continued) — sequencing generalization (implemented)
+
+`ObjectSequencer` was rewritten from a pairwise containment-swap loop into
+a proper constraint-respecting scheduler, directly targeting stitch
+*conversion* performance (fewer color changes, shorter same-color jumps),
+not just correctness:
+
+- Containment still defines a strict "must sew before" partial order
+  between objects (the same bounding-box test as before — it can't cycle,
+  since it requires a >5% area margin to fire), computed once as a
+  dependency graph rather than discovered by repeated pairwise swapping.
+- Objects with no containment relationship to each other are free to be
+  reordered relative to one another. Among everything currently sewable
+  (no unresolved "must precede me" dependency), the scheduler greedily
+  prefers: (1) the same thread color as whatever was just placed — a
+  color switch costs a trim plus a manual machine stop, the most
+  expensive single thing in the sequencing budget — then (2) whichever
+  candidate's bounding-box center is nearest to what was just placed, to
+  shorten the same-color jumps a machine actually executes unattended.
+- This directly answers the "planned next" item that used to sit here
+  (registration-aware color-run reordering, spec §24): scattered same-color
+  objects with no containment relationship now consolidate into a single
+  run automatically, instead of sequencing following document order
+  exactly. It's still a greedy heuristic over a cheap geometric proxy
+  (bounding-box centers, not real generated stitch-path endpoints) and not
+  a full graph-based router — see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s
+  "recommended next improvements" for what a fuller version would need.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later
-stitching instead of jumping), corner handling, and registration-aware
-color-run reordering (spec §24 — currently sequencing follows document
-order exactly, with no attempt to consolidate scattered same-color runs).
+stitching instead of jumping), corner handling, and width-aware partial
+satin splitting (see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended
+next improvements" for the full prioritized list).
 
 ## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
 
