@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <!-- A five-pointed star outline: exercises narrow-column / satin-candidate detection in later phases. -->
+  <path d="M100,10 L118,72 L184,72 L131,110 L151,172 L100,133 L49,172 L69,110 L16,72 L82,72 Z" fill="#2a8c4a"/>
+</svg>
