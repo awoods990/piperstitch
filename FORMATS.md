@@ -10,12 +10,12 @@ what's implemented, how each was validated, and known losses/limitations.
 | Format | Ecosystem | Read | Write | Status |
 |---|---|---|---|---|
 | DST | Tajima / commercial | ✅ | ✅ | Implemented, Phase 1 |
-| PES | Brother/Baby Lock | — | — | Planned, Phase 6 |
+| PES | Brother/Baby Lock | ✅ | ✅ | Implemented, Phase 3 (moved up from Phase 6) |
 | JEF | Janome | — | — | Planned, Phase 6 |
 | EXP | Melco/Bernina-compatible | — | — | Planned, Phase 6 |
 | VP3 | Husqvarna Viking/Pfaff | — | — | Planned, Phase 6 |
 | XXX | Singer/Compucon | — | — | Planned, Phase 6 |
-| PEC | (Brother, related to PES) | — | — | Planned, Phase 6 |
+| PEC | (Brother, embedded in PES) | ✅ | ✅ | Implemented as part of PES (see below); not offered as a standalone .pec export yet |
 | U01 | — | — | — | Planned, Phase 6 |
 | TBF | Barudan | — | — | Investigate, Phase 6 |
 | HUS / VIP / SEW / PCS / SHV / TAP | various | — | — | Investigate, Phase 6 |
@@ -66,6 +66,63 @@ bounding-box regression (see `TESTING.md`).
 byte). The engine is responsible for placing objects so a color change
 doesn't imply a position jump the format can't represent — currently true
 by construction since `.colorChange` carries no `Point2D`.
+
+## PES / PEC (Brother, Baby Lock)
+
+**Implemented in:** `PESFormat.swift` (writer + reader) and
+`BrotherThreadPalette.swift` (the format's fixed 64-entry thread-color
+table). Writes the "truncated PES version 1" structure — the `#PES0001`
+signature and a fixed 14-byte stub in place of the fuller version's
+embedded thread-chart/sewing-segment metadata (which design software uses
+for re-editing, not something a machine needs to sew), followed directly by
+an embedded PEC block. This is the same simplification several other
+embroidery tools use to produce valid, machine-sewable PES files without
+the larger "full" wrapper; the file loads and sews on real hardware, it
+just doesn't carry the richer editing metadata a full-fidelity export
+would.
+
+**Layout:** an 8-byte signature, a 14-byte stub, then a fixed 512-byte PEC
+header (`LA:` name field, an icon-size stub, a thread-count byte followed
+by that many Brother palette indices, padded to exactly 512 bytes total
+regardless of thread count), a stitch block (a 3-byte little-endian length
+prefix, a fixed marker, width/height, then the encoded stitches), and
+finally one blank 228-byte placeholder icon per color (real thumbnail
+rendering is cosmetic only and out of scope — every icon is the same blank
+bitmap). Stitch deltas use a different scheme than DST's ternary encoding:
+a value fits in a single byte when it's in -63...62, otherwise it's a
+12-bit two's-complement value split across 2 bytes with flag bits (jump/
+trim) folded into the otherwise-unused high nibble of the first byte.
+Unlike DST, PEC has *no* separate bare trim record — trimming is a flag on
+the jump that follows it, and (per the reference implementation's verified
+behavior) every jump except the very first movement in the design is
+treated as an implicit trim+jump.
+
+**Correctness approach:** the exact byte layout, thread-index table, and
+delta-encoding bit positions were verified two ways before writing any
+Swift: by reading `PecWriter.py`/`PecReader.py`/`EmbThreadPec.py`
+(pyembroidery, MIT license), and by calling pyembroidery's own encode
+functions directly with boundary values (0, 62, -63, 63, -64, 2000, -2000,
+flagged jumps) and inspecting the raw output bytes — plus generating a real
+`.pes` file and inspecting its actual byte offsets — rather than trusting a
+derivation-by-eye of the header arithmetic, which turned out to disagree
+with the empirical result during development. The 64-entry Brother thread
+table is factual interoperability data (index -> RGB -> name for a
+commercial format), the same category as DST's byte layout, not creative
+expression.
+
+**Known limitation:** a defensive zero-delta "closing" stitch is inserted
+after every run of jumps before the next real stitch or color change,
+matching verified reference behavior. This is behaviorally invisible on
+real hardware (a zero-movement stitch is one needle penetration exactly
+where the needle already is) but means the *decoded* stitch count can
+exceed the StitchPlan's own count — round-trip tests compare "every
+original point appears in order in the decoded output," not raw counts,
+for exactly this reason (see `TESTING.md`).
+
+**Known limitation:** thread colors are matched to the nearest of Brother's
+64 fixed palette entries by Delta-E (reusing the same `RGBColor.deltaE`
+infrastructure as `ThreadLibrary`), since PES/PEC references colors by
+index into that table rather than storing arbitrary RGB directly.
 
 ## Adding a new format
 

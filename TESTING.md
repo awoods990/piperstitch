@@ -50,7 +50,10 @@ This is why `pyembroidery`'s coordinate-sign convention (Y-up internally,
 flipped at its own format boundary) is called out explicitly in
 `DSTFormat.swift`: the external-oracle test must negate Y before comparing,
 or it would "fail" on a correct file simply because the two projects chose
-opposite internal conventions.
+opposite internal conventions. `PESFormatTests` runs the same
+cross-validation (`validate_pes.py`) against PES exports — empirically, PEC
+needs no such Y-flip (verified with an intentionally Y-asymmetric test
+shape, so a sign error would have shown up as a bounding-box mismatch).
 
 ## What "round trip" means here
 

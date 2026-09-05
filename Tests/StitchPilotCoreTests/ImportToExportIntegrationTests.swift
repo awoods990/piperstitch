@@ -73,5 +73,13 @@ struct ImportToExportIntegrationTests {
         let decoded = try DSTFormat.read(dstData)
         let decodedColorChanges = decoded.commands.filter { if case .colorChange = $0 { return true }; return false }.count
         #expect(decodedColorChanges == 3)
+
+        // Same design, exported as PES instead -- both format adapters must
+        // agree on the design's actual color-change structure.
+        let colors = try DigitizePipeline.colorSequence(for: document)
+        let pesData = try PESFormat.write(plan, designName: document.name, threadColors: colors.map { $0.rgb })
+        let pesDecoded = try PESFormat.read(pesData)
+        let pesColorChanges = pesDecoded.commands.filter { if case .colorChange = $0 { return true }; return false }.count
+        #expect(pesColorChanges == 3)
     }
 }

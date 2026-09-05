@@ -161,14 +161,36 @@ final class AppState: ObservableObject {
             let data = try DSTFormat.write(plan, designName: document.name)
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try DSTFormat.read(data)
+            saveExportedFile(data, suggestedName: document.name + ".dst", extension: "dst")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
 
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = document.name + ".dst"
-            panel.allowedContentTypes = [UTType(filenameExtension: "dst") ?? .data]
-            if panel.runModal() == .OK, let url = panel.url {
-                try data.write(to: url)
-                statusMessage = "Exported \(url.lastPathComponent)."
-            }
+    func exportPES() {
+        guard let plan = stitchPlan, let document else {
+            errorMessage = "Click Auto Digitize before exporting."
+            return
+        }
+        do {
+            let colors = try DigitizePipeline.colorSequence(for: document)
+            let data = try PESFormat.write(plan, designName: document.name, threadColors: colors.map { $0.rgb })
+            // Self-validate before ever handing the file to the user (spec §59).
+            _ = try PESFormat.read(data)
+            saveExportedFile(data, suggestedName: document.name + ".pes", extension: "pes")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
+    private func saveExportedFile(_ data: Data, suggestedName: String, extension ext: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data.write(to: url)
+            statusMessage = "Exported \(url.lastPathComponent)."
         } catch {
             errorMessage = friendlyMessage(for: error)
         }

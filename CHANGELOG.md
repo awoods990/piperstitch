@@ -4,6 +4,39 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Phase 6 — Expanded Format Compatibility (started early)
+
+### Added
+- PES/PEC export + independent read-back (`PESFormat.swift`,
+  `BrotherThreadPalette.swift`), moved up from Phase 6 because a second
+  machine ecosystem (Brother/Baby Lock, alongside Tajima/DST) was judged
+  higher-value than continuing further into Phase 3/4 sequencing/quality
+  refinements at this point. Writes the "truncated PES version 1"
+  structure (signature + stub + embedded PEC block) — a valid,
+  machine-sewable file without the larger full-wrapper metadata a
+  from-scratch editor would want. Byte layout, the delta-encoding bit
+  positions, and the 64-entry Brother thread-index table were verified
+  against pyembroidery two ways: reading its source, and calling its
+  encoder functions directly on boundary values (0, 62, -63, 63, -64,
+  ±2000, flagged jumps) to inspect the actual output bytes — a header
+  arithmetic derivation done by eye disagreed with the empirical result
+  during development, which is exactly why the empirical check was worth
+  doing. Cross-validated against pyembroidery in the test suite
+  (`validate_pes.py`), including confirming empirically (via an
+  intentionally Y-asymmetric test shape) that PEC needs no Y-axis flip,
+  unlike DST. Wired into the app as an Export menu with both DST and PES.
+- `DigitizePipeline.colorSequence(for:)`: exposes the color-run sequence
+  a document will sew, for format adapters (PES) that need thread color
+  and work from `StitchPlan` alone.
+
+### Known limitations at this stage
+- Real preview-icon thumbnails aren't rendered — every icon in a PES
+  file is the same blank placeholder bitmap (cosmetic only, doesn't
+  affect sewing).
+- No standalone .pec export (only embedded within .pes) yet.
+- JEF, EXP, VP3, XXX, and the rest of spec §5's format list remain
+  unimplemented.
+
 ## Phase 4 — Quality Engine (started early, alongside Phase 3)
 
 ### Added

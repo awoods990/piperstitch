@@ -193,7 +193,7 @@ CoreGraphics, Accelerate).
 
 | Project | License | Role |
 |---|---|---|
-| [pyembroidery](https://github.com/EmbroidePy/pyembroidery) | MIT | Reference for exact binary layouts of DST and (later) PES/JEF/EXP/VP3/XXX/PEC/U01 |
+| [pyembroidery](https://github.com/EmbroidePy/pyembroidery) | MIT | Reference for exact binary layouts of DST and PES/PEC (implemented); JEF/EXP/VP3/XXX/U01 (later) |
 | [libembroidery](https://github.com/Embroidermodder/libembroidery) | zlib/libpng | Cross-reference for format coverage/edge cases; not vendored (alpha status, see above) |
 | [Ink/Stitch](https://github.com/inkstitch/inkstitch) | GPL-3.0 | Read-only reference for digitizing *algorithms/ideas* (satin/fill heuristics) — no code viewed-and-copied; GPL code is never vendored into this codebase |
 

@@ -31,6 +31,25 @@ public enum DigitizePipeline {
     /// still has to travel there either way.
     public static let defaultMaxJumpWithoutTrimMM = 15.0
 
+    /// The distinct thread colors in sewing order, one per color *run*
+    /// (consecutive same-color objects collapse to a single entry) —
+    /// exactly the color-change structure `flatten` produces, exposed
+    /// separately because format adapters that need thread color (PES;
+    /// DST doesn't) work from `StitchPlan` alone and have no other way to
+    /// recover which color a given run belongs to. Length always equals
+    /// `flatten(document).colorChangeCount + 1`.
+    public static func colorSequence(for document: StitchDocument) throws -> [ThreadColor] {
+        var colors: [ThreadColor] = []
+        for object in document.objects {
+            let points = try stitchPoints(for: object)
+            guard !points.isEmpty else { continue }
+            if colors.last?.rgb != object.threadColor.rgb {
+                colors.append(object.threadColor)
+            }
+        }
+        return colors
+    }
+
     public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
         // Generate first (filtering out objects that produced no stitches)
         // so tie-in/tie-off "is this the first/last object in its color

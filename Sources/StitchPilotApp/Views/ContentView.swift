@@ -41,10 +41,11 @@ struct ContentView: View {
                     Label("Auto Digitize", systemImage: "wand.and.stars")
                 }
                 .disabled(app.document == nil)
-                Button {
-                    app.exportDST()
+                Menu {
+                    Button("Tajima (.dst)") { app.exportDST() }
+                    Button("Brother/Baby Lock (.pes)") { app.exportPES() }
                 } label: {
-                    Label("Export DST", systemImage: "square.and.arrow.up")
+                    Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .disabled(app.stitchPlan == nil)
             }
