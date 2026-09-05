@@ -338,10 +338,9 @@ notes, license handling, and per-technique attribution — summarized here):
   exceed `maxSatinWidthMM` no longer aborts the whole object with an
   error — it's regenerated as tatami fill instead (with fill-appropriate
   underlay), matching spec §12's "automatically divide or convert
-  excessively wide satin regions." This is deliberately the *whole-object*
-  version of the idea; Ink/Stitch's `SatinColumn.split()` can convert just
-  the offending section while keeping the rest as satin, which remains
-  future work.
+  excessively wide satin regions." Originally this was a *whole-object*
+  fallback; see "width-aware satin splitting" below for the per-section
+  version that superseded it.
 - **Zigzag underlay for satin** (`UnderlayGenerator`): columns averaging
   wider than `zigzagUnderlayWidthThresholdMM` (default 4mm) get a
   wider-spaced, inset zigzag underlay instead of plain center-run — the
@@ -404,12 +403,37 @@ not just correctness:
   a full graph-based router — see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s
   "recommended next improvements" for what a fuller version would need.
 
+## Phase 3 (continued) — width-aware satin splitting (implemented)
+
+`SatinColumnGenerator` gained `generatePartial`, called by
+`DigitizePipeline` for every `.satin` object in place of the strict
+`generate`. Each rail crossing is classified narrow/wide against
+`maxSatinWidthMM` independently (not by the column's single average
+width, which is what the stitch-type classifier upstream already uses and
+can miss a column whose width varies enough that only part of it is
+actually too wide); contiguous runs of two or more wide crossings become
+a tatami fill sub-region built from that run's own rail points (with pull
+compensation already baked into the boundary, so the sub-fill call
+doesn't double-apply it), while narrow runs stay genuine satin. A lone
+over-width crossing surrounded by narrow ones is folded back into satin
+rather than becoming a one-crossing fill sliver — there's no meaningful
+polygon to fill from a single crossing, and it's within the range of
+noise a column that's otherwise a clean satin candidate can have.
+
+This is closer to Ink/Stitch's `SatinColumn.split()` idea than the
+whole-object fallback it replaces: a column that's narrow at one end and
+too wide at the other now sews as satin where it fits and fill only where
+it doesn't, instead of the entire object becoming fill the moment any one
+section exceeds the limit. `generate` (strict, throws on any violation,
+whole-object) is kept for direct/test use and any future preflight check
+that wants a hard "would this fit as clean satin?" answer.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later
-stitching instead of jumping), corner handling, and width-aware partial
-satin splitting (see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended
-next improvements" for the full prioritized list).
+stitching instead of jumping), corner handling, and push compensation
+(see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next
+improvements" for the full prioritized list).
 
 ## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
 

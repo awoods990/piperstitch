@@ -114,6 +114,96 @@ public enum SatinColumnGenerator {
         return stitches
     }
 
+    /// Like `generate`, but never rejects a column for being too wide:
+    /// crossings that exceed `maxSatinWidthMM` are converted to tatami fill
+    /// sub-regions instead, while crossings that fit stay genuine satin —
+    /// the width-aware partial version of `generate`'s all-or-nothing check,
+    /// closer to Ink/Stitch's `SatinColumn.split()` idea (see
+    /// `EMBROIDERY_ALGORITHM_REFERENCE.md`) than converting the *whole*
+    /// object to fill the moment any part of it is too wide. `generate`
+    /// itself is kept as the strict, pure-satin variant (used directly by
+    /// tests that want a hard guarantee, and available to any future
+    /// preflight/validation check that wants to know "would this column
+    /// fit as clean satin?"); `DigitizePipeline` calls this one, since a
+    /// design should never simply fail to produce output over a width
+    /// violation in one section of one object.
+    ///
+    /// A lone over-width crossing surrounded by in-range ones is folded
+    /// back into satin rather than becoming a one-crossing "fill" sliver —
+    /// there's no meaningful polygon to fill from a single crossing pair,
+    /// and it's well within the kind of measurement noise a column that's
+    /// otherwise a good satin candidate can have. A real fill sub-region
+    /// only forms from two or more consecutive over-width crossings.
+    public static func generatePartial(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
+        let (railA, railB) = try computeRails(for: shape)
+
+        let density = max(parameters.satinDensityMM, 0.1)
+        let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
+        let crossingCount = max(2, Int((approxLength / density).rounded()))
+
+        let resampledA = PolygonGeometry.resampleByCount(railA, count: crossingCount)
+        let resampledB = PolygonGeometry.resampleByCount(railB, count: crossingCount)
+
+        let rawWidths = zip(resampledA, resampledB).map { $0.distance(to: $1) }
+        let averageWidth = rawWidths.reduce(0, +) / Double(max(1, rawWidths.count))
+        let compensation = parameters.pullCompensationMM
+            ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth)
+
+        var expandedA: [Point2D] = []
+        var expandedB: [Point2D] = []
+        var widths: [Double] = []
+        for i in 0...crossingCount {
+            let a = resampledA[i], b = resampledB[i]
+            let ea = pushOutward(a, from: b, by: compensation / 2)
+            let eb = pushOutward(b, from: a, by: compensation / 2)
+            expandedA.append(ea)
+            expandedB.append(eb)
+            widths.append(ea.distance(to: eb))
+        }
+
+        var isWide = widths.map { $0 > parameters.maxSatinWidthMM }
+        for i in 0..<isWide.count where isWide[i] {
+            let prevWide = i > 0 && isWide[i - 1]
+            let nextWide = i < isWide.count - 1 && isWide[i + 1]
+            if !prevWide && !nextWide { isWide[i] = false }
+        }
+
+        var stitches: [Point2D] = []
+        var i = 0
+        while i < isWide.count {
+            var j = i
+            while j < isWide.count, isWide[j] == isWide[i] { j += 1 }
+            if isWide[i] {
+                stitches.append(contentsOf: fillSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
+            } else {
+                for k in i..<j {
+                    stitches.append(expandedA[k])
+                    stitches.append(expandedB[k])
+                }
+            }
+            i = j
+        }
+        return stitches
+    }
+
+    /// Builds the closed quad-strip polygon spanning rail crossings `range`
+    /// (both rails, one walked forward and the other back, so it traces the
+    /// sub-region's boundary) and fills it with tatami stitches. Pull
+    /// compensation is zeroed for this sub-fill call since it was already
+    /// baked into `expandedA`/`expandedB` by the caller — applying it again
+    /// here would expand the boundary twice.
+    private static func fillSegment(expandedA: [Point2D], expandedB: [Point2D], range: ClosedRange<Int>, parameters: StitchGenerationParameters) -> [Point2D] {
+        var points: [Point2D] = []
+        for i in range { points.append(expandedA[i]) }
+        for i in range.reversed() { points.append(expandedB[i]) }
+        guard points.count >= 3 else { return [] }
+
+        let polygon = VectorShape(subPaths: [SubPath(points: points, closed: true)])
+        var subParameters = parameters
+        subParameters.pullCompensationMM = 0
+        return TatamiFillGenerator.generate(for: polygon, parameters: subParameters)
+    }
+
     /// Moves `point` further away from `other` along the line between them, by `distance`.
     private static func pushOutward(_ point: Point2D, from other: Point2D, by distance: Double) -> Point2D {
         guard distance != 0 else { return point }

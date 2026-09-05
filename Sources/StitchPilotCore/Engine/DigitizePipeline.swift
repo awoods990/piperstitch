@@ -142,25 +142,15 @@ public enum DigitizePipeline {
             let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
             return underlay + TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
         case .satin:
-            do {
-                let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
-                return underlay + (try SatinColumnGenerator.generate(for: object.shape, parameters: object.parameters))
-            } catch SatinGenerationError.columnTooWide {
-                // Spec: "automatically divide or convert excessively wide
-                // satin regions to another stitch type" — a shape too wide
-                // for satin is very often still a perfectly good fill
-                // region (the classifier's average-width estimate can miss
-                // a shape whose width varies enough that some crossings
-                // exceed the limit even though the average doesn't). Fall
-                // back rather than abandon the object with an error; a
-                // proper *partial* fallback (keep the narrow sections as
-                // satin, only convert where it's actually too wide) is
-                // real algorithmic work — see EMBROIDERY_ALGORITHM_REFERENCE.md's
-                // "known remaining weaknesses" — this is the honest
-                // whole-object version of that idea.
-                let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
-                return underlay + TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
-            }
+            // Spec: "automatically divide or convert excessively wide satin
+            // regions to another stitch type." generatePartial keeps
+            // whatever sections of the column fit as real satin and
+            // converts only the sections that don't to tatami fill sub-
+            // regions, rather than converting the whole object the moment
+            // any part of it is too wide — see SatinColumnGenerator's doc
+            // comment and EMBROIDERY_ALGORITHM_REFERENCE.md.
+            let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
+            return underlay + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))
         }
     }
 }

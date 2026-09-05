@@ -237,7 +237,20 @@ come from.
    step toward the jump/color-minimizing goal `auto_satin.py`'s routing
    points at, though it's still a greedy heuristic over a cheap geometric
    proxy (bounding-box centers), not the real graph-based routing over
-   actual stitch-path endpoints that item #1 below still describes.
+   actual stitch-path endpoints that a fuller version would need.
+7. **Width-aware satin splitting** (`SatinColumnGenerator.generatePartial`,
+   this round): replaces the whole-object satin-to-fill fallback from item
+   #2 above with a genuine partial one, closer to what item #2's own note
+   said was still missing. Crossings are classified narrow/wide against
+   `maxSatinWidthMM` per-crossing (not by one average for the whole
+   column); contiguous wide runs of two or more crossings become a tatami
+   fill sub-region built from that run's own rail points, while narrow
+   runs stay real satin — closer to Ink/Stitch's `SatinColumn.split()`
+   idea than converting the entire object. `DigitizePipeline` now calls
+   `generatePartial` for every `.satin` object; the original `generate`
+   (which still throws `columnTooWide` for any violation, whole-object) is
+   kept as the strict variant for direct/test use and any future
+   validation check that wants a hard yes/no answer.
 
 ## Known remaining weaknesses
 
@@ -250,9 +263,15 @@ come from.
   across a containment constraint (nor should it).
 - No contour fill (needs a robust repeated polygon-offset primitive this
   project doesn't have yet).
-- Satin "too wide" handling falls back to *whole-object* fill rather than
-  splitting into sections that could stay satin where the width allows it —
-  a coarser response than Ink/Stitch's `split()`.
+- Width-aware satin splitting classifies each crossing independently
+  against a single global `maxSatinWidthMM`; it doesn't yet consider
+  stitch density transitions at a narrow/wide boundary (the crossing right
+  at a satin-to-fill seam can be visually abrupt), and a lone over-width
+  crossing is deliberately folded back into satin rather than becoming a
+  one-crossing fill sliver (see the doc comment on `generatePartial`) —
+  reasonable for noise, but it means a column that's *genuinely* right at
+  the width boundary in one narrow spot stays satin there rather than
+  fill, which is the intentional, documented trade-off, not a bug.
 - Fill angle candidates are evaluated by a single geometric heuristic
   (principal axis), not by the fuller scoring spec §6 describes (visual
   appearance, travel efficiency, neighboring-object direction) — those
@@ -269,14 +288,16 @@ come from.
 
 ## Recommended next improvements, in priority order
 
-1. Width-aware satin splitting (partial fallback instead of whole-object).
-2. Push compensation.
-3. Contour fill, once a real polygon-offset primitive exists.
-4. Tighten `ObjectSequencer`'s containment check from bounding-box to
+1. Push compensation.
+2. Contour fill, once a real polygon-offset primitive exists.
+3. Tighten `ObjectSequencer`'s containment check from bounding-box to
    actual polygon containment.
-5. Move `ObjectSequencer`'s proximity heuristic from bounding-box centers
+4. Move `ObjectSequencer`'s proximity heuristic from bounding-box centers
    to actual generated stitch-path endpoints (the point a machine would
    really jump from/to), and consider a real graph-based router over those
    endpoints for satin objects specifically, the way `auto_satin.py` does —
    the bounding-box-center version above is a real improvement over
    authoring order but still a proxy, not the thing itself.
+5. Smooth the stitch-density transition at a width-aware satin split's
+   narrow/wide seam (see `generatePartial`'s known limitation above) —
+   currently a clean but abrupt technique change at the boundary.

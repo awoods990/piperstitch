@@ -78,6 +78,54 @@ struct SatinColumnGeneratorTests {
         }
     }
 
+    @Test func partialMatchesPureSatinWhenColumnFitsEntirely() throws {
+        // No crossing exceeds the width limit anywhere along this column,
+        // so generatePartial's output should be identical to generate's --
+        // the partial/mixed code paths simply never trigger.
+        let rect = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        let pure = try SatinColumnGenerator.generate(for: rect, parameters: params())
+        let partial = try SatinColumnGenerator.generatePartial(for: rect, parameters: params())
+        #expect(partial == pure)
+    }
+
+    @Test func generatePartialNeverThrowsWhenUniformlyTooWide() throws {
+        // Same shape as columnTooWideThrows -- generate() rejects it, but
+        // generatePartial() must still produce a usable (all-fill) result.
+        let wideRect = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 20), Point2D(0, 20),
+        ], closed: true)])
+        let stitches = try SatinColumnGenerator.generatePartial(for: wideRect, parameters: params())
+        #expect(!stitches.isEmpty)
+    }
+
+    @Test func generatePartialKeepsNarrowSectionAsSatinAndConvertsWideSection() throws {
+        // A trapezoid tapering from 2mm wide at one end to 20mm wide at the
+        // other, with a 12mm satin limit -- a genuinely mixed column that
+        // pure generate() can't produce output for at all, but a real
+        // digitizer would still satin-stitch the narrow end.
+        let trapezoid = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(60, 0), Point2D(60, 20), Point2D(0, 2),
+        ], closed: true)])
+
+        #expect(throws: SatinGenerationError.self) {
+            _ = try SatinColumnGenerator.generate(for: trapezoid, parameters: params())
+        }
+
+        let stitches = try SatinColumnGenerator.generatePartial(for: trapezoid, parameters: params())
+        #expect(!stitches.isEmpty)
+
+        let box = BoundingBox(points: stitches)
+        // The mixed output should still span roughly the full column length,
+        // not stop short at the point satin gives up.
+        #expect(box.maxX > 50)
+
+        // The very first crossing (the narrow end, sewn first) should still
+        // be a tight satin pair, not spread out fill-style.
+        #expect(stitches[0].distance(to: stitches[1]) < 8, "the narrow end should still sew as a tight satin crossing")
+    }
+
     @Test func integratesWithDigitizePipeline() throws {
         let rect = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(20, 0), Point2D(20, 3), Point2D(0, 3),

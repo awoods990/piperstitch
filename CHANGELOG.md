@@ -4,6 +4,35 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Width-aware satin splitting (stitch-conversion performance)
+
+### Added
+- `SatinColumnGenerator.generatePartial`: replaces the whole-object
+  satin-to-fill fallback with a genuine per-section one. Each rail
+  crossing is classified narrow/wide against `maxSatinWidthMM`
+  independently, instead of the whole object converting to fill the
+  moment any part of it exceeds the limit; contiguous runs of two or more
+  wide crossings become a tatami fill sub-region built from that run's
+  own rail geometry (pull compensation already baked into the boundary,
+  so the sub-fill call doesn't double-apply it), while narrow runs stay
+  real satin. A lone over-width crossing surrounded by narrow ones folds
+  back into satin rather than becoming a degenerate one-crossing fill
+  sliver. `DigitizePipeline` now calls `generatePartial` for every
+  `.satin` object; the original `generate` (strict, throws on any width
+  violation, whole-object) is kept for direct/test use and any future
+  preflight check wanting a hard yes/no answer.
+- 3 new tests: `partialMatchesPureSatinWhenColumnFitsEntirely` (identical
+  output to `generate` when nothing needs splitting), 
+  `generatePartialNeverThrowsWhenUniformlyTooWide`, and
+  `generatePartialKeepsNarrowSectionAsSatinAndConvertsWideSection` (a
+  tapering trapezoid that `generate` rejects outright but `generatePartial`
+  sews as satin at the narrow end and fill at the wide end).
+
+### Known limitations at this stage
+- Classifies each crossing against one global width limit; doesn't yet
+  smooth the stitch-density transition at a narrow/wide seam, which is a
+  clean but abrupt technique change right now.
+
 ## Sequencing generalization (stitch-conversion performance)
 
 ### Added
