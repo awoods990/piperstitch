@@ -20,11 +20,30 @@ works" — `README.md`'s feature list is aspirational/target state.
   factored out of `SatinColumnGenerator` so underlay's centerline
   derivation and satin's rail-pairing use the identical resampling logic.
 
+### Added (continued)
+- Pull compensation (`PullCompensationCalculator.swift`): a documented
+  heuristic (not yet a calibrated physical model — spec §68's future
+  calibration system is the intended real fix) that expands satin/fill
+  geometry outward before stitch generation to counteract fabric pull.
+  Satin widens symmetrically about each crossing's own midpoint (so the
+  centerline underlay is generated from stays put); fill offsets its
+  outer boundary outward via the same `PolygonGeometry.offsetPolygon`
+  underlay's inset uses, just with a negative distance. Automatic by
+  default, per-object override via `pullCompensationMM`.
+- `PolygonGeometry` gained `offsetPolygon` (signed: positive shrinks,
+  negative grows), replacing `UnderlayGenerator`'s private duplicate so
+  underlay's inset and pull compensation's outward growth share one
+  implementation.
+
 ### Known limitations at this stage
 - Edge-run underlay's polygon inset is a naive per-vertex approximation —
   doesn't handle self-intersection on sharp concave corners.
-- No pull/push compensation, object overlap, travel routing, jump/trim
-  optimization, tie-in/tie-off, or general stitch filtering yet.
+- Pull compensation is a heuristic, not measured from real sew-outs; not
+  yet exposed as an editable value in the app UI.
+- Fill's pull compensation doesn't shrink holes to match the outer
+  boundary's outward growth.
+- No object overlap, travel routing, jump/trim optimization, tie-in/
+  tie-off, or general stitch filtering yet.
 
 ## Phase 2 — Basic Auto Digitizing (complete)
 

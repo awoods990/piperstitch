@@ -41,7 +41,12 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// satin/fill coverage.
     public var underlayInsetMM: Double = 1.0
 
-    // Phase 3 — reserved for pull compensation / inset-outset (next).
+    // Phase 3 — pull compensation (spec §17)
+    /// `nil` = automatic (see `PullCompensationCalculator`). Only applies
+    /// to satin/fill; running stitch has no "width" to compensate.
+    public var pullCompensationMM: Double? = nil
+
+    // Phase 3 — reserved for object overlap / inset-outset (next).
 
     public init() {}
 }

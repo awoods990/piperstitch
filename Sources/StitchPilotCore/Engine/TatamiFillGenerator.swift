@@ -24,10 +24,28 @@ public enum TatamiFillGenerator {
             Point2D(p.x * c - p.y * s, p.x * s + p.y * c)
         }
 
-        let rotatedPolygons: [[Point2D]] = shape.subPaths.map { sp in sp.points.map { rotate($0, cos: cosA, sin: sinA) } }
+        var rotatedPolygons: [[Point2D]] = shape.subPaths.map { sp in sp.points.map { rotate($0, cos: cosA, sin: sinA) } }
         var box = BoundingBox.empty
         for poly in rotatedPolygons { box = box.union(BoundingBox(points: poly)) }
         guard !box.isEmpty, box.height > 0 else { return [] }
+
+        // Pull compensation (spec §17): grow the outer boundary outward
+        // before scanning, so the fill sews at its intended size after
+        // fabric pulls it in. Holes are left as digitized for now (shrinking
+        // them to compensate too is a follow-up — see DIGITIZING_ENGINE.md).
+        let compensation = parameters.pullCompensationMM
+            ?? PullCompensationCalculator.estimate(stitchType: .tatamiFill, densityMM: parameters.fillSpacingMM, objectWidthMM: box.height)
+        // Skip compensation on a shape too small relative to it: growing a
+        // near-degenerate sliver by pull compensation would fabricate a
+        // fill region that wasn't really there rather than adjusting one
+        // that was. Such shapes should be filtered upstream as
+        // insignificant (spec §19) once that exists; this guard just keeps
+        // this generator from doing something clearly wrong in the meantime.
+        if compensation > 0, box.height > compensation * 4, !rotatedPolygons.isEmpty {
+            rotatedPolygons[0] = PolygonGeometry.offsetPolygon(rotatedPolygons[0], by: -compensation)
+            box = BoundingBox.empty
+            for poly in rotatedPolygons { box = box.union(BoundingBox(points: poly)) }
+        }
 
         let spacing = max(parameters.fillSpacingMM, 0.05)
         let stitchLength = max(parameters.stitchLengthMM, 0.3)

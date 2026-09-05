@@ -85,13 +85,26 @@ public enum SatinColumnGenerator {
         let resampledA = PolygonGeometry.resampleByCount(railA, count: crossingCount)
         let resampledB = PolygonGeometry.resampleByCount(railB, count: crossingCount)
 
+        let widths = zip(resampledA, resampledB).map { $0.distance(to: $1) }
+        let averageWidth = widths.reduce(0, +) / Double(max(1, widths.count))
+        let compensation = parameters.pullCompensationMM
+            ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth)
+
         var maxWidth = 0.0
         var stitches: [Point2D] = []
         for i in 0...crossingCount {
             let a = resampledA[i], b = resampledB[i]
-            maxWidth = max(maxWidth, a.distance(to: b))
-            stitches.append(a)
-            stitches.append(b)
+            // Pull compensation (spec §17): push each rail point outward,
+            // away from the crossing's midpoint, so the column sews at the
+            // intended width after fabric pulls it narrower. Expanding
+            // symmetrically about the midpoint keeps the centerline (and
+            // therefore the underlay generated from these same rails)
+            // exactly where it was digitized.
+            let expandedA = pushOutward(a, from: b, by: compensation / 2)
+            let expandedB = pushOutward(b, from: a, by: compensation / 2)
+            maxWidth = max(maxWidth, expandedA.distance(to: expandedB))
+            stitches.append(expandedA)
+            stitches.append(expandedB)
         }
 
         if maxWidth > parameters.maxSatinWidthMM {
@@ -99,6 +112,15 @@ public enum SatinColumnGenerator {
         }
 
         return stitches
+    }
+
+    /// Moves `point` further away from `other` along the line between them, by `distance`.
+    private static func pushOutward(_ point: Point2D, from other: Point2D, by distance: Double) -> Point2D {
+        guard distance != 0 else { return point }
+        let dx = point.x - other.x, dy = point.y - other.y
+        let len = (dx * dx + dy * dy).squareRoot()
+        guard len > 0.0001 else { return point }
+        return Point2D(point.x + dx / len * distance, point.y + dy / len * distance)
     }
 
     private static func midpoint(_ a: Point2D, _ b: Point2D) -> Point2D {

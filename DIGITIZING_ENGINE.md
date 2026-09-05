@@ -236,13 +236,50 @@ prepended to the object's main stitches, so they physically sew before the
 satin/fill that follows, matching how underlay actually functions on a
 machine.
 
+## Phase 3 — Pull compensation (implemented)
+
+`PullCompensationCalculator.swift` estimates how much to expand satin/fill
+geometry outward before generating stitches, to counteract fabric pulling
+inward as it's sewn (spec §17). This is explicitly a first-pass *heuristic*,
+not a calibrated physical model — real pull depends on fabric weight,
+hooping tension, and thread type, none of which StitchPilot has data for
+yet (fabric profiles are Phase 5; spec §68's manual sew-out calibration
+system is the intended eventual replacement for this heuristic with numbers
+measured from real sew-outs). The formula only captures the two effects
+true regardless of fabric: denser stitching pulls more, and the same
+absolute pull distorts a narrow object proportionally more than a wide one.
+
+Applied differently per generator, both automatically unless
+`parameters.pullCompensationMM` overrides it:
+
+- **Satin**: after resampling both rails to matched points, each pair is
+  pushed apart symmetrically about its own midpoint by half the
+  compensation — this widens the column without moving its centerline, so
+  underlay (generated from the same, unmodified rails) stays exactly where
+  it was digitized.
+- **Tatami fill**: the outer boundary is offset outward (via
+  `PolygonGeometry.offsetPolygon` with a negative distance — the same
+  function underlay's edge-run inset uses with a positive one) before
+  scanning. Holes are left as digitized for now; shrinking them to
+  compensate too (so a compensated outer boundary doesn't make a hole
+  effectively larger) is a follow-up.
+- Skipped entirely when a shape's own extent is too small relative to the
+  compensation amount — expanding a near-degenerate sliver would fabricate
+  a region that wasn't really there rather than adjusting one that was
+  (caught by `TatamiFillGeneratorTests.emptyShapeProducesNoStitches` during
+  development, once pull compensation started applying to a shape that was
+  never large enough to produce fill stitches in the first place).
+
+Not yet exposed as an editable value in the app UI (spec §17's "expose the
+calculated compensation to users" — Phase 5's professional object editor is
+the natural home for this alongside the other per-object overrides).
+
 ## Phase 3 — planned next
 
-Pull/push compensation, object overlap/inset-outset, travel routing,
-jump/trim optimization, tie-in/tie-off, corner handling, smarter
-sequencing, and general stitch filtering (spec §30 — too-short/too-long
-stitch cleanup applied after generation regardless of which generator
-produced the stitches).
+Object overlap/inset-outset, travel routing, jump/trim optimization,
+tie-in/tie-off, corner handling, smarter sequencing, and general stitch
+filtering (spec §30 — too-short/too-long stitch cleanup applied after
+generation regardless of which generator produced the stitches).
 
 ## Phase 4 — planned
 

@@ -2,11 +2,32 @@ import Testing
 @testable import StitchPilotCore
 
 struct SatinColumnGeneratorTests {
+    /// Pull compensation defaults to off here so these tests check pure
+    /// satin geometry against exact bounds; `pullCompensationWidensColumn`
+    /// below tests compensation itself.
     func params(density: Double = 0.4, maxWidth: Double = 12.0) -> StitchGenerationParameters {
         var p = StitchGenerationParameters()
         p.satinDensityMM = density
         p.maxSatinWidthMM = maxWidth
+        p.pullCompensationMM = 0
         return p
+    }
+
+    @Test func pullCompensationWidensColumn() throws {
+        let rect = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        var compensated = params()
+        compensated.pullCompensationMM = 0.4
+
+        let plain = try SatinColumnGenerator.generate(for: rect, parameters: params())
+        let widened = try SatinColumnGenerator.generate(for: rect, parameters: compensated)
+
+        // Compare a middle crossing (away from the tapered ends) on each.
+        let mid = plain.count / 2 - (plain.count / 2) % 2
+        let plainWidth = plain[mid].distance(to: plain[mid + 1])
+        let widenedWidth = widened[mid].distance(to: widened[mid + 1])
+        #expect(widenedWidth - plainWidth > 0.3)
     }
 
     /// A 30mm x 4mm rectangle is the simplest possible satin column: two

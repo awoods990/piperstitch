@@ -87,4 +87,45 @@ public enum PolygonGeometry {
         }
         return result
     }
+
+    /// Naive per-vertex polygon offset: moves each vertex along the average
+    /// of its two adjacent edges' inward normals, scaled by `offsetMM`.
+    /// Positive shrinks the polygon (used by underlay's edge-run inset),
+    /// negative grows it (used by pull compensation's outward expansion) —
+    /// same code either way, since growing is just an inward offset run
+    /// backward. This is an approximation: it doesn't handle
+    /// self-intersection on sharp concave corners the way a true
+    /// straight-skeleton/Minkowski offset would, which is adequate for the
+    /// sub-millimeter offsets both callers use on typical logo/lettering
+    /// shapes but would need replacing for more aggressive offsets.
+    public static func offsetPolygon(_ polygon: [Point2D], by offsetMM: Double) -> [Point2D] {
+        guard polygon.count >= 3, offsetMM != 0 else { return polygon }
+        var pts = polygon
+        if pts.first == pts.last { pts.removeLast() }
+        let n = pts.count
+        guard n >= 3 else { return polygon }
+
+        // Inward normal direction depends on winding: CCW interior is to
+        // the left of each directed edge, CW interior is to the right.
+        let isCCW = signedArea(pts) > 0
+
+        func inwardNormal(_ a: Point2D, _ b: Point2D) -> Point2D {
+            let dx = b.x - a.x, dy = b.y - a.y
+            let len = (dx * dx + dy * dy).squareRoot()
+            guard len > 0 else { return .zero }
+            let (nx, ny) = isCCW ? (-dy / len, dx / len) : (dy / len, -dx / len)
+            return Point2D(nx, ny)
+        }
+
+        var result: [Point2D] = []
+        for i in 0..<n {
+            let prev = pts[(i - 1 + n) % n], cur = pts[i], next = pts[(i + 1) % n]
+            let n1 = inwardNormal(prev, cur), n2 = inwardNormal(cur, next)
+            var avg = Point2D(n1.x + n2.x, n1.y + n2.y)
+            let avgLen = avg.length
+            avg = avgLen > 0.0001 ? Point2D(avg.x / avgLen, avg.y / avgLen) : n1
+            result.append(Point2D(cur.x + avg.x * offsetMM, cur.y + avg.y * offsetMM))
+        }
+        return result
+    }
 }

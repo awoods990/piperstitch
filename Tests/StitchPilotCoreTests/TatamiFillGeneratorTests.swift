@@ -2,13 +2,36 @@ import Testing
 @testable import StitchPilotCore
 
 struct TatamiFillGeneratorTests {
+    /// Pull compensation defaults to off here so these tests check pure
+    /// fill geometry against exact bounds; `pullCompensationGrowsFillOutward`
+    /// below tests compensation itself.
     func squareParams(spacing: Double = 0.4, stitchLength: Double = 3.0, angle: Double = 0) -> StitchGenerationParameters {
         var p = StitchGenerationParameters()
         p.fillSpacingMM = spacing
         p.stitchLengthMM = stitchLength
         p.fillAngleDegrees = angle
         p.fillRowStaggerMM = 1.2
+        p.pullCompensationMM = 0
         return p
+    }
+
+    @Test func pullCompensationGrowsFillOutward() {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20),
+        ], closed: true)])
+        var params = squareParams()
+        params.pullCompensationMM = 0.3
+
+        let points = TatamiFillGenerator.generate(for: square, parameters: params)
+        // Checking minX rather than minY: within a scanline row, the
+        // resampled stitches reach essentially exactly the offset
+        // boundary's edge, but rows themselves are centered `spacing/2`
+        // inward from the polygon's own extent by design (rows don't sew
+        // exactly on the perpendicular-to-scan edge) -- that centering
+        // would swamp a small compensation amount if checked on minY
+        // instead, even though the compensation is working correctly.
+        let box = BoundingBox(points: points)
+        #expect(box.minX < -0.15) // grown outward from x=0 by close to the full 0.3mm compensation
     }
 
     @Test func fillsASimpleSquare() {

@@ -50,7 +50,7 @@ public enum UnderlayGenerator {
     /// falls entirely underneath the fill that follows — spec §16 "edge run."
     private static func edgeRun(shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
         guard let outer = shape.subPaths.first, outer.points.count >= 3 else { return [] }
-        let inset = insetPolygon(outer.points, by: parameters.underlayInsetMM)
+        let inset = PolygonGeometry.offsetPolygon(outer.points, by: parameters.underlayInsetMM)
         guard inset.count >= 3 else { return [] }
         return RunningStitchGenerator.generate(for: SubPath(points: inset, closed: true),
                                                 stitchLengthMM: parameters.underlayStitchLengthMM, minStitchLengthMM: 0.4)
@@ -84,44 +84,6 @@ public enum UnderlayGenerator {
         var result: [Point2D] = [startPoint]
         result.append(contentsOf: points[startIndex..<endIndex])
         result.append(endPoint)
-        return result
-    }
-
-    /// Naive per-vertex polygon erosion: moves each vertex inward along the
-    /// average of its two adjacent edges' inward normals. This is an
-    /// approximation — it doesn't handle self-intersection on sharp
-    /// concave corners the way a true straight-skeleton/Minkowski offset
-    /// would — adequate for the modest 1mm-scale insets underlay uses, on
-    /// the mildly-concave shapes typical of logos and lettering; a robust
-    /// general polygon offset is a follow-up.
-    private static func insetPolygon(_ polygon: [Point2D], by insetMM: Double) -> [Point2D] {
-        guard polygon.count >= 3, insetMM > 0 else { return polygon }
-        var pts = polygon
-        if pts.first == pts.last { pts.removeLast() }
-        let n = pts.count
-        guard n >= 3 else { return polygon }
-
-        // Inward normal direction depends on winding: CCW interior is to
-        // the left of each directed edge, CW interior is to the right.
-        let isCCW = PolygonGeometry.signedArea(pts) > 0
-
-        func inwardNormal(_ a: Point2D, _ b: Point2D) -> Point2D {
-            let dx = b.x - a.x, dy = b.y - a.y
-            let len = (dx * dx + dy * dy).squareRoot()
-            guard len > 0 else { return .zero }
-            let (nx, ny) = isCCW ? (-dy / len, dx / len) : (dy / len, -dx / len)
-            return Point2D(nx, ny)
-        }
-
-        var result: [Point2D] = []
-        for i in 0..<n {
-            let prev = pts[(i - 1 + n) % n], cur = pts[i], next = pts[(i + 1) % n]
-            let n1 = inwardNormal(prev, cur), n2 = inwardNormal(cur, next)
-            var avg = Point2D(n1.x + n2.x, n1.y + n2.y)
-            let avgLen = avg.length
-            avg = avgLen > 0.0001 ? Point2D(avg.x / avgLen, avg.y / avgLen) : n1
-            result.append(Point2D(cur.x + avg.x * insetMM, cur.y + avg.y * insetMM))
-        }
         return result
     }
 }
