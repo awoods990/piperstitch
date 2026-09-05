@@ -316,10 +316,24 @@ looks ahead/behind by thread color across the *filtered* (non-empty-output)
 object list, so an object that happened to produce zero stitches can't
 shift a lock stitch onto the wrong neighbor.
 
+## Phase 3 — Long-jump trim insertion (implemented)
+
+A same-color jump longer than `maxJumpWithoutTrimMM` (default 15mm, an
+overridable parameter on `DigitizePipeline.flatten`) gets a trim inserted
+before it, even though the color hasn't changed (spec §26). Without this,
+two same-color objects far apart on a design would carry a visible strand
+of thread across the gap between them (spec §25: "Never place obvious
+travel stitches across exposed design areas"). This doesn't shorten the
+physical travel — the machine still moves there either way —
+`QualityAnalyzer`'s long-jump check fires independently of whether a trim
+was inserted, since a long jump costs production time regardless.
+
 ## Phase 3 — planned next
 
-Object overlap/inset-outset, travel routing, jump/trim optimization,
-corner handling, and smarter sequencing.
+Object overlap/inset-outset, hidden travel routing (sewing under later
+stitching instead of jumping), corner handling, and registration-aware
+color-run reordering (spec §24 — currently sequencing follows document
+order exactly, with no attempt to consolidate scattered same-color runs).
 
 ## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
 

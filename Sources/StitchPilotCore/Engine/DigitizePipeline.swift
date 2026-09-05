@@ -18,7 +18,20 @@ public enum DigitizePipelineError: Error, LocalizedError {
 /// underlay, compensation, and quality analysis are separate modules added
 /// in later phases; this is intentionally the minimal Phase 1/2 slice.
 public enum DigitizePipeline {
-    public static func flatten(_ document: StitchDocument) throws -> StitchPlan {
+    /// A same-color jump longer than this gets a trim inserted before it
+    /// (spec §26: "insert trim commands where supported... maximum jump
+    /// without trim"). A jump this long would otherwise drag a visible
+    /// strand of thread across the gap between two same-color objects that
+    /// happen to be far apart — trimming there costs a little production
+    /// time but avoids thread carry across exposed fabric (spec §25: "Never
+    /// place obvious travel stitches across exposed design areas"). This
+    /// doesn't shorten the physical travel itself, only whether the thread
+    /// stays attached across it — `QualityAnalyzer` separately flags long
+    /// jumps regardless of whether they got trimmed, since the machine
+    /// still has to travel there either way.
+    public static let defaultMaxJumpWithoutTrimMM = 15.0
+
+    public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
         // Generate first (filtering out objects that produced no stitches)
         // so tie-in/tie-off "is this the first/last object in its color
         // run" lookahead is based on what will actually appear in the
@@ -51,6 +64,10 @@ public enum DigitizePipeline {
                     commands.append(.trim)
                     commands.append(.colorChange)
                 } else {
+                    let jumpDistance = commands.last?.point?.distance(to: objectPoints[0]) ?? 0
+                    if jumpDistance > maxJumpWithoutTrimMM {
+                        commands.append(.trim)
+                    }
                     commands.append(.jump(objectPoints[0]))
                 }
             }

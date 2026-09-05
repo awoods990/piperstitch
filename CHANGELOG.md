@@ -73,6 +73,13 @@ works" — `README.md`'s feature list is aspirational/target state.
   between them. Run detection operates on the filtered (non-empty-output)
   object list so a zero-stitch object can't misplace a lock stitch.
 
+### Added (continued)
+- Long-jump trim insertion (spec §26): a same-color jump beyond
+  `maxJumpWithoutTrimMM` (default 15mm, overridable per call to
+  `DigitizePipeline.flatten`) now gets a trim inserted before it, so two
+  same-color objects far apart don't carry a visible thread strand
+  between them.
+
 ### Known limitations at this stage
 - Edge-run underlay's polygon inset is a naive per-vertex approximation —
   doesn't handle self-intersection on sharp concave corners.
@@ -80,8 +87,8 @@ works" — `README.md`'s feature list is aspirational/target state.
   yet exposed as an editable value in the app UI.
 - Fill's pull compensation doesn't shrink holes to match the outer
   boundary's outward growth.
-- No object overlap, travel routing, jump/trim optimization, or smarter
-  sequencing yet.
+- No object overlap, hidden travel routing, corner handling, or
+  registration-aware color-run reordering yet.
 
 ## Phase 2 — Basic Auto Digitizing (complete)
 
