@@ -55,7 +55,7 @@ public enum SatinColumnGenerator {
             throw SatinGenerationError.shapeNotSuitable("the outline needs at least 4 distinct points")
         }
 
-        let (axis, mean) = principalAxis(polygon)
+        let (axis, mean) = PolygonGeometry.principalAxis(polygon)
         let (startEdge, endEdge) = endCapEdges(polygon, axis: axis, mean: mean)
         guard startEdge != endEdge else {
             throw SatinGenerationError.shapeNotSuitable("couldn't identify two distinct ends for this outline")
@@ -95,24 +95,6 @@ public enum SatinColumnGenerator {
 
     private static func midpoint(_ a: Point2D, _ b: Point2D) -> Point2D {
         Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
-    }
-
-    /// The polygon's elongation direction (unit vector) via the covariance
-    /// matrix's principal eigenvector, and its centroid.
-    private static func principalAxis(_ polygon: [Point2D]) -> (axis: Point2D, mean: Point2D) {
-        let n = Double(polygon.count)
-        let meanX = polygon.reduce(0) { $0 + $1.x } / n
-        let meanY = polygon.reduce(0) { $0 + $1.y } / n
-
-        var sxx = 0.0, syy = 0.0, sxy = 0.0
-        for p in polygon {
-            let dx = p.x - meanX, dy = p.y - meanY
-            sxx += dx * dx; syy += dy * dy; sxy += dx * dy
-        }
-
-        // Closed-form principal-axis angle for a 2x2 symmetric covariance matrix.
-        let angle = 0.5 * atan2(2 * sxy, sxx - syy)
-        return (Point2D(cos(angle), sin(angle)), Point2D(meanX, meanY))
     }
 
     /// The two boundary edges whose average projection onto `axis` is most

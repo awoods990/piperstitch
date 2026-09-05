@@ -93,8 +93,10 @@ final class AppState: ObservableObject {
         for (i, shape) in lastRawShapes.enumerated() {
             let fitted = shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: lastCombinedBounds)
             let rgb = (i < lastFillColors.count ? lastFillColors[i] : nil) ?? StitchPilotCore.RGBColor(hex: 0x000000)
-            let object = EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: .runningStitch,
-                                           threadColor: .generic(rgb, name: "Imported Color \(i + 1)"))
+            let parameters = StitchGenerationParameters()
+            let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
+            let object = EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
+                                           threadColor: .generic(rgb, name: "Imported Color \(i + 1)"), parameters: parameters)
             objects.append(object)
         }
         document = StitchDocument(name: lastName, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: objects)

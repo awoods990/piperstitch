@@ -108,6 +108,27 @@ strokes, star points). **Known limitations:**
 - No automatic classification of *which* shapes should become satin vs.
   fill vs. running stitch yet (next item below).
 
+## Phase 2 — Automatic stitch-type selection (implemented)
+
+`StitchTypeClassifier.swift` decides which of the three generators an
+imported object should use, so the app's import path no longer hard-codes
+`.runningStitch` for everything. The heuristic estimates a shape's average
+width as `area / length-along-principal-axis` (the same kind of estimate a
+person eyeballing a shape makes — "that's a thin stroke" vs. "that's a
+blob") and buckets it: narrower than `minSatinWidthMM` (1.0mm, too thin for
+a stable zigzag) -> running stitch; up to `maxSatinWidthMM` -> satin;
+wider -> tatami fill. Wired into `AppState.regenerateFromStoredGeometry` so
+drag-and-drop import classifies each detected shape automatically.
+`PolygonGeometry.swift` factors the shared area/PCA math out of
+`SatinColumnGenerator` so classification and generation can't drift into
+measuring "elongation" two different ways.
+
+`StitchTypeClassifierTests.classifiedObjectsAllFlattenSuccessfully`
+specifically checks that everything the classifier produces can actually
+be flattened by `DigitizePipeline` without throwing — guarding against a
+classifier/generator threshold mismatch (e.g. classifying something as
+satin that the generator's own width check then rejects).
+
 ## Phase 2 — planned next
 
 - Background/foreground detection and removal for raster input (partially
@@ -115,9 +136,6 @@ strokes, star points). **Known limitations:**
 - Color quantization with the four presets in spec §8
 - Multi-region object segmentation for raster input (currently one object
   per detected silhouette; no per-color splitting within a region yet)
-- Automatic stitch-type selection per object (running vs. satin vs. fill) —
-  deciding *which* generator an object should use, now that all three
-  generators exist
 - Thread color matching (RGB/LAB + Delta-E) against a local thread library
 
 ## Phase 3 — planned

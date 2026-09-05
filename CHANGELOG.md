@@ -27,12 +27,21 @@ works" — `README.md`'s feature list is aspirational/target state.
   only cutting at the end-cap *edge* (using its midpoint) is correct. Wired
   into `DigitizePipeline` for `.satin` objects. 4 new tests.
 
+### Added (continued)
+- Automatic stitch-type classification (`StitchTypeClassifier.swift`):
+  buckets an object into running stitch / satin / tatami fill by estimated
+  average width (`area / principal-axis length`). Wired into the app's
+  import path, replacing the previous hard-coded `.runningStitch` for
+  every imported shape. `PolygonGeometry.swift` factors the shared
+  area/PCA math out of `SatinColumnGenerator` for this.
+
 ### Known limitations at this stage
 - No underlay beneath fill or satin yet (Phase 3).
-- No automatic stitch-type selection (running vs. satin vs. fill) — the
-  caller must still choose `stitchType` explicitly per object.
 - Satin end caps always taper to a point (see DIGITIZING_ENGINE.md) —
   correct for pointed ends, an approximation for flat/square ones.
+- Stitch-type classification looks only at a shape's outer boundary, not
+  its holes, and uses one fixed width threshold rather than considering
+  fabric or design size.
 
 ## Phase 1 — Foundation (complete)
 
