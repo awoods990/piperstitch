@@ -88,4 +88,30 @@ struct SatinColumnGeneratorTests {
         let plan = try DigitizePipeline.flatten(doc)
         #expect(plan.stitchCount > 40)
     }
+
+    /// A shape too wide for satin must not abort the whole design --
+    /// DigitizePipeline falls back to tatami fill for that object rather
+    /// than propagating SatinGenerationError.columnTooWide (spec: "convert
+    /// excessively wide satin regions to another stitch type" — see
+    /// EMBROIDERY_ALGORITHM_REFERENCE.md).
+    @Test func pipelineFallsBackToFillWhenSatinTooWide() throws {
+        let wideRect = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 20), Point2D(0, 20),
+        ], closed: true)])
+        let object = EmbroideryObject(name: "TooWide", shape: wideRect, stitchType: .satin,
+                                       threadColor: .generic(RGBColor(hex: 0x00FF00)), parameters: params())
+        let doc = StitchDocument(name: "FallbackTest", physicalWidthMM: 30, physicalHeightMM: 20, objects: [object])
+
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 0, "should produce fill stitches instead of throwing")
+
+        // A genuinely satin-appropriate object in the same document must
+        // still sew as satin -- the fallback is per-object, not global.
+        let narrowObject = EmbroideryObject(name: "Fine", shape: VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 3), Point2D(0, 3),
+        ], closed: true)]), stitchType: .satin, threadColor: .generic(RGBColor(hex: 0x0000FF)), parameters: params())
+        let mixedDoc = StitchDocument(name: "Mixed", physicalWidthMM: 30, physicalHeightMM: 20, objects: [object, narrowObject])
+        let mixedPlan = try DigitizePipeline.flatten(mixedDoc)
+        #expect(mixedPlan.stitchCount > plan.stitchCount, "the narrow object's real satin stitches must still be added on top of the fallback's")
+    }
 }

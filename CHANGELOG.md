@@ -4,6 +4,80 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Reference-informed algorithm improvements (studying Ink/Stitch, EmbroidePy, pyembroidery)
+
+Per an explicit instruction to study legitimate public embroidery-digitizing
+repositories as technical reference material and use that study to improve
+the automatic digitization algorithm itself (not just add file-format
+coverage), `EMBROIDERY_ALGORITHM_REFERENCE.md` records what was studied
+(Ink/Stitch, GPL-3.0; EmbroidePy/samples, MIT; pyembroidery, MIT), the
+license of each, and which techniques below are original work vs.
+reference-informed vs. adapted. No code was copied from Ink/Stitch (GPL);
+it was read for algorithmic understanding only and reimplemented
+independently against this project's own model and conventions.
+
+### Added
+- Satin auto-fallback to fill (`DigitizePipeline.swift`): when
+  `SatinColumnGenerator` throws `columnTooWide` for a shape too wide to
+  satin-stitch cleanly, the pipeline now falls back to tatami fill for that
+  object instead of failing the whole design. A shape too wide for satin is
+  a legitimate, fairly common case (not just bad input), so refusing to
+  produce any output for it was a real gap.
+- Zigzag underlay for wide satin columns (`UnderlayGenerator.swift`,
+  `EmbroideryObject.swift`): reference-informed by Ink/Stitch's "German
+  underlay" technique (a real, named professional digitizing technique,
+  not this project's invention). `defaultUnderlay` now measures a satin
+  object's average rail width and selects `.zigzag` above
+  `zigzagUnderlayWidthThresholdMM` (default 4mm) or keeps the existing
+  `.centerRun` underlay below it — a single centerline run doesn't
+  adequately stabilize a wide column before the satin stitches go down.
+  New `UnderlayType.zigzag` case, resamples both rails at
+  `zigzagUnderlaySpacingMM` (default 1.2mm) and insets each point toward
+  its counterpart rail, alternating rail order each step.
+- Automatic fill-angle selection (`FillAngleSelector.swift`, new,
+  original work — not an Ink/Stitch technique, which requires an explicit
+  manual angle): `fillAngleDegrees` on `StitchGenerationParameters` is now
+  `Double?` (nil = automatic). When nil, `TatamiFillGenerator` picks an
+  angle perpendicular to the shape's principal (elongation) axis via the
+  same PCA machinery already used for satin rails and stitch-type
+  classification, instead of every fill always defaulting to a fixed 0°
+  regardless of shape — a real, previously undocumented limitation.
+- Containment-based object sequencing (`ObjectSequencer.swift`, new):
+  before flattening or computing a color sequence, reorders objects so a
+  larger object that visually contains a smaller one (by bounding-box
+  containment with a 5% area margin against float noise) is always sewn
+  first — sewing a background shape after the smaller foreground detail
+  it contains would visibly cover that detail. Deliberately conservative:
+  only reorders on clear containment, never attempts general jump-
+  minimizing routing (see "Known remaining weaknesses" in
+  `EMBROIDERY_ALGORITHM_REFERENCE.md` for why a fuller graph-based router,
+  informed by Ink/Stitch's `auto_satin.py`, is the top priority next step).
+  Wired into both `DigitizePipeline.flatten` and `.colorSequence(for:)` so
+  the two stay consistent with each other.
+- **Bug fix, found via third-party sample files:** `PESFormat`'s reader
+  assumed the embedded PEC block always starts at a fixed byte offset (22),
+  which only happened to match this project's own writer output. A real
+  `.pes` file from `EmbroidePy/samples` (MIT; vendored as a test fixture
+  under `Tests/StitchPilotCoreTests/Fixtures/ThirdPartySamples/`, with its
+  license copied alongside it) stores the PEC block's actual location as a
+  4-byte little-endian offset at bytes 8-11, with writer-chosen metadata
+  in between. The writer now emits a real offset field (pointing
+  immediately past itself, since it emits no metadata) and the reader
+  follows whatever offset is actually present, with bounds validation. See
+  `FORMATS.md`'s PES/PEC section and `ThirdPartySampleTests.swift`, the new
+  test file whose `readsRealWorldPESFile` test caught this — a bug that no
+  amount of self-authored round-trip testing could have caught, since the
+  writer and reader shared the same wrong assumption.
+
+### Known limitations at this stage
+- See `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "Known remaining weaknesses"
+  and "Recommended next improvements" for the full, prioritized list:
+  object sequencing is bounding-box-only (not true polygon containment)
+  and doesn't do general jump-minimizing routing; satin's fallback is
+  whole-object (no partial/width-aware splitting of a column that's only
+  locally too wide); no push compensation yet (only pull); no contour
+  fill; small-lettering-specific handling not yet addressed.
+
 ## App polish pass (perfecting DST/PES before more format coverage)
 
 ### Added

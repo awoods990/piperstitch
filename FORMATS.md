@@ -71,31 +71,36 @@ by construction since `.colorChange` carries no `Point2D`.
 
 **Implemented in:** `PESFormat.swift` (writer + reader) and
 `BrotherThreadPalette.swift` (the format's fixed 64-entry thread-color
-table). Writes the "truncated PES version 1" structure — the `#PES0001`
-signature and a fixed 14-byte stub in place of the fuller version's
-embedded thread-chart/sewing-segment metadata (which design software uses
-for re-editing, not something a machine needs to sew), followed directly by
-an embedded PEC block. This is the same simplification several other
-embroidery tools use to produce valid, machine-sewable PES files without
-the larger "full" wrapper; the file loads and sews on real hardware, it
-just doesn't carry the richer editing metadata a full-fidelity export
-would.
+table). PES's actual general structure is: an 8-byte `#PES0001` signature,
+a 4-byte little-endian offset pointing to wherever the embedded PEC block
+actually starts, then however much version-specific metadata (embedded
+thread-chart/sewing-segment descriptions design software uses for
+re-editing, not something a machine needs to sew) the writer chose to put
+before it, then the PEC block at the recorded offset. This writer emits no
+metadata at all — the offset always points immediately past itself — which
+is a legitimate minimal use of the mechanism (several other embroidery
+tools produce similarly minimal PES files), not a different, non-standard
+format. The reader follows the offset rather than assuming a fixed
+position, specifically because an earlier version hard-coded offset 22
+(matching only this writer's own minimal output) and silently mis-parsed a
+real-world PES file from another project as a result — see "Known
+limitation" below and `TESTING.md`.
 
-**Layout:** an 8-byte signature, a 14-byte stub, then a fixed 512-byte PEC
-header (`LA:` name field, an icon-size stub, a thread-count byte followed
-by that many Brother palette indices, padded to exactly 512 bytes total
-regardless of thread count), a stitch block (a 3-byte little-endian length
-prefix, a fixed marker, width/height, then the encoded stitches), and
-finally one blank 228-byte placeholder icon per color (real thumbnail
-rendering is cosmetic only and out of scope — every icon is the same blank
-bitmap). Stitch deltas use a different scheme than DST's ternary encoding:
-a value fits in a single byte when it's in -63...62, otherwise it's a
-12-bit two's-complement value split across 2 bytes with flag bits (jump/
-trim) folded into the otherwise-unused high nibble of the first byte.
-Unlike DST, PEC has *no* separate bare trim record — trimming is a flag on
-the jump that follows it, and (per the reference implementation's verified
-behavior) every jump except the very first movement in the design is
-treated as an implicit trim+jump.
+**Layout:** the 8-byte signature and 4-byte offset above, then (at that
+offset) a fixed 512-byte PEC header (`LA:` name field, an icon-size stub, a
+thread-count byte followed by that many Brother palette indices, padded to
+exactly 512 bytes total regardless of thread count), a stitch block (a
+3-byte little-endian length prefix, a fixed marker, width/height, then the
+encoded stitches), and finally one blank 228-byte placeholder icon per
+color (real thumbnail rendering is cosmetic only and out of scope — every
+icon is the same blank bitmap). Stitch deltas use a different scheme than
+DST's ternary encoding: a value fits in a single byte when it's in
+-63...62, otherwise it's a 12-bit two's-complement value split across 2
+bytes with flag bits (jump/trim) folded into the otherwise-unused high
+nibble of the first byte. Unlike DST, PEC has *no* separate bare trim
+record — trimming is a flag on the jump that follows it, and (per the
+reference implementation's verified behavior) every jump except the very
+first movement in the design is treated as an implicit trim+jump.
 
 **Correctness approach:** the exact byte layout, thread-index table, and
 delta-encoding bit positions were verified two ways before writing any

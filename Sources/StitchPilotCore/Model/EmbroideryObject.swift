@@ -30,7 +30,9 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
 
     // Phase 2 — tatami fill
     public var fillSpacingMM: Double = 0.4
-    public var fillAngleDegrees: Double = 0.0
+    /// `nil` = automatic (see `FillAngleSelector`) — do not always fall
+    /// back to a single fixed angle. Set explicitly to override.
+    public var fillAngleDegrees: Double? = nil
     public var fillRowStaggerMM: Double = 1.2
 
     // Phase 3 — underlay (spec §16)
@@ -39,10 +41,21 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     public var underlayType: UnderlayType? = nil
     public var underlayStitchLengthMM: Double = 3.0
     /// How far a center-run underlay's endpoints fall short of the
-    /// column's true end caps, and how far an edge-run underlay insets from
-    /// the shape boundary — keeps underlay from poking out past the final
-    /// satin/fill coverage.
+    /// column's true end caps, and how far an edge-run/zigzag underlay
+    /// insets from the shape boundary — keeps underlay from poking out
+    /// past the final satin/fill coverage.
     public var underlayInsetMM: Double = 1.0
+    /// Row spacing for zigzag underlay — the "German underlay" technique
+    /// (contour-walk + a wider, inset zigzag) used automatically for wider
+    /// satin columns, sourced from studying Ink/Stitch's satin underlay —
+    /// see EMBROIDERY_ALGORITHM_REFERENCE.md. Deliberately coarser than
+    /// `satinDensityMM`: this is a lighter stabilizing base layer, not a
+    /// second satin pass.
+    public var zigzagUnderlaySpacingMM: Double = 1.2
+    /// Satin columns averaging wider than this get zigzag underlay instead
+    /// of plain center-run — a single centerline pass isn't enough to
+    /// stabilize fabric across a wide zigzag, only a narrow one.
+    public var zigzagUnderlayWidthThresholdMM: Double = 4.0
 
     // Phase 3 — pull compensation (spec §17)
     /// `nil` = automatic (see `PullCompensationCalculator`). Only applies
@@ -58,6 +71,8 @@ public enum UnderlayType: String, Codable, Sendable, CaseIterable {
     case none
     case centerRun
     case edgeRun
+    /// A wider-spaced, inset zigzag beneath satin — see `zigzagUnderlaySpacingMM`.
+    case zigzag
 }
 
 /// One embroidery object: a geometric shape plus everything needed to sew

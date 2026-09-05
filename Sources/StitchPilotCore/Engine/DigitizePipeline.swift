@@ -40,7 +40,7 @@ public enum DigitizePipeline {
     /// `flatten(document).colorChangeCount + 1`.
     public static func colorSequence(for document: StitchDocument) throws -> [ThreadColor] {
         var colors: [ThreadColor] = []
-        for object in document.objects {
+        for object in ObjectSequencer.sequence(document.objects) {
             let points = try stitchPoints(for: object)
             guard !points.isEmpty else { continue }
             if colors.last?.rgb != object.threadColor.rgb {
@@ -51,13 +51,15 @@ public enum DigitizePipeline {
     }
 
     public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
-        // Generate first (filtering out objects that produced no stitches)
-        // so tie-in/tie-off "is this the first/last object in its color
-        // run" lookahead is based on what will actually appear in the
-        // output, not on document.objects' raw indices — an empty-output
-        // object in between would otherwise misplace a lock stitch.
+        // Sequence first (spec §23: background/containing objects before
+        // the foreground details they contain — see ObjectSequencer), then
+        // generate (filtering out objects that produced no stitches) so
+        // tie-in/tie-off "is this the first/last object in its color run"
+        // lookahead is based on what will actually appear in the output,
+        // not on document.objects' raw indices — an empty-output object in
+        // between would otherwise misplace a lock stitch.
         var generated: [(color: ThreadColor, points: [Point2D])] = []
-        for object in document.objects {
+        for object in ObjectSequencer.sequence(document.objects) {
             let points = try stitchPoints(for: object)
             guard !points.isEmpty else { continue }
             generated.append((object.threadColor, points))
@@ -140,8 +142,25 @@ public enum DigitizePipeline {
             let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
             return underlay + TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
         case .satin:
-            let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
-            return underlay + (try SatinColumnGenerator.generate(for: object.shape, parameters: object.parameters))
+            do {
+                let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
+                return underlay + (try SatinColumnGenerator.generate(for: object.shape, parameters: object.parameters))
+            } catch SatinGenerationError.columnTooWide {
+                // Spec: "automatically divide or convert excessively wide
+                // satin regions to another stitch type" — a shape too wide
+                // for satin is very often still a perfectly good fill
+                // region (the classifier's average-width estimate can miss
+                // a shape whose width varies enough that some crossings
+                // exceed the limit even though the average doesn't). Fall
+                // back rather than abandon the object with an error; a
+                // proper *partial* fallback (keep the narrow sections as
+                // satin, only convert where it's actually too wide) is
+                // real algorithmic work — see EMBROIDERY_ALGORITHM_REFERENCE.md's
+                // "known remaining weaknesses" — this is the honest
+                // whole-object version of that idea.
+                let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
+                return underlay + TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
+            }
         }
     }
 }

@@ -202,32 +202,48 @@ come from.
    reading PES's actual offset-pointer mechanism, silently mis-parsing any
    real-world PES file with different leading metadata. Fixed in both
    directions (writer now emits a real offset field; reader follows it).
-2. **Satin auto-fallback to fill** when a column would exceed the
-   practical satin width, instead of throwing and abandoning the object.
-3. **Zigzag underlay for satin** on wider columns (the "German underlay"
-   technique), alongside the existing center-run underlay for narrow ones.
-4. **Automatic fill-angle selection** via principal-axis analysis, replacing
-   a fixed default angle — original work, not an Ink/Stitch technique (see
-   above).
-5. *(See `CHANGELOG.md` for the complete, final list — this document is
-   written before the full implementation pass to satisfy the "study
-   before modification" ordering the spec requires; later entries are
-   appended to `CHANGELOG.md` and `DIGITIZING_ENGINE.md` as they land.)*
+2. **Satin auto-fallback to fill** (`DigitizePipeline`) when a column would
+   exceed the practical satin width, instead of throwing and abandoning the
+   object — the whole-object version of Ink/Stitch's `split()` idea (see
+   above); a per-section fallback remains future work.
+3. **Zigzag underlay for satin** (`UnderlayGenerator`) on columns averaging
+   wider than a configurable threshold (default 4mm) — the "German
+   underlay" technique (contour-walk + zigzag together) sourced from
+   studying Ink/Stitch's three-underlay-type satin model; narrower columns
+   keep the existing center-run underlay, since a single centerline is
+   adequate for those.
+4. **Automatic fill-angle selection** (`FillAngleSelector`) via
+   principal-axis analysis (rows run perpendicular to a shape's elongation
+   by default), replacing an always-fixed angle — original work, not an
+   Ink/Stitch technique (see above); still overridable per object.
+5. **Containment-based object sequencing** (`ObjectSequencer`): when one
+   object's bounding box fully contains another's but the smaller one is
+   currently scheduled to sew first, they're swapped so the larger
+   (background) object sews first — a conservative first step toward the
+   graph-based sequencing `auto_satin.py`'s routing approach points toward
+   (see "Recommended next improvements").
 
 ## Known remaining weaknesses
 
 - No push compensation (pull compensation only).
-- No graph-based object sequencing (Ink/Stitch's `auto_satin` routing is
-  the clear reference for this; not yet implemented).
+- No *general* graph-based object sequencing — `ObjectSequencer` only
+  fixes the specific, safe case of one object's bounding box containing
+  another's; it doesn't attempt jump/trim-minimizing routing the way
+  Ink/Stitch's `auto_satin` does for arbitrary object arrangements.
 - No contour fill (needs a robust repeated polygon-offset primitive this
   project doesn't have yet).
 - Satin "too wide" handling falls back to *whole-object* fill rather than
   splitting into sections that could stay satin where the width allows it —
   a coarser response than Ink/Stitch's `split()`.
-- Fill angle candidates are evaluated by a geometric heuristic (principal
-  axis), not by the fuller scoring spec §6 describes (visual appearance,
-  travel efficiency, neighboring-object direction) — those additional
-  signals aren't wired in yet.
+- Fill angle candidates are evaluated by a single geometric heuristic
+  (principal axis), not by the fuller scoring spec §6 describes (visual
+  appearance, travel efficiency, neighboring-object direction) — those
+  additional signals aren't wired in yet.
+- `ObjectSequencer`'s containment check uses bounding boxes, not actual
+  shape geometry — two non-overlapping shapes with one's bounding box
+  coincidentally enclosing the other's would be treated as nested. Rare in
+  practice for typical logo/badge artwork, but a real approximation worth
+  tightening (an actual polygon-containment test) if it causes problems.
 - No physical stitch-out calibration exists for any of this — all
   compensation/density values remain rule-based estimates pending real
   sew-out data, consistent with `PullCompensationCalculator`'s existing
@@ -235,10 +251,13 @@ come from.
 
 ## Recommended next improvements, in priority order
 
-1. Graph-based object sequencing informed by `auto_satin.py`'s approach
-   (highest expected impact on perceived "professional" output quality
-   per unit effort, since it's the area with the clearest reference
-   technique and the current implementation is the most naive).
+1. Generalize `ObjectSequencer` toward real graph-based routing informed
+   by `auto_satin.py`'s approach (highest expected impact on perceived
+   "professional" output quality per unit effort, since it's the area with
+   the clearest reference technique and the current implementation, while
+   safe, only handles one specific case).
 2. Width-aware satin splitting (partial fallback instead of whole-object).
 3. Push compensation.
 4. Contour fill, once a real polygon-offset primitive exists.
+5. Tighten `ObjectSequencer`'s containment check from bounding-box to
+   actual polygon containment.

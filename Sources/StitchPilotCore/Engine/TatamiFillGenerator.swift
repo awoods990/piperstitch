@@ -17,7 +17,8 @@ import Foundation
 public enum TatamiFillGenerator {
     public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
         guard !shape.subPaths.isEmpty else { return [] }
-        let angleRad = parameters.fillAngleDegrees * .pi / 180
+        let angleDegrees = parameters.fillAngleDegrees ?? FillAngleSelector.selectAngle(for: shape)
+        let angleRad = angleDegrees * .pi / 180
         let cosA = cos(-angleRad), sinA = sin(-angleRad) // rotate shape by -angle so fill rows become horizontal
 
         func rotate(_ p: Point2D, cos c: Double, sin s: Double) -> Point2D {

@@ -7,7 +7,7 @@ import Foundation
 /// stitch type unless `parameters.underlayType` overrides it.
 public enum UnderlayGenerator {
     public static func generate(for shape: VectorShape, stitchType: StitchType, parameters: StitchGenerationParameters) -> [Point2D] {
-        let effective = parameters.underlayType ?? defaultUnderlay(for: stitchType)
+        let effective = parameters.underlayType ?? defaultUnderlay(for: stitchType, shape: shape, parameters: parameters)
         switch effective {
         case .none:
             return []
@@ -15,12 +15,27 @@ public enum UnderlayGenerator {
             return centerRun(shape: shape, parameters: parameters)
         case .edgeRun:
             return edgeRun(shape: shape, parameters: parameters)
+        case .zigzag:
+            return zigzag(shape: shape, parameters: parameters)
         }
     }
 
-    private static func defaultUnderlay(for stitchType: StitchType) -> UnderlayType {
+    /// Satin picks between center-run and zigzag by estimated average
+    /// width: a single centerline pass stabilizes a narrow column fine,
+    /// but a wider zigzag needs more than one line of anchoring stitches
+    /// underneath it — the "German underlay" technique (contour-walk +
+    /// zigzag together) documented in EMBROIDERY_ALGORITHM_REFERENCE.md,
+    /// sourced from studying Ink/Stitch's satin underlay. Avoids
+    /// unnecessary underlay on very small objects either way (spec §16).
+    private static func defaultUnderlay(for stitchType: StitchType, shape: VectorShape, parameters: StitchGenerationParameters) -> UnderlayType {
         switch stitchType {
-        case .satin: return .centerRun
+        case .satin:
+            guard let (railA, railB) = try? SatinColumnGenerator.computeRails(for: shape) else { return .centerRun }
+            let sampleCount = 10
+            let a = PolygonGeometry.resampleByCount(railA, count: sampleCount)
+            let b = PolygonGeometry.resampleByCount(railB, count: sampleCount)
+            let averageWidth = zip(a, b).map { $0.distance(to: $1) }.reduce(0, +) / Double(a.count)
+            return averageWidth > parameters.zigzagUnderlayWidthThresholdMM ? .zigzag : .centerRun
         case .tatamiFill: return .edgeRun
         case .runningStitch, .tripleRun: return .none // already a single light pass; no fabric buildup to stabilize
         }
@@ -44,6 +59,46 @@ public enum UnderlayGenerator {
 
         return RunningStitchGenerator.generate(for: SubPath(points: inset, closed: false),
                                                 stitchLengthMM: parameters.underlayStitchLengthMM, minStitchLengthMM: 0.4)
+    }
+
+    /// A wider-spaced zigzag between the satin column's rails, inset toward
+    /// the centerline so it stays narrower than the final satin coverage —
+    /// see the doc comment on `defaultUnderlay` for why this exists
+    /// alongside center-run rather than replacing it.
+    private static func zigzag(shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
+        guard let (railA, railB) = try? SatinColumnGenerator.computeRails(for: shape) else { return [] }
+
+        let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
+        let spacing = max(parameters.zigzagUnderlaySpacingMM, 0.3)
+        let count = max(3, Int((approxLength / spacing).rounded()))
+        let resampledA = PolygonGeometry.resampleByCount(railA, count: count)
+        let resampledB = PolygonGeometry.resampleByCount(railB, count: count)
+
+        let inset = max(parameters.underlayInsetMM, 0)
+        var points: [Point2D] = []
+        for i in 0...count {
+            let a = resampledA[i], b = resampledB[i]
+            let insetA = moveToward(a, target: b, by: inset)
+            let insetB = moveToward(b, target: a, by: inset)
+            // Alternate which rail comes first each step, so the path
+            // actually zigzags instead of running two parallel lines.
+            if i % 2 == 0 {
+                points.append(insetA); points.append(insetB)
+            } else {
+                points.append(insetB); points.append(insetA)
+            }
+        }
+        return points
+    }
+
+    /// Moves `point` toward `target` by `distance` (clamped so it never overshoots past `target`).
+    private static func moveToward(_ point: Point2D, target: Point2D, by distance: Double) -> Point2D {
+        guard distance > 0 else { return point }
+        let dx = target.x - point.x, dy = target.y - point.y
+        let len = (dx * dx + dy * dy).squareRoot()
+        guard len > 0.0001 else { return point }
+        let clamped = min(distance, len / 2) // never cross the midpoint -- that would invert the rails
+        return Point2D(point.x + dx / len * clamped, point.y + dy / len * clamped)
     }
 
     /// A running stitch around the shape's boundary, inset inward so it

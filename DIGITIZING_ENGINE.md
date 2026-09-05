@@ -328,6 +328,54 @@ physical travel — the machine still moves there either way —
 `QualityAnalyzer`'s long-jump check fires independently of whether a trim
 was inserted, since a long jump costs production time regardless.
 
+## Phase 3 — Reference-informed algorithm improvements (implemented)
+
+A round of improvements informed by studying Ink/Stitch and pyembroidery's
+source directly (see `EMBROIDERY_ALGORITHM_REFERENCE.md` for the full study
+notes, license handling, and per-technique attribution — summarized here):
+
+- **Satin auto-fallback to fill** (`DigitizePipeline`): a column that would
+  exceed `maxSatinWidthMM` no longer aborts the whole object with an
+  error — it's regenerated as tatami fill instead (with fill-appropriate
+  underlay), matching spec §12's "automatically divide or convert
+  excessively wide satin regions." This is deliberately the *whole-object*
+  version of the idea; Ink/Stitch's `SatinColumn.split()` can convert just
+  the offending section while keeping the rest as satin, which remains
+  future work.
+- **Zigzag underlay for satin** (`UnderlayGenerator`): columns averaging
+  wider than `zigzagUnderlayWidthThresholdMM` (default 4mm) get a
+  wider-spaced, inset zigzag underlay instead of plain center-run — the
+  "German underlay" technique (contour-walk + zigzag together), sourced
+  from Ink/Stitch's three-underlay-type satin model (`center_walk`,
+  `contour`, `zigzag`), which StitchPilot previously only had the
+  center-walk equivalent of.
+- **Automatic fill-angle selection** (`FillAngleSelector`): tatami fill
+  defaults to running rows perpendicular to a shape's principal
+  (elongation) axis instead of always 0°, when `fillAngleDegrees` isn't
+  set explicitly. Documented clearly in both the selector's own doc
+  comment and the reference document as *original* work — Ink/Stitch's
+  fill angle is a plain user-set parameter with no automatic selection
+  logic to have borrowed from.
+- **Containment-based object sequencing** (`ObjectSequencer`): if one
+  object's bounding box fully contains another's but the smaller one
+  currently sews first, they're swapped so the larger (background) object
+  goes first (spec §23 "background before foreground... inside before
+  outside"). Deliberately conservative — objects with no containment
+  relationship are never reordered relative to each other, so it can't
+  scatter same-color runs `DigitizePipeline`'s color-change consolidation
+  depends on being adjacent. A full graph-based jump-minimizing sequencer
+  (the technique Ink/Stitch's `auto_satin.py` actually uses) is the
+  natural next step and is recorded as the top item in the reference
+  document's "recommended next improvements."
+
+Also: testing these changes against two real-world files from
+EmbroidePy/samples (`ThirdPartySampleTests`) — not just StitchPilot's own
+writer's output — found and fixed a real, unrelated bug in `PESFormat`'s
+reader (see `FORMATS.md`'s PES section): it assumed a fixed byte offset for
+the embedded PEC block, which happened to match only this project's own
+minimal writer output, and silently mis-parsed any real PES file carrying
+different metadata before the PEC block.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later
