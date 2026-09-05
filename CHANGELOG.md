@@ -57,6 +57,16 @@ works" — `README.md`'s feature list is aspirational/target state.
   saturated channels by dozens of units on color-match. Test helpers now
   build colors directly in the context's color space.
 
+### Added (continued)
+- Thread library (`ThreadLibrary.swift`): a ~40-entry generic palette
+  (original names/values, not sourced from any manufacturer catalog —
+  see spec §9's licensing note) plus `nearestMatch`/`nearestMatches`
+  Delta-E matching against any palette, so a future manufacturer catalog
+  or user "My Thread Inventory" is just a different palette argument, no
+  engine change. Wired into the app: artwork colors snap to the nearest
+  thread color by default, with a toggle to keep exact artwork colors
+  instead; the object list shows each object's matched thread name.
+
 ### Known limitations at this stage
 - No underlay beneath fill or satin yet (Phase 3).
 - Satin end caps always taper to a point (see DIGITIZING_ENGINE.md) —
@@ -64,8 +74,7 @@ works" — `README.md`'s feature list is aspirational/target state.
 - Stitch-type classification looks only at a shape's outer boundary, not
   its holes, and uses one fixed width threshold rather than considering
   fabric or design size.
-- No manufacturer thread-catalog matching yet (Delta-E matching engine
-  exists via `RGBColor.deltaE`; the thread library itself is next).
+- No manufacturer thread catalogs yet, pending license research.
 
 ## Phase 1 — Foundation (complete)
 

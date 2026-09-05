@@ -29,6 +29,18 @@ final class AppState: ObservableObject {
     }
     private var lastImportedURL: URL?
 
+    /// Spec §9: snap artwork colors to the nearest sewable thread color via
+    /// Delta-E rather than exporting the literal detected pixel color.
+    /// Toggling this re-fits from the stored geometry so the effect is
+    /// visible immediately without re-importing.
+    @Published var matchToThreadLibrary: Bool = true {
+        didSet {
+            guard oldValue != matchToThreadLibrary, !lastRawShapes.isEmpty else { return }
+            regenerateFromStoredGeometry()
+            stitchPlan = nil
+        }
+    }
+
     @Published var statusMessage: String = "Drag in an image or SVG file to begin."
     @Published var errorMessage: String?
     @Published var isBusy = false
@@ -103,11 +115,17 @@ final class AppState: ObservableObject {
         var objects: [EmbroideryObject] = []
         for (i, shape) in lastRawShapes.enumerated() {
             let fitted = shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: lastCombinedBounds)
-            let rgb = (i < lastFillColors.count ? lastFillColors[i] : nil) ?? StitchPilotCore.RGBColor(hex: 0x000000)
+            let detectedRGB = (i < lastFillColors.count ? lastFillColors[i] : nil) ?? StitchPilotCore.RGBColor(hex: 0x000000)
+            let threadColor: StitchPilotCore.ThreadColor
+            if matchToThreadLibrary, let matched = ThreadLibrary.nearestMatch(to: detectedRGB) {
+                threadColor = matched
+            } else {
+                threadColor = .generic(detectedRGB, name: "Imported Color \(i + 1)")
+            }
             let parameters = StitchGenerationParameters()
             let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
             let object = EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
-                                           threadColor: .generic(rgb, name: "Imported Color \(i + 1)"), parameters: parameters)
+                                           threadColor: threadColor, parameters: parameters)
             objects.append(object)
         }
         document = StitchDocument(name: lastName, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: objects)

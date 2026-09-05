@@ -184,13 +184,28 @@ tests only checked shape *counts*, but breaks anything that checks pixel
 colors. Test helpers now build colors with `CGColor(colorSpace:components:)`
 directly in the context's own color space instead.
 
+## Phase 2 — Thread library and matching (implemented)
+
+`ThreadLibrary.swift` provides the matching engine spec §9 actually
+requires — `nearestMatch`/`nearestMatches` against any `[ThreadColor]`
+palette via `RGBColor.deltaE` — plus a ~40-entry generic palette
+(originally named, not sourced from or matched to any manufacturer's
+catalog: spec §9 explicitly says not to copy proprietary thread databases
+without licensing, "provide generic RGB/LAB thread matching regardless").
+Because the matching engine takes an arbitrary palette, a future "My
+Thread Inventory" (spec §9) or a licensed manufacturer catalog both slot in
+without changing `nearestMatch` itself — only the palette passed to it.
+
+Wired into the app: `AppState` now snaps each detected artwork color to its
+nearest thread match by default (a "Match to thread library" toggle turns
+this off to keep exact artwork colors instead), and the object list shows
+each object's matched thread name.
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster
   color region, anti-aliased edge handling)
-- Thread color matching (RGB/LAB + Delta-E) against a local thread library —
-  `RGBColor.deltaE` already exists and is reused here from color
-  quantization; the library itself (spec §9) is the remaining piece
+- Manufacturer thread catalogs, pending license research (spec §9)
 
 ## Phase 3 — planned
 

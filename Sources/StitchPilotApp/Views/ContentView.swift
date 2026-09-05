@@ -118,7 +118,10 @@ private struct ObjectListView: View {
                                         green: Double(object.threadColor.rgb.g) / 255,
                                         blue: Double(object.threadColor.rgb.b) / 255))
                             .frame(width: 12, height: 12)
-                        Text(object.name)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(object.name)
+                            Text(object.threadColor.name).font(.caption2).foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Text(object.stitchType.rawValue).font(.caption).foregroundStyle(.secondary)
                     }
@@ -158,6 +161,13 @@ private struct InspectorView: View {
                     }
                 }
                 Text("Only affects images — vector art keeps its own colors.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Thread Colors") {
+                Toggle("Match to thread library", isOn: $app.matchToThreadLibrary)
+                Text("Snaps each detected color to the nearest sewable thread color instead of the exact artwork color.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
