@@ -36,16 +36,67 @@ import Foundation
 /// to back), but an object is never moved ahead of something it must
 /// follow, so this can't scatter an ordering the artwork's nesting
 /// actually depends on.
+///
+/// `sequence` (below) uses each object's bounding-box *center* as its
+/// proximity proxy — cheap, but not what a machine actually travels
+/// to/from. `sequenceGenerated` uses the real first/last points of each
+/// object's already-generated stitch path instead, and additionally
+/// considers *reversing* a path (sewing it end-first) when that's the
+/// closer approach from wherever the previous object left off — a
+/// genuinely closer step toward jump-minimizing routing, since it
+/// measures the actual points a machine jumps from/to rather than a
+/// geometric proxy.
 public enum ObjectSequencer {
     public static func sequence(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
-        let n = objects.count
-        guard n > 1 else { return objects }
+        guard objects.count > 1 else { return objects }
+        let centers = objects.map { $0.shape.boundingBox.center }
+        let order = computeOrder(
+            boundingBoxes: objects.map { $0.shape.boundingBox },
+            colors: objects.map { $0.threadColor.rgb },
+            entryPoints: centers,
+            exitPoints: centers
+        )
+        return order.map { objects[$0.index] }
+    }
 
-        // predecessors[i]: indices that must be sewn before object i.
+    /// Like `sequence`, but for objects whose stitch points have already
+    /// been generated: uses each path's real start/end points for the
+    /// proximity heuristic instead of a bounding-box center, and reverses
+    /// a path (returning its points in the opposite order) when entering
+    /// from its end is the closer approach — the machine sews the same
+    /// shape either way, so there's no reason not to pick whichever
+    /// direction shortens the jump into it.
+    public static func sequenceGenerated(_ items: [(object: EmbroideryObject, points: [Point2D])]) -> [(object: EmbroideryObject, points: [Point2D])] {
+        guard items.count > 1 else { return items }
+        let order = computeOrder(
+            boundingBoxes: items.map { $0.object.shape.boundingBox },
+            colors: items.map { $0.object.threadColor.rgb },
+            entryPoints: items.map { $0.points.first! },
+            exitPoints: items.map { $0.points.last! }
+        )
+        return order.map { entry in
+            var item = items[entry.index]
+            if entry.reversed { item.points.reverse() }
+            return item
+        }
+    }
+
+    /// Shared scheduling core: builds the containment DAG from
+    /// `boundingBoxes` and greedily orders indices `0..<n`, preferring a
+    /// color match then minimum distance from whatever was placed before —
+    /// see the type-level doc comment. `entryPoints`/`exitPoints` are the
+    /// two ends each item could be approached from (identical for
+    /// `sequence`'s bounding-box-center proxy, the path's real two ends for
+    /// `sequenceGenerated`); `reversed` in the result says whether the
+    /// caller should present the item end-first.
+    private static func computeOrder(boundingBoxes: [BoundingBox], colors: [RGBColor], entryPoints: [Point2D], exitPoints: [Point2D]) -> [(index: Int, reversed: Bool)] {
+        let n = boundingBoxes.count
+
+        // predecessors[i]: indices that must be sewn before item i.
         var predecessors: [[Int]] = Array(repeating: [], count: n)
         for i in 0..<n {
             for j in 0..<n where j != i {
-                if isBackground(objects[j], relativeTo: objects[i]) {
+                if isBackground(boundingBoxes[j], relativeTo: boundingBoxes[i]) {
                     predecessors[i].append(j)
                 }
             }
@@ -57,15 +108,17 @@ public enum ObjectSequencer {
         }
 
         var ready = (0..<n).filter { inDegree[$0] == 0 }
-        var order: [Int] = []
+        var order: [(index: Int, reversed: Bool)] = []
         order.reserveCapacity(n)
-        var lastPlaced: Int?
+        var lastExitPoint: Point2D?
+        var lastColor: RGBColor?
 
         while !ready.isEmpty {
-            let chosen = bestCandidate(in: ready, objects: objects, lastPlaced: lastPlaced)
+            let (chosen, reversed) = bestCandidate(in: ready, colors: colors, entryPoints: entryPoints, exitPoints: exitPoints, lastExitPoint: lastExitPoint, lastColor: lastColor)
             ready.removeAll { $0 == chosen }
-            order.append(chosen)
-            lastPlaced = chosen
+            order.append((chosen, reversed))
+            lastExitPoint = reversed ? entryPoints[chosen] : exitPoints[chosen]
+            lastColor = colors[chosen]
             for successor in successors[chosen] {
                 inDegree[successor] -= 1
                 if inDegree[successor] == 0 { ready.append(successor) }
@@ -76,45 +129,49 @@ public enum ObjectSequencer {
         // margin), so it cannot cycle -- every index is placed exactly
         // once. This is a defensive fallback only, never expected to run.
         guard order.count == n else {
-            let placed = Set(order)
-            return order.map { objects[$0] } + (0..<n).filter { !placed.contains($0) }.map { objects[$0] }
+            let placed = Set(order.map { $0.index })
+            return order + (0..<n).filter { !placed.contains($0) }.map { ($0, false) }
         }
-        return order.map { objects[$0] }
+        return order
     }
 
-    /// Picks which ready (dependency-satisfied) object to place next.
-    private static func bestCandidate(in ready: [Int], objects: [EmbroideryObject], lastPlaced: Int?) -> Int {
-        guard let lastPlaced else {
+    /// Picks which ready (dependency-satisfied) item to place next, and
+    /// whether it should be entered from its "exit" end instead of its
+    /// "entry" end.
+    private static func bestCandidate(in ready: [Int], colors: [RGBColor], entryPoints: [Point2D], exitPoints: [Point2D], lastExitPoint: Point2D?, lastColor: RGBColor?) -> (index: Int, reversed: Bool) {
+        guard let lastExitPoint, let lastColor else {
             // Nothing sewn yet: no color or position to relate to, so keep
             // the earliest-authored candidate for stable, predictable output.
-            return ready.min()!
+            return (ready.min()!, false)
         }
-        let previous = objects[lastPlaced]
-        let previousCenter = previous.shape.boundingBox.center
 
-        let sameColor = ready.filter { objects[$0].threadColor.rgb == previous.threadColor.rgb }
+        let sameColor = ready.filter { colors[$0] == lastColor }
         let pool = sameColor.isEmpty ? ready : sameColor
 
-        return pool.min { a, b in
-            let da = objects[a].shape.boundingBox.center.distance(to: previousCenter)
-            let db = objects[b].shape.boundingBox.center.distance(to: previousCenter)
+        func approachDistance(_ i: Int) -> (distance: Double, reversed: Bool) {
+            let dEntry = entryPoints[i].distance(to: lastExitPoint)
+            let dExit = exitPoints[i].distance(to: lastExitPoint)
+            return dExit < dEntry ? (dExit, true) : (dEntry, false)
+        }
+
+        let chosen = pool.min { a, b in
+            let da = approachDistance(a).distance, db = approachDistance(b).distance
             if da != db { return da < db }
             return a < b
         }!
+        return (chosen, approachDistance(chosen).reversed)
     }
 
     /// True if `candidate`'s bounding box fully contains `other`'s and is
     /// meaningfully larger — not just larger by float rounding noise, which
     /// would make two near-identical overlapping shapes swap unpredictably.
-    private static func isBackground(_ candidate: EmbroideryObject, relativeTo other: EmbroideryObject) -> Bool {
-        let outer = candidate.shape.boundingBox
-        let inner = other.shape.boundingBox
-        guard !outer.isEmpty, !inner.isEmpty else { return false }
-        guard outer.minX <= inner.minX, outer.minY <= inner.minY, outer.maxX >= inner.maxX, outer.maxY >= inner.maxY else {
+    private static func isBackground(_ candidate: BoundingBox, relativeTo other: BoundingBox) -> Bool {
+        guard !candidate.isEmpty, !other.isEmpty else { return false }
+        guard candidate.minX <= other.minX, candidate.minY <= other.minY, candidate.maxX >= other.maxX, candidate.maxY >= other.maxY else {
             return false
         }
-        let outerArea = outer.width * outer.height
-        let innerArea = inner.width * inner.height
+        let outerArea = candidate.width * candidate.height
+        let innerArea = other.width * other.height
         return outerArea > innerArea * 1.05
     }
 }

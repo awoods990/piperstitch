@@ -40,30 +40,16 @@ public enum DigitizePipeline {
     /// `flatten(document).colorChangeCount + 1`.
     public static func colorSequence(for document: StitchDocument) throws -> [ThreadColor] {
         var colors: [ThreadColor] = []
-        for object in ObjectSequencer.sequence(document.objects) {
-            let points = try stitchPoints(for: object)
-            guard !points.isEmpty else { continue }
-            if colors.last?.rgb != object.threadColor.rgb {
-                colors.append(object.threadColor)
+        for entry in try sequencedGeneratedObjects(document) {
+            if colors.last?.rgb != entry.color.rgb {
+                colors.append(entry.color)
             }
         }
         return colors
     }
 
     public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
-        // Sequence first (spec §23: background/containing objects before
-        // the foreground details they contain — see ObjectSequencer), then
-        // generate (filtering out objects that produced no stitches) so
-        // tie-in/tie-off "is this the first/last object in its color run"
-        // lookahead is based on what will actually appear in the output,
-        // not on document.objects' raw indices — an empty-output object in
-        // between would otherwise misplace a lock stitch.
-        var generated: [(color: ThreadColor, points: [Point2D])] = []
-        for object in ObjectSequencer.sequence(document.objects) {
-            let points = try stitchPoints(for: object)
-            guard !points.isEmpty else { continue }
-            generated.append((object.threadColor, points))
-        }
+        let generated = try sequencedGeneratedObjects(document)
 
         var commands: [StitchCommand] = []
         var previousColor: ThreadColor?
@@ -108,6 +94,28 @@ public enum DigitizePipeline {
         commands.append(.trim)
         commands.append(.end)
         return StitchPlan(commands: commands)
+    }
+
+    /// Generates every object's stitch points first, independently of
+    /// order (generation never depends on what sews before/after an
+    /// object), then sequences the *results* with
+    /// `ObjectSequencer.sequenceGenerated` — which uses each path's real
+    /// first/last points (and can reverse a path to enter from whichever
+    /// end is closer) rather than a bounding-box-center proxy, since the
+    /// actual points now exist to measure from. Filtering out objects that
+    /// produced no stitches happens here, before sequencing, so tie-in/
+    /// tie-off "is this the first/last object in its color run" lookahead
+    /// in `flatten` is based on what will actually appear in the output,
+    /// not on `document.objects`' raw indices — an empty-output object in
+    /// between would otherwise misplace a lock stitch.
+    private static func sequencedGeneratedObjects(_ document: StitchDocument) throws -> [(color: ThreadColor, points: [Point2D])] {
+        var perObject: [(object: EmbroideryObject, points: [Point2D])] = []
+        for object in document.objects {
+            let points = try stitchPoints(for: object)
+            guard !points.isEmpty else { continue }
+            perObject.append((object, points))
+        }
+        return ObjectSequencer.sequenceGenerated(perObject).map { (color: $0.object.threadColor, points: $0.points) }
     }
 
     private static func stitchPoints(for object: EmbroideryObject) throws -> [Point2D] {

@@ -267,15 +267,27 @@ come from.
    end-cap jog. For fill, each scanline row's overall span (not each
    individual enter/exit pair, which would incorrectly nibble at a hole's
    boundary) is inset at its two outermost ends before resampling.
+9. **Endpoint-based object sequencing** (`ObjectSequencer.sequenceGenerated`,
+   this round): item #6's bounding-box-center proxy is exactly the
+   limitation item #6 itself named. `DigitizePipeline` now generates every
+   object's stitch points *first* (generation never depends on sew order),
+   then sequences the *results* using each path's real first/last points
+   for the proximity heuristic instead of a geometric proxy, and can
+   *reverse* a path (sewing it end-first) when that's the closer approach
+   from wherever the previous object left off — the machine sews the same
+   shape either way, so there's no reason not to pick whichever direction
+   shortens the jump into it. `sequence` (the bounding-box-center version)
+   is kept for callers that don't have generated points yet.
 
 ## Known remaining weaknesses
 
-- Object sequencing is a greedy heuristic (color match, then nearest
-  bounding-box center), not a real graph-based router over actual
-  generated stitch-path endpoints the way Ink/Stitch's `auto_satin` builds
-  for satin columns specifically — it doesn't guarantee a jump-minimal
-  order, only a better one than authoring order, and it can't reorder
-  across a containment constraint (nor should it).
+- Object sequencing is still a greedy heuristic (color match, then
+  nearest point), not a real graph-based router the way Ink/Stitch's
+  `auto_satin` builds for satin columns specifically (which restructures
+  the column itself into a running-stitch graph and finds a path through
+  it, not just orders whole pre-built objects) — it doesn't guarantee a
+  jump-minimal order, only a better one than authoring order, and it can't
+  reorder across a containment constraint (nor should it).
 - No contour fill (needs a robust repeated polygon-offset primitive this
   project doesn't have yet).
 - Width-aware satin splitting classifies each crossing independently
@@ -316,12 +328,12 @@ come from.
 1. Contour fill, once a real polygon-offset primitive exists.
 2. Tighten `ObjectSequencer`'s containment check from bounding-box to
    actual polygon containment.
-3. Move `ObjectSequencer`'s proximity heuristic from bounding-box centers
-   to actual generated stitch-path endpoints (the point a machine would
-   really jump from/to), and consider a real graph-based router over those
-   endpoints for satin objects specifically, the way `auto_satin.py` does —
-   the bounding-box-center version above is a real improvement over
-   authoring order but still a proxy, not the thing itself.
+3. A real graph-based router for satin objects specifically, the way
+   `auto_satin.py` does — restructuring a satin column into a
+   running-stitch graph and finding a path through it, rather than
+   `ObjectSequencer`'s current per-object greedy ordering (which now uses
+   real endpoints and can reverse a path, but still treats each object as
+   an atomic, pre-built unit).
 4. Smooth the stitch-density transition at a width-aware satin split's
    narrow/wide seam (see `generatePartial`'s known limitation above) —
    currently a clean but abrupt technique change at the boundary.

@@ -4,6 +4,35 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Endpoint-based object sequencing (stitch-conversion performance)
+
+### Added
+- `DigitizePipeline` now generates every object's stitch points first,
+  independently of sew order, then sequences the *results* — closing the
+  gap the previous sequencing round named as its own limitation (a
+  bounding-box center is a cheap proxy for where a machine actually jumps
+  from/to, not the real thing).
+- `ObjectSequencer.sequenceGenerated`: the same containment-respecting,
+  color-preferring greedy scheduler as `sequence`, but measuring distance
+  from each generated path's real first/last points instead of a
+  bounding-box center, and able to *reverse* a path (sew it end-first)
+  when that's the closer approach from wherever the previous object left
+  off — the machine sews an identical shape either direction, so there's
+  no reason not to pick whichever shortens the jump into it. `sequence`
+  itself is refactored to share the same scheduling core (with entry and
+  exit both set to the bounding-box center, so reversal is always a
+  no-op) and is kept for callers without generated points yet.
+- 2 new tests (`sequenceGeneratedReversesPathForCloserApproach`,
+  `sequenceGeneratedDoesNotReverseWhenAlreadyCloser`); all pre-existing
+  `ObjectSequencer` and `DigitizePipeline` tests pass unchanged.
+
+### Known limitations at this stage
+- Still a greedy heuristic, not a jump-minimal solve, and still treats
+  each object as an atomic pre-built unit rather than restructuring a
+  satin column into a routable graph the way Ink/Stitch's `auto_satin.py`
+  does — see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next
+  improvements."
+
 ## Push compensation (stitch-conversion performance)
 
 ### Added

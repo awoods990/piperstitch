@@ -456,6 +456,34 @@ differently-shaped one — there's no calibration data yet to justify pull
 and push having different curves, consistent with this calculator's
 existing "heuristic, not calibrated" caveat.
 
+## Phase 3 (continued) — endpoint-based object sequencing (implemented)
+
+The previous sequencing pass named its own limitation directly: a
+bounding-box center is a cheap proxy, not the point a machine actually
+jumps from/to. `DigitizePipeline` now restructures around that gap
+instead of just noting it:
+
+- Every object's stitch points are generated *first*, independently of
+  sew order (generation never depended on neighboring objects to begin
+  with, so this reorders work rather than changing what gets computed).
+- `ObjectSequencer` gained `sequenceGenerated`, which runs the same
+  containment-respecting, color-preferring scheduler as before but
+  measures distance using each generated path's real first/last points
+  instead of a bounding-box center — and can *reverse* a path (return its
+  points end-first) when that's the closer approach from wherever the
+  previous object left off. The machine sews an identical shape either
+  direction, so there's no reason not to pick whichever one shortens the
+  jump into it.
+- The original `sequence` (bounding-box-center proxy, no reversal) is
+  kept for any caller that needs an order before stitch points exist.
+
+Still a greedy heuristic, not a jump-minimal solve, and still can't
+reorder across a containment constraint (nor should it) — see
+`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements" for
+what a real graph-based router (restructuring a satin column itself into
+a routable graph, the way Ink/Stitch's `auto_satin.py` does, rather than
+ordering whole pre-built objects) would need beyond this.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later

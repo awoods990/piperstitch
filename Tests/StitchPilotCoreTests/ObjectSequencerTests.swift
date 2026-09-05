@@ -92,6 +92,38 @@ struct ObjectSequencerTests {
         #expect(outerPos < innerPos)
     }
 
+    @Test func sequenceGeneratedReversesPathForCloserApproach() {
+        let color: UInt32 = 0x000000
+        let first = square(0, 0, 1, name: "first", color: color) // shape geometry is irrelevant here; only points matter
+        let second = square(0, 0, 1, name: "second", color: color)
+
+        // "first" ends at (10,0). "second" runs (0,5) -> (10,5): entering
+        // from its far end (0,5) is an 11.18mm reach, but entering from its
+        // near end (10,5) is only 5mm -- sewing it end-first is closer.
+        let items = [
+            (object: first, points: [Point2D(0, 0), Point2D(10, 0)]),
+            (object: second, points: [Point2D(0, 5), Point2D(10, 5)]),
+        ]
+        let sequenced = ObjectSequencer.sequenceGenerated(items)
+        #expect(sequenced.map { $0.object.name } == ["first", "second"])
+        #expect(sequenced[1].points == [Point2D(10, 5), Point2D(0, 5)])
+    }
+
+    @Test func sequenceGeneratedDoesNotReverseWhenAlreadyCloser() {
+        let color: UInt32 = 0x000000
+        let first = square(0, 0, 1, name: "first", color: color)
+        let second = square(0, 0, 1, name: "second", color: color)
+
+        // Same shapes as above, but "second"'s points are pre-flipped so its
+        // near end (10,5) is already first -- no reversal should happen.
+        let items = [
+            (object: first, points: [Point2D(0, 0), Point2D(10, 0)]),
+            (object: second, points: [Point2D(10, 5), Point2D(0, 5)]),
+        ]
+        let sequenced = ObjectSequencer.sequenceGenerated(items)
+        #expect(sequenced[1].points == [Point2D(10, 5), Point2D(0, 5)])
+    }
+
     @Test func integratesWithDigitizePipelineColorSequenceConsistently() throws {
         let inner = square(45, 45, 10, name: "inner")
         var outer = square(0, 0, 100, name: "outer")
