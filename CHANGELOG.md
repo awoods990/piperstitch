@@ -4,6 +4,44 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Object Inspector: manual per-object overrides before export
+
+### Added
+- The object list is now selectable (`List(..., selection:)` bound to a
+  new `AppState.selectedObjectID`), and the Inspector panel gained an
+  "Selected Object" section shown whenever an object is selected: stitch
+  type (running/triple-run/satin/fill), the parameters relevant to that
+  stitch type (stitch length; satin density/max width/min width; fill row
+  spacing and angle), underlay type, and pull/push compensation for
+  satin/fill objects — every "automatic" (`nil`) field gets an Automatic
+  toggle that reveals a manual value when turned off. `AppState.
+  updateSelectedObject` writes the edit straight into the master
+  document. This is the first UI surface for the per-object override
+  capability `StitchGenerationParameters` has had since Phase 3 — every
+  field this round's engine work added (push/pull compensation, minimum
+  satin width) was already overridable in the model, just not reachable
+  from the app.
+- Deliberately exposes the fields a digitizer reaches for regularly, not
+  every one of the ~15 fields `StitchGenerationParameters` has (underlay
+  inset, fill row stagger, and filter thresholds stay engine defaults for
+  now).
+- Edits update the document immediately but don't re-flatten the stitch
+  plan on every keystroke, the same "edit, then explicitly regenerate"
+  pattern resizing already uses — click Auto Digitize to see the result.
+  A caption in the panel says so, so it doesn't read as broken.
+
+### Known limitations at this stage
+- Automated UI verification isn't available in this environment (no
+  Screen Recording permission for the tooling here, so screenshots come
+  back black) — this was verified via successful compilation and manual
+  code review of the binding logic, not by actually driving the app.
+  Worth a quick manual click-through before relying on it.
+- `selectedObjectID` doesn't get explicitly cleared when the document is
+  fully rebuilt (import, resize, project load); it's self-healing instead
+  (`selectedObject` returns nil once the id no longer matches anything in
+  the new document), which is simpler but means the list's internal
+  selection state can point at a UUID nothing displays as selected.
+
 ## Minimum satin width, for lettering quality
 
 ### Added

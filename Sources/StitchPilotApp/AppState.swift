@@ -57,6 +57,33 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var isBusy = false
 
+    /// The object list's current selection, for manual per-object parameter
+    /// overrides (the Object Inspector). Self-healing rather than reset
+    /// everywhere a new object set replaces the old one (import, resize,
+    /// project load all mint fresh `EmbroideryObject` ids): `selectedObject`
+    /// below simply returns nil once the id no longer matches anything in
+    /// the current document, which naturally clears the inspector.
+    @Published var selectedObjectID: EmbroideryObject.ID?
+
+    var selectedObject: EmbroideryObject? {
+        guard let id = selectedObjectID, let document else { return nil }
+        return document.objects.first { $0.id == id }
+    }
+
+    /// Applies `transform` to the selected object's stored copy in the
+    /// document (spec: manual per-object overrides before export). This
+    /// only updates the master document -- it deliberately does not
+    /// re-flatten the stitch plan on every edit, the same way resizing or
+    /// changing the hoop doesn't either; Auto Digitize is the one explicit
+    /// "regenerate now" action, so a user typing into a density field
+    /// doesn't trigger a full re-digitize on every keystroke.
+    func updateSelectedObject(_ transform: (inout EmbroideryObject) -> Void) {
+        guard let id = selectedObjectID, var current = document,
+              let index = current.objects.firstIndex(where: { $0.id == id }) else { return }
+        transform(&current.objects[index])
+        document = current
+    }
+
     private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
 
     func openArtworkWithPanel() {

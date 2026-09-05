@@ -108,7 +108,7 @@ private struct ObjectListView: View {
             Text("Objects").font(.headline).padding(12)
             Divider()
             if let document = app.document, !document.objects.isEmpty {
-                List(document.objects) { object in
+                List(document.objects, selection: $app.selectedObjectID) { object in
                     HStack {
                         Circle()
                             .fill(Color(red: Double(object.threadColor.rgb.r) / 255,
@@ -122,6 +122,7 @@ private struct ObjectListView: View {
                         Spacer()
                         Text(object.stitchType.rawValue).font(.caption).foregroundStyle(.secondary)
                     }
+                    .tag(object.id)
                 }
                 .listStyle(.sidebar)
             } else {
@@ -138,6 +139,10 @@ private struct InspectorView: View {
 
     var body: some View {
         Form {
+            if app.selectedObject != nil {
+                ObjectInspectorSection()
+            }
+
             Section("Finished Size") {
                 HStack {
                     TextField("Width (mm)", value: $app.physicalWidthMM, format: .number)
@@ -239,6 +244,104 @@ private struct InspectorView: View {
         case .normalEmbroidery: return "Normal Embroidery"
         case .productionEfficient: return "Production Efficient"
         case .minimalColors: return "Minimal Colors"
+        }
+    }
+}
+
+/// Manual per-object overrides before the embroidery file is created: pick
+/// an object in the list, then override its stitch type or any of the
+/// generation parameters the engine otherwise chooses automatically.
+/// `StitchGenerationParameters` supports many more knobs than shown here
+/// (underlay inset, fill row stagger, filter thresholds); this exposes the
+/// ones a digitizer actually reaches for regularly, not every field.
+/// Edits update the master document immediately but don't re-flatten the
+/// stitch plan on every keystroke — click Auto Digitize to see the result,
+/// the same "edit, then explicitly regenerate" flow resizing already uses.
+private struct ObjectInspectorSection: View {
+    @EnvironmentObject var app: AppState
+
+    var body: some View {
+        Section("Selected Object") {
+            if let object = app.selectedObject {
+                Text(object.name).font(.headline)
+
+                Picker("Stitch Type", selection: binding(object, \.stitchType)) {
+                    ForEach(StitchType.allCases, id: \.self) { type in
+                        Text(label(for: type)).tag(type)
+                    }
+                }
+
+                switch object.stitchType {
+                case .runningStitch, .tripleRun:
+                    TextField("Stitch Length (mm)", value: binding(object, \.parameters.stitchLengthMM), format: .number)
+                case .satin:
+                    TextField("Density (mm)", value: binding(object, \.parameters.satinDensityMM), format: .number)
+                    TextField("Max Width (mm)", value: binding(object, \.parameters.maxSatinWidthMM), format: .number)
+                    TextField("Min Width (mm)", value: binding(object, \.parameters.minSatinWidthMM), format: .number)
+                case .tatamiFill:
+                    TextField("Row Spacing (mm)", value: binding(object, \.parameters.fillSpacingMM), format: .number)
+                    optionalDoubleField(object, label: "Fill Angle (°)", keyPath: \.parameters.fillAngleDegrees, defaultManualValue: 0)
+                }
+
+                if object.stitchType == .satin || object.stitchType == .tatamiFill {
+                    Picker("Underlay", selection: binding(object, \.parameters.underlayType)) {
+                        Text("Automatic").tag(UnderlayType?.none)
+                        ForEach(UnderlayType.allCases, id: \.self) { type in
+                            Text(label(for: type)).tag(UnderlayType?.some(type))
+                        }
+                    }
+                    optionalDoubleField(object, label: "Pull Compensation (mm)", keyPath: \.parameters.pullCompensationMM, defaultManualValue: 0.2)
+                    optionalDoubleField(object, label: "Push Compensation (mm)", keyPath: \.parameters.pushCompensationMM, defaultManualValue: 0.2)
+                }
+
+                Text("Applies the next time you click Auto Digitize.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// `object` is the current render pass's already-unwrapped selected
+    /// object, used only as the fallback value if the selection changes out
+    /// from under a binding's `get` between renders -- always overridden by
+    /// `app.selectedObject`'s live value when it's still present.
+    private func binding<T>(_ object: EmbroideryObject, _ keyPath: WritableKeyPath<EmbroideryObject, T>) -> Binding<T> {
+        Binding(
+            get: { app.selectedObject?[keyPath: keyPath] ?? object[keyPath: keyPath] },
+            set: { newValue in app.updateSelectedObject { $0[keyPath: keyPath] = newValue } }
+        )
+    }
+
+    @ViewBuilder
+    private func optionalDoubleField(_ object: EmbroideryObject, label: String, keyPath: WritableKeyPath<EmbroideryObject, Double?>, defaultManualValue: Double) -> some View {
+        let isAutomatic = Binding<Bool>(
+            get: { (app.selectedObject?[keyPath: keyPath] ?? object[keyPath: keyPath]) == nil },
+            set: { auto in app.updateSelectedObject { $0[keyPath: keyPath] = auto ? nil : defaultManualValue } }
+        )
+        Toggle("\(label): Automatic", isOn: isAutomatic)
+        if !isAutomatic.wrappedValue {
+            TextField(label, value: Binding(
+                get: { app.selectedObject?[keyPath: keyPath] ?? object[keyPath: keyPath] ?? defaultManualValue },
+                set: { newValue in app.updateSelectedObject { $0[keyPath: keyPath] = newValue } }
+            ), format: .number)
+        }
+    }
+
+    private func label(for type: StitchType) -> String {
+        switch type {
+        case .runningStitch: return "Running Stitch"
+        case .tripleRun: return "Triple Run"
+        case .satin: return "Satin"
+        case .tatamiFill: return "Tatami Fill"
+        }
+    }
+
+    private func label(for type: UnderlayType) -> String {
+        switch type {
+        case .none: return "None"
+        case .centerRun: return "Center Run"
+        case .edgeRun: return "Edge Run"
+        case .zigzag: return "Zigzag"
         }
     }
 }
