@@ -298,10 +298,28 @@ separately at export time in `DSTFormat`) — it exists so an overly long
 stitch never reaches export looking like a plausible design choice instead
 of the defect it is.
 
+## Phase 3 — Tie-in/tie-off (implemented)
+
+`TieStitchGenerator.swift` anchors a thread end without a visible knot
+(spec §27) with a short "there and back": step `0.5mm` in the direction the
+real stitching is about to go (tie-in) or just came from (tie-off), then
+return to the anchor point. Under tension this locks the thread the way a
+hand-sewer's back-stitch does.
+
+Applied in `DigitizePipeline.flatten` at thread-*engagement* boundaries, not
+per object: a tie-in goes on the first object of a new color run (the very
+first object in the design, or the first one after a color change), and a
+tie-off on the last object of a run (right before the trim that follows,
+or the design's final trim). Same-color objects sewn back to back share one
+continuous thread and don't need re-anchoring between them — run detection
+looks ahead/behind by thread color across the *filtered* (non-empty-output)
+object list, so an object that happened to produce zero stitches can't
+shift a lock stitch onto the wrong neighbor.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, travel routing, jump/trim optimization,
-tie-in/tie-off, corner handling, and smarter sequencing.
+corner handling, and smarter sequencing.
 
 ## Phase 4 — planned
 

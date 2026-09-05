@@ -47,6 +47,15 @@ works" — `README.md`'s feature list is aspirational/target state.
   stitch transition gap, which only a pass running after concatenation
   can see.
 
+### Added (continued)
+- Tie-in/tie-off (`TieStitchGenerator.swift`, spec §27): a short "there and
+  back" lock stitch anchors each thread engagement without a visible knot.
+  Applied once per color *run* in `DigitizePipeline.flatten` (tie-in on the
+  first object of a run, tie-off on the last), not per object — same-color
+  objects sewn back to back share one thread and don't need re-anchoring
+  between them. Run detection operates on the filtered (non-empty-output)
+  object list so a zero-stitch object can't misplace a lock stitch.
+
 ### Known limitations at this stage
 - Edge-run underlay's polygon inset is a naive per-vertex approximation —
   doesn't handle self-intersection on sharp concave corners.
@@ -54,8 +63,8 @@ works" — `README.md`'s feature list is aspirational/target state.
   yet exposed as an editable value in the app UI.
 - Fill's pull compensation doesn't shrink holes to match the outer
   boundary's outward growth.
-- No object overlap, travel routing, jump/trim optimization, tie-in/
-  tie-off, or smarter sequencing yet.
+- No object overlap, travel routing, jump/trim optimization, or smarter
+  sequencing yet.
 
 ## Phase 2 — Basic Auto Digitizing (complete)
 
