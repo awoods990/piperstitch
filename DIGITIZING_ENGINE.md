@@ -321,6 +321,33 @@ shift a lock stitch onto the wrong neighbor.
 Object overlap/inset-outset, travel routing, jump/trim optimization,
 corner handling, and smarter sequencing.
 
+## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
+
+`QualityAnalyzer.swift` runs automatically right after Auto Digitize (not
+as a separate manual step) and produces an `EmbroideryReadinessReport`:
+a 0–100 score plus a list of `QualityIssue`s, each an actionable, specific
+statement (spec §50: never "Design has a density problem" — always the
+actual numbers) with a severity (`info`/`warning`/`critical`) and a score
+penalty. `report.isReadyToSew` is `true` only when no issue is critical,
+surfaced in the app as spec §76's "Ready to Sew" / "Review Recommended."
+
+Checks implemented now, all computable from stitch geometry alone: stitches
+under 0.15mm or over 12.5mm slipping past `StitchFilter` (finding one here
+means a generator produced something the shared filter should have caught
+— a real defect, not a style choice), jumps longer than 15mm, an unusually
+high trim or stitch count, whether the design fits a given hoop size
+(critical if not — pass `hoopWidthMM`/`hoopHeightMM` when a hoop is
+selected; skipped entirely otherwise rather than guessing), and an empty
+design.
+
+**Deliberately not implemented yet**, rather than faked: fabric suitability
+(no fabric profiles exist — Phase 5), a real needle-penetration density
+heatmap (spec §31 — needs per-region stitch-count accumulation, not just
+global counts), small-text/small-detail detection (needs font/text-region
+awareness), and the automatic-repair loop (spec §34 — re-analyze after
+fixing until the score stabilizes). Those are Phase 4/5 follow-ups; this is
+the honest "what the engine can actually check today" slice.
+
 ## Phase 4 — planned
 
 Density heatmap, the Embroidery Readiness Score, automatic repair loop.

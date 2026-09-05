@@ -181,8 +181,50 @@ private struct InspectorView: View {
                     LabeledContent("Max stitch", value: String(format: "%.2f mm", plan.maxStitchLength()))
                 }
             }
+
+            if let report = app.readinessReport {
+                Section {
+                    HStack {
+                        Text(report.isReadyToSew ? "Ready to Sew" : "Review Recommended")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(report.score)/100")
+                            .font(.headline)
+                            .foregroundStyle(report.isReadyToSew ? .green : .orange)
+                    }
+                    if report.issues.isEmpty {
+                        Label("No issues found.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.caption)
+                    } else {
+                        ForEach(Array(report.issues.enumerated()), id: \.offset) { _, issue in
+                            Label(issue.message, systemImage: icon(for: issue.severity))
+                                .font(.caption)
+                                .foregroundStyle(color(for: issue.severity))
+                        }
+                    }
+                } header: {
+                    Text("Embroidery Readiness")
+                }
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private func icon(for severity: IssueSeverity) -> String {
+        switch severity {
+        case .info: return "info.circle"
+        case .warning: return "exclamationmark.triangle"
+        case .critical: return "xmark.octagon.fill"
+        }
+    }
+
+    private func color(for severity: IssueSeverity) -> Color {
+        switch severity {
+        case .info: return .secondary
+        case .warning: return .orange
+        case .critical: return .red
+        }
     }
 
     private func presetLabel(_ preset: ColorQuantizationPreset) -> String {

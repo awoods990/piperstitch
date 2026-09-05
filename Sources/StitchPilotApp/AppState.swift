@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 final class AppState: ObservableObject {
     @Published var document: StitchDocument?
     @Published var stitchPlan: StitchPlan?
+    @Published var readinessReport: EmbroideryReadinessReport?
     @Published var physicalWidthMM: Double = 100
     @Published var physicalHeightMM: Double = 100
     @Published var lockAspectRatio: Bool = true
@@ -38,6 +39,7 @@ final class AppState: ObservableObject {
             guard oldValue != matchToThreadLibrary, !lastRawShapes.isEmpty else { return }
             regenerateFromStoredGeometry()
             stitchPlan = nil
+            readinessReport = nil
         }
     }
 
@@ -83,6 +85,7 @@ final class AppState: ObservableObject {
             rebuildDocument(rawShapes: rawShapes, fillColors: fillColors, combinedBounds: combined, name: url.deletingPathExtension().lastPathComponent)
             statusMessage = "Imported \(rawShapes.count) shape(s) from \(url.lastPathComponent). Set size and click Auto Digitize."
             stitchPlan = nil
+            readinessReport = nil
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -109,6 +112,7 @@ final class AppState: ObservableObject {
         guard !lastRawShapes.isEmpty else { return }
         regenerateFromStoredGeometry()
         stitchPlan = nil
+        readinessReport = nil
     }
 
     private func regenerateFromStoredGeometry() {
@@ -135,8 +139,14 @@ final class AppState: ObservableObject {
         guard let document else { return }
         errorMessage = nil
         do {
-            stitchPlan = try DigitizePipeline.flatten(document)
-            statusMessage = "\(stitchPlan?.stitchCount ?? 0) stitches, \(stitchPlan?.colorChangeCount ?? 0) color change(s)."
+            let plan = try DigitizePipeline.flatten(document)
+            stitchPlan = plan
+            // Quality analysis (spec §33/§76) runs automatically right
+            // after generation, not as a separate manual step — the user
+            // should see whether a design is ready to sew as part of
+            // seeing the preview, not have to remember to ask for it.
+            readinessReport = QualityAnalyzer.analyze(plan)
+            statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
         } catch {
             errorMessage = friendlyMessage(for: error)
         }

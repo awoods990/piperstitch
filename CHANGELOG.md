@@ -4,6 +4,23 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Phase 4 — Quality Engine (started early, alongside Phase 3)
+
+### Added
+- Quality analyzer (`QualityAnalyzer.swift`, spec §33/§76): produces a
+  0–100 Embroidery Readiness Score plus specific, actionable issues
+  (never a vague "density problem" — always the actual numbers involved),
+  each tagged info/warning/critical. Checks: sub-minimum or excessive
+  stitch lengths that slipped past `StitchFilter`, long jumps, high trim/
+  stitch counts, hoop fit (critical if the design doesn't fit a given
+  hoop), and empty designs. Runs automatically right after Auto Digitize,
+  not as a separate step. Wired into the app: an "Embroidery Readiness"
+  panel shows the score and issue list, matching spec §76's "Ready to
+  Sew" / "Review Recommended."
+- Deliberately not implemented yet (see DIGITIZING_ENGINE.md for why):
+  fabric suitability, a real per-region density heatmap, small-text
+  detection, and the automatic-repair loop.
+
 ## Phase 3 — Professional Digitizing (in progress)
 
 ### Added
