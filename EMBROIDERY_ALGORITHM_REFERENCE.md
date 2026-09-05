@@ -278,6 +278,17 @@ come from.
    shape either way, so there's no reason not to pick whichever direction
    shortens the jump into it. `sequence` (the bounding-box-center version)
    is kept for callers that don't have generated points yet.
+10. **True polygon containment for `ObjectSequencer`** (this round):
+    `isBackground` now tests whether every point of the candidate's outer
+    boundary actually falls inside the containing shape's outer polygon
+    (`PolygonGeometry.pointInPolygon`, a new even-odd ray-casting test,
+    plus polygon area via the existing `signedArea` instead of bounding-box
+    area), not just whether the bounding boxes nest. A concave (e.g.
+    L-shaped) object can have a bounding box that encloses something
+    sitting entirely in its notch, outside its real area — a case the
+    previous bounding-box-only check would misclassify as containment and
+    wrongly reorder. The bounding-box check is kept as a cheap pre-check
+    before the real (more expensive) polygon test.
 
 ## Known remaining weaknesses
 
@@ -303,11 +314,13 @@ come from.
   (principal axis), not by the fuller scoring spec §6 describes (visual
   appearance, travel efficiency, neighboring-object direction) — those
   additional signals aren't wired in yet.
-- `ObjectSequencer`'s containment check uses bounding boxes, not actual
-  shape geometry — two non-overlapping shapes with one's bounding box
-  coincidentally enclosing the other's would be treated as nested. Rare in
-  practice for typical logo/badge artwork, but a real approximation worth
-  tightening (an actual polygon-containment test) if it causes problems.
+- `ObjectSequencer`'s polygon containment test only checks the *outer*
+  boundary of each shape (`subPaths.first`), ignoring holes — an object
+  sitting inside another's hole (visually outside the shape, even though
+  geometrically inside its outer boundary) would still be misclassified
+  as contained. Rare for typical logo/badge artwork; a real fix needs an
+  even-odd test against all of a shape's sub-paths together, not just the
+  first.
 - No physical stitch-out calibration exists for any of this — all
   compensation/density values remain rule-based estimates pending real
   sew-out data, consistent with `PullCompensationCalculator`'s existing
@@ -326,14 +339,15 @@ come from.
 ## Recommended next improvements, in priority order
 
 1. Contour fill, once a real polygon-offset primitive exists.
-2. Tighten `ObjectSequencer`'s containment check from bounding-box to
-   actual polygon containment.
-3. A real graph-based router for satin objects specifically, the way
+2. A real graph-based router for satin objects specifically, the way
    `auto_satin.py` does — restructuring a satin column into a
    running-stitch graph and finding a path through it, rather than
    `ObjectSequencer`'s current per-object greedy ordering (which now uses
    real endpoints and can reverse a path, but still treats each object as
    an atomic, pre-built unit).
-4. Smooth the stitch-density transition at a width-aware satin split's
+3. Smooth the stitch-density transition at a width-aware satin split's
    narrow/wide seam (see `generatePartial`'s known limitation above) —
    currently a clean but abrupt technique change at the boundary.
+4. Extend `ObjectSequencer`'s polygon containment test to all of a
+   shape's sub-paths (not just the outer boundary), so an object sitting
+   inside another's hole isn't misclassified as contained.

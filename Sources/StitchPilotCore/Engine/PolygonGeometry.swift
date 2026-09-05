@@ -17,6 +17,25 @@ public enum PolygonGeometry {
         return sum / 2
     }
 
+    /// Even-odd ray-casting point-in-polygon test: casts a ray from `point`
+    /// in the +x direction and counts edge crossings: odd = inside. Treats
+    /// `polygon` as implicitly closed (tests the edge from the last point
+    /// back to the first), matching every other polygon helper here.
+    public static func pointInPolygon(_ point: Point2D, polygon: [Point2D]) -> Bool {
+        guard polygon.count >= 3 else { return false }
+        var inside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let pi = polygon[i], pj = polygon[j]
+            if (pi.y > point.y) != (pj.y > point.y) {
+                let crossingX = (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x
+                if point.x < crossingX { inside.toggle() }
+            }
+            j = i
+        }
+        return inside
+    }
+
     /// The polygon's elongation direction (unit vector) via the covariance
     /// matrix's principal eigenvector, and its centroid.
     public static func principalAxis(_ points: [Point2D]) -> (axis: Point2D, mean: Point2D) {

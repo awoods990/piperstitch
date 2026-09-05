@@ -19,7 +19,13 @@ import Foundation
 /// 1. Containment defines a strict partial order (a "must sew before"
 ///    edge from each containing object to each object it contains) —
 ///    strict because `isBackground` requires a >5% area margin, so it
-///    can't produce a cycle.
+///    can't produce a cycle. Containment is a true polygon test (every
+///    point of the contained shape's outer boundary must actually fall
+///    inside the containing shape's outer boundary), not just a
+///    bounding-box comparison: a concave (e.g. L-shaped) object can have a
+///    bounding box that encloses something sitting entirely in its notch,
+///    outside its real area, which a bounding-box-only check would
+///    misclassify as nested.
 /// 2. Repeatedly choose the next object from those with no unresolved
 ///    "must sew before me" edges (a topological-sort "ready set"),
 ///    preferring (a) the same thread color as whatever was just placed —
@@ -51,7 +57,7 @@ public enum ObjectSequencer {
         guard objects.count > 1 else { return objects }
         let centers = objects.map { $0.shape.boundingBox.center }
         let order = computeOrder(
-            boundingBoxes: objects.map { $0.shape.boundingBox },
+            shapes: objects.map { $0.shape },
             colors: objects.map { $0.threadColor.rgb },
             entryPoints: centers,
             exitPoints: centers
@@ -69,7 +75,7 @@ public enum ObjectSequencer {
     public static func sequenceGenerated(_ items: [(object: EmbroideryObject, points: [Point2D])]) -> [(object: EmbroideryObject, points: [Point2D])] {
         guard items.count > 1 else { return items }
         let order = computeOrder(
-            boundingBoxes: items.map { $0.object.shape.boundingBox },
+            shapes: items.map { $0.object.shape },
             colors: items.map { $0.object.threadColor.rgb },
             entryPoints: items.map { $0.points.first! },
             exitPoints: items.map { $0.points.last! }
@@ -81,22 +87,22 @@ public enum ObjectSequencer {
         }
     }
 
-    /// Shared scheduling core: builds the containment DAG from
-    /// `boundingBoxes` and greedily orders indices `0..<n`, preferring a
-    /// color match then minimum distance from whatever was placed before —
-    /// see the type-level doc comment. `entryPoints`/`exitPoints` are the
-    /// two ends each item could be approached from (identical for
-    /// `sequence`'s bounding-box-center proxy, the path's real two ends for
+    /// Shared scheduling core: builds the containment DAG from `shapes`
+    /// and greedily orders indices `0..<n`, preferring a color match then
+    /// minimum distance from whatever was placed before — see the
+    /// type-level doc comment. `entryPoints`/`exitPoints` are the two ends
+    /// each item could be approached from (identical for `sequence`'s
+    /// bounding-box-center proxy, the path's real two ends for
     /// `sequenceGenerated`); `reversed` in the result says whether the
     /// caller should present the item end-first.
-    private static func computeOrder(boundingBoxes: [BoundingBox], colors: [RGBColor], entryPoints: [Point2D], exitPoints: [Point2D]) -> [(index: Int, reversed: Bool)] {
-        let n = boundingBoxes.count
+    private static func computeOrder(shapes: [VectorShape], colors: [RGBColor], entryPoints: [Point2D], exitPoints: [Point2D]) -> [(index: Int, reversed: Bool)] {
+        let n = shapes.count
 
         // predecessors[i]: indices that must be sewn before item i.
         var predecessors: [[Int]] = Array(repeating: [], count: n)
         for i in 0..<n {
             for j in 0..<n where j != i {
-                if isBackground(boundingBoxes[j], relativeTo: boundingBoxes[i]) {
+                if isBackground(shapes[j], relativeTo: shapes[i]) {
                     predecessors[i].append(j)
                 }
             }
@@ -162,16 +168,33 @@ public enum ObjectSequencer {
         return (chosen, approachDistance(chosen).reversed)
     }
 
-    /// True if `candidate`'s bounding box fully contains `other`'s and is
-    /// meaningfully larger — not just larger by float rounding noise, which
-    /// would make two near-identical overlapping shapes swap unpredictably.
-    private static func isBackground(_ candidate: BoundingBox, relativeTo other: BoundingBox) -> Bool {
-        guard !candidate.isEmpty, !other.isEmpty else { return false }
-        guard candidate.minX <= other.minX, candidate.minY <= other.minY, candidate.maxX >= other.maxX, candidate.maxY >= other.maxY else {
+    /// True if `candidate`'s outer boundary genuinely contains `other`'s
+    /// outer boundary and is meaningfully larger — not just larger by float
+    /// rounding noise, which would make two near-identical overlapping
+    /// shapes swap unpredictably. A bounding-box check alone isn't enough:
+    /// an L-shaped (or otherwise concave) candidate can have a bounding box
+    /// that encloses another shape sitting in its notch, entirely outside
+    /// the candidate's actual area — the bounding-box test is kept only as
+    /// a cheap pre-check before the real one.
+    private static func isBackground(_ candidate: VectorShape, relativeTo other: VectorShape) -> Bool {
+        guard let candidateOuter = candidate.subPaths.first?.points, candidateOuter.count >= 3,
+              let otherOuter = other.subPaths.first?.points, !otherOuter.isEmpty else {
             return false
         }
-        let outerArea = candidate.width * candidate.height
-        let innerArea = other.width * other.height
+
+        let candidateBox = candidate.boundingBox, otherBox = other.boundingBox
+        guard !candidateBox.isEmpty, !otherBox.isEmpty,
+              candidateBox.minX <= otherBox.minX, candidateBox.minY <= otherBox.minY,
+              candidateBox.maxX >= otherBox.maxX, candidateBox.maxY >= otherBox.maxY else {
+            return false
+        }
+
+        guard otherOuter.allSatisfy({ PolygonGeometry.pointInPolygon($0, polygon: candidateOuter) }) else {
+            return false
+        }
+
+        let outerArea = abs(PolygonGeometry.signedArea(candidateOuter))
+        let innerArea = abs(PolygonGeometry.signedArea(otherOuter))
         return outerArea > innerArea * 1.05
     }
 }

@@ -92,6 +92,25 @@ struct ObjectSequencerTests {
         #expect(outerPos < innerPos)
     }
 
+    @Test func trueContainmentIgnoresBoundingBoxCoincidence() {
+        // An L-shape occupying the bottom strip (y 0-40) plus the left
+        // strip (x 0-40) of a 100x100 area -- its bounding box is the full
+        // 100x100 square, but the top-right 60x60 quadrant (x 40-100,
+        // y 40-100) is actually outside its area (the "notch").
+        let lShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(100, 0), Point2D(100, 40), Point2D(40, 40), Point2D(40, 100), Point2D(0, 100),
+        ], closed: true)])
+        let lObject = EmbroideryObject(name: "lShape", shape: lShape, stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: 0x000000)))
+        let notchSquare = square(60, 60, 10, name: "notchSquare") // sits in the L's bounding box, but in its notch
+
+        // Authored with the notch square first. A bounding-box-only check
+        // would (wrongly) treat the L as containing it and reorder the L
+        // first; true polygon containment finds no relationship, so
+        // authoring order is left untouched.
+        let sequenced = ObjectSequencer.sequence([notchSquare, lObject])
+        #expect(sequenced.map { $0.name } == ["notchSquare", "lShape"])
+    }
+
     @Test func sequenceGeneratedReversesPathForCloserApproach() {
         let color: UInt32 = 0x000000
         let first = square(0, 0, 1, name: "first", color: color) // shape geometry is irrelevant here; only points matter

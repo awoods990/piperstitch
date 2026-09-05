@@ -484,6 +484,21 @@ what a real graph-based router (restructuring a satin column itself into
 a routable graph, the way Ink/Stitch's `auto_satin.py` does, rather than
 ordering whole pre-built objects) would need beyond this.
 
+## Phase 3 (continued) — true polygon containment (implemented)
+
+`ObjectSequencer`'s containment check (`isBackground`) previously
+compared bounding boxes only. `PolygonGeometry` gained `pointInPolygon`
+(a standard even-odd ray-casting test), and `isBackground` now requires
+every point of the candidate's outer boundary to actually fall inside the
+containing shape's outer polygon — the bounding-box comparison is kept
+only as a cheap pre-check before this real one. This matters for concave
+shapes specifically: an L-shaped object's bounding box can enclose
+something sitting entirely in its notch, outside the L's real area, which
+the bounding-box-only version would wrongly treat as nested and reorder.
+Area (for the "meaningfully larger" margin) is now computed from the
+polygon itself (`PolygonGeometry.signedArea`) rather than the bounding
+box too, for the same reason.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later

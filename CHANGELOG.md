@@ -4,6 +4,32 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## True polygon containment for object sequencing (correctness)
+
+### Added
+- `PolygonGeometry.pointInPolygon`: a standard even-odd ray-casting
+  point-in-polygon test, generically useful beyond this one caller.
+- `ObjectSequencer`'s `isBackground` now requires every point of the
+  candidate's outer boundary to actually fall inside the containing
+  shape's outer polygon, not just that their bounding boxes nest (the
+  bounding-box check is kept as a cheap pre-check before the real one).
+  A concave (e.g. L-shaped) object's bounding box can enclose something
+  sitting entirely in its notch, outside its real area — the previous
+  bounding-box-only check would misclassify that as containment and
+  wrongly reorder it. Area (for the "meaningfully larger" margin) is now
+  computed from the polygon itself rather than the bounding box, for the
+  same reason.
+- 5 new tests: a dedicated `PolygonGeometryTests` suite for
+  `pointInPolygon` (inside/outside/concave-notch/degenerate cases) plus
+  `ObjectSequencerTests.trueContainmentIgnoresBoundingBoxCoincidence`
+  (an L-shape whose bounding box coincidentally encloses an unrelated
+  square sitting in its notch).
+
+### Known limitations at this stage
+- Only tests a shape's *outer* boundary (`subPaths.first`), ignoring
+  holes — an object inside another's hole would still be misclassified
+  as contained. Rare for typical logo/badge artwork.
+
 ## Endpoint-based object sequencing (stitch-conversion performance)
 
 ### Added
