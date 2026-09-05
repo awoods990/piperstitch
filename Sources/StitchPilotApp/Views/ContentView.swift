@@ -151,6 +151,17 @@ private struct InspectorView: View {
                 Button("Apply Size") { app.applyPhysicalSizeChange() }
             }
 
+            Section("Color Reduction") {
+                Picker("Preset", selection: $app.colorPreset) {
+                    ForEach(ColorQuantizationPreset.allCases, id: \.self) { preset in
+                        Text(presetLabel(preset)).tag(preset)
+                    }
+                }
+                Text("Only affects images — vector art keeps its own colors.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let plan = app.stitchPlan {
                 Section("Production Statistics") {
                     LabeledContent("Stitches", value: "\(plan.stitchCount)")
@@ -162,5 +173,14 @@ private struct InspectorView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func presetLabel(_ preset: ColorQuantizationPreset) -> String {
+        switch preset {
+        case .preserveArtwork: return "Preserve Artwork"
+        case .normalEmbroidery: return "Normal Embroidery"
+        case .productionEfficient: return "Production Efficient"
+        case .minimalColors: return "Minimal Colors"
+        }
     }
 }

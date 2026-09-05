@@ -17,9 +17,11 @@ public enum ImageImportError: Error, LocalizedError {
 }
 
 public struct ImageImportResult {
-    /// One shape per detected foreground region, in pixel coordinates
-    /// (origin top-left, Y down — same convention as SVG import).
+    /// One shape per detected color region, in pixel coordinates (origin
+    /// top-left, Y down — same convention as SVG import).
     public var shapes: [VectorShape]
+    /// Parallel to `shapes`: the region's quantized color.
+    public var fillColors: [RGBColor?]
     public var pixelWidth: Int
     public var pixelHeight: Int
 }
@@ -30,10 +32,13 @@ public struct ImageImportResult {
 /// rather than treating every pixel as a stitch (spec §7: "construct clean
 /// vector-like regions... do not merely trace every pixel").
 ///
-/// This is a first, intentionally simple Phase 1 pass: single-region
-/// silhouette extraction against an automatically detected background.
-/// Multi-color segmentation, gradient/photograph detection, and text
-/// detection (spec §7/§8) are Phase 2.
+/// Color handling (spec §8): foreground pixels are reduced to at most
+/// `maxColors` colors with `ColorQuantizer` (perceptual/LAB k-means), then
+/// segmented *per color* — each color gets its own connected-component pass
+/// — so a simple multi-color logo produces one object per color region
+/// rather than one big region colored however the first pixel happened to
+/// be. Gradient/photograph detection and text-region detection (also spec
+/// §7) remain Phase 3+.
 public enum ImageImporter {
     /// Pixels closer than this (0-255 per channel, summed) to the detected
     /// background color are treated as background.
@@ -44,7 +49,7 @@ public enum ImageImporter {
     /// Douglas-Peucker epsilon, in source pixels.
     private static let simplifyEpsilonPixels: Double = 1.5
 
-    public static func importShapes(from data: Data) throws -> ImageImportResult {
+    public static func importShapes(from data: Data, maxColors: Int = ColorQuantizationPreset.normalEmbroidery.defaultMaxColors) throws -> ImageImportResult {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw ImageImportError.cannotDecode
@@ -54,20 +59,56 @@ public enum ImageImporter {
         guard width > 1, height > 1 else { throw ImageImportError.cannotDecode }
 
         let pixels = try renderRGBA(cgImage, width: width, height: height)
-        let mask = try computeForegroundMask(pixels: pixels, width: width, height: height)
+        let foregroundMask = try computeForegroundMask(pixels: pixels, width: width, height: height)
 
-        let components = connectedComponents(mask: mask, width: width, height: height)
-        guard !components.isEmpty else { throw ImageImportError.noForegroundFound }
+        var foregroundColors: [RGBColor] = []
+        foregroundColors.reserveCapacity(width * height)
+        for i in 0..<(width * height) where foregroundMask[i] {
+            foregroundColors.append(RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2]))
+        }
+        guard !foregroundColors.isEmpty else { throw ImageImportError.noForegroundFound }
+
+        let clusters = ColorQuantizer.quantize(pixels: foregroundColors, maxColors: maxColors)
+        guard !clusters.isEmpty else { throw ImageImportError.noForegroundFound }
+
+        // Memoized nearest-cluster lookup: real artwork repeats exact RGB
+        // values constantly (flat-color logos especially), so caching by
+        // exact color avoids re-running LAB conversion + Delta-E per pixel.
+        var nearestClusterCache: [RGBColor: Int] = [:]
+        func nearestCluster(_ color: RGBColor) -> Int {
+            if let cached = nearestClusterCache[color] { return cached }
+            var bestIndex = 0, bestDist = Double.infinity
+            for (i, cluster) in clusters.enumerated() {
+                let d = RGBColor.deltaE(color, cluster.rgb)
+                if d < bestDist { bestDist = d; bestIndex = i }
+            }
+            nearestClusterCache[color] = bestIndex
+            return bestIndex
+        }
+
+        var labels = [Int](repeating: -1, count: width * height)
+        for i in 0..<(width * height) where foregroundMask[i] {
+            let color = RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2])
+            labels[i] = nearestCluster(color)
+        }
 
         var shapes: [VectorShape] = []
-        for component in components {
-            guard let boundary = traceBoundary(mask: mask, width: width, height: height, start: component.topLeftMost) else { continue }
-            let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
-            guard simplified.count > 2 else { continue }
-            shapes.append(VectorShape(subPaths: [SubPath(points: simplified, closed: true)]))
+        var fillColors: [RGBColor?] = []
+        for (clusterIndex, cluster) in clusters.enumerated() {
+            var clusterMask = [Bool](repeating: false, count: width * height)
+            for i in 0..<(width * height) { clusterMask[i] = labels[i] == clusterIndex }
+
+            let components = connectedComponents(mask: clusterMask, width: width, height: height)
+            for component in components {
+                guard let boundary = traceBoundary(mask: clusterMask, width: width, height: height, start: component.topLeftMost) else { continue }
+                let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
+                guard simplified.count > 2 else { continue }
+                shapes.append(VectorShape(subPaths: [SubPath(points: simplified, closed: true)]))
+                fillColors.append(cluster.rgb)
+            }
         }
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
-        return ImageImportResult(shapes: shapes, pixelWidth: width, pixelHeight: height)
+        return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height)
     }
 
     // MARK: - Pixel access

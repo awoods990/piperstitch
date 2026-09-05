@@ -129,14 +129,68 @@ be flattened by `DigitizePipeline` without throwing — guarding against a
 classifier/generator threshold mismatch (e.g. classifying something as
 satin that the generator's own width check then rejects).
 
+## Phase 2 — Color quantization and multi-color raster segmentation (implemented)
+
+`ColorQuantizer.swift` reduces a raster image's foreground colors to at
+most N colors (spec §8's four presets — Preserve Artwork/Normal Embroidery/
+Production Efficient/Minimal Colors — map to default max-color counts of
+16/8/5/3) using k-means in perceptual (CIE L*a*b*) space, for the same
+reason thread matching uses LAB (see below): Euclidean RGB distance doesn't
+track how different two colors actually *look*.
+
+Two things make this specific implementation worth calling out:
+
+- **Histogram-then-cluster, not per-pixel clustering.** Pixels are first
+  bucketed into a coarse histogram (reduced RGB precision) purely so
+  k-means runs against hundreds of distinct colors instead of potentially
+  millions of raw pixels — a multi-megapixel image still quantizes in
+  milliseconds. The histogram bucket's *count-weighted average color* is
+  used everywhere downstream, never the bucket's quantization boundary
+  itself — using the boundary would visibly shift colors (pure white
+  shifting to a slightly-off white) even when the image already had few
+  enough distinct colors that no reduction was actually needed. A test
+  (`fewerColorsThanMaxReturnsThemAllUnchanged`) pins this.
+- **Deterministic clustering.** Cluster seeding uses a farthest-point
+  heuristic (first center = most frequent color, each next = the
+  remaining color farthest, weighted, from all chosen centers) instead of
+  k-means++'s random seeding, and the histogram entries are sorted into a
+  fixed order before iterating — Swift's `Dictionary` iteration order is
+  not guaranteed stable, and depending on it for tie-breaking produced
+  genuinely different quantization results across two calls with
+  identical input during development (caught by
+  `ColorQuantizerTests.isDeterministicAcrossRuns`, which exists
+  specifically to keep this from regressing silently). This matters
+  because quantization results feed directly into object segmentation —
+  spec §54's determinism requirement isn't just about the final stitch
+  generator.
+
+`ImageImporter` then segments *per quantized color*: every foreground pixel
+is assigned to its nearest cluster (memoized by exact RGB, since flat-color
+artwork repeats exact values constantly), and connected-component labeling
++ contour tracing runs once per color, so a multi-color logo produces one
+object per color region with the region's actual color attached — not one
+big region colored however the first pixel happened to be. Wired into the
+app: a "Color Reduction" preset picker in the inspector re-imports the last
+raster file at the new color count.
+
+**A real bug surfaced while testing this**, worth recording because it's
+easy to reintroduce: `CGColor(red:green:blue:alpha:)` constructs a color in
+the *generic calibrated* RGB space, not whatever color space the target
+`CGContext` was created with. Filling a `CGColorSpaceCreateDeviceRGB()`
+context with such a color makes CoreGraphics color-match between the two
+spaces, silently shifting saturated channels by dozens of units (pure red
+rendered as `(255, 38, 0)` in one measured case) — invisible as long as
+tests only checked shape *counts*, but breaks anything that checks pixel
+colors. Test helpers now build colors with `CGColor(colorSpace:components:)`
+directly in the context's own color space instead.
+
 ## Phase 2 — planned next
 
-- Background/foreground detection and removal for raster input (partially
-  done: `ImageImporter` already detects transparent/uniform backgrounds)
-- Color quantization with the four presets in spec §8
-- Multi-region object segmentation for raster input (currently one object
-  per detected silhouette; no per-color splitting within a region yet)
-- Thread color matching (RGB/LAB + Delta-E) against a local thread library
+- Multi-region object segmentation refinements (holes within a raster
+  color region, anti-aliased edge handling)
+- Thread color matching (RGB/LAB + Delta-E) against a local thread library —
+  `RGBColor.deltaE` already exists and is reused here from color
+  quantization; the library itself (spec §9) is the remaining piece
 
 ## Phase 3 — planned
 

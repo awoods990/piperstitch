@@ -35,6 +35,28 @@ works" — `README.md`'s feature list is aspirational/target state.
   every imported shape. `PolygonGeometry.swift` factors the shared
   area/PCA math out of `SatinColumnGenerator` for this.
 
+### Added (continued)
+- CIE L*a*b* color conversion + Delta-E (`LABColor.swift`), for the
+  reason spec §9 requires it: Euclidean RGB distance doesn't track
+  perceived color difference.
+- Color quantizer (`ColorQuantizer.swift`): deterministic, LAB-space
+  k-means with the four presets from spec §8, histogram-bucketed for
+  performance. Two real bugs fixed via testing: the histogram's fast
+  path was returning bucket-quantization-boundary colors instead of each
+  bucket's true average (visibly shifting colors even when no reduction
+  was needed), and clustering depended on `Dictionary` iteration order
+  for tie-breaking, which produced different results across two calls
+  with identical input.
+- `ImageImporter` now segments *per quantized color* instead of a single
+  foreground/background mask, producing one object per color region with
+  its actual color attached. Wired into the app as a "Color Reduction"
+  preset picker.
+- Found while adding a color-checking test: `CGColor(red:green:blue:alpha:)`
+  builds a color in generic calibrated RGB, not a context's actual
+  `CGColorSpaceCreateDeviceRGB()` space — filling with it silently shifts
+  saturated channels by dozens of units on color-match. Test helpers now
+  build colors directly in the context's color space.
+
 ### Known limitations at this stage
 - No underlay beneath fill or satin yet (Phase 3).
 - Satin end caps always taper to a point (see DIGITIZING_ENGINE.md) —
@@ -42,6 +64,8 @@ works" — `README.md`'s feature list is aspirational/target state.
 - Stitch-type classification looks only at a shape's outer boundary, not
   its holes, and uses one fixed width threshold rather than considering
   fabric or design size.
+- No manufacturer thread-catalog matching yet (Delta-E matching engine
+  exists via `RGBColor.deltaE`; the thread library itself is next).
 
 ## Phase 1 — Foundation (complete)
 

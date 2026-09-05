@@ -18,31 +18,42 @@ final class AppState: ObservableObject {
     @Published var lockAspectRatio: Bool = true
     private var sourceAspectRatio: Double = 1
 
+    /// Only affects raster import (spec §8) — vector artwork already has
+    /// discrete fill colors, nothing to quantize. Changing this re-imports
+    /// the last-dropped raster file at the new color count.
+    @Published var colorPreset: ColorQuantizationPreset = .normalEmbroidery {
+        didSet {
+            guard oldValue != colorPreset, let url = lastImportedURL, isRasterURL(url) else { return }
+            importFile(url: url)
+        }
+    }
+    private var lastImportedURL: URL?
+
     @Published var statusMessage: String = "Drag in an image or SVG file to begin."
     @Published var errorMessage: String?
     @Published var isBusy = false
+
+    private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
 
     func importFile(url: URL) {
         errorMessage = nil
         isBusy = true
         defer { isBusy = false }
+        lastImportedURL = url
 
         do {
             let data = try Data(contentsOf: url)
-            let ext = url.pathExtension.lowercased()
             var rawShapes: [VectorShape]
             var fillColors: [StitchPilotCore.RGBColor?]
 
-            if ext == "svg" {
+            if !isRasterURL(url) {
                 let result = try SVGImporter.importShapes(from: data)
                 rawShapes = result.shapes
                 fillColors = result.fillColors
             } else {
-                let result = try ImageImporter.importShapes(from: data)
+                let result = try ImageImporter.importShapes(from: data, maxColors: colorPreset.defaultMaxColors)
                 rawShapes = result.shapes
-                // Raster import doesn't classify per-region color yet
-                // (Phase 2 color quantization) — default to black thread.
-                fillColors = Array(repeating: StitchPilotCore.RGBColor(hex: 0x000000), count: result.shapes.count)
+                fillColors = result.fillColors
             }
 
             guard !rawShapes.isEmpty else {
