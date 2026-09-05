@@ -1,0 +1,74 @@
+import Testing
+@testable import StitchPilotCore
+
+struct UnderlayGeneratorTests {
+    @Test func centerRunFollowsRectangleColumnCenterline() {
+        let rect = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        var params = StitchGenerationParameters()
+        params.underlayInsetMM = 1.0
+        params.underlayStitchLengthMM = 3.0
+
+        let underlay = UnderlayGenerator.generate(for: rect, stitchType: .satin, parameters: params)
+        #expect(!underlay.isEmpty)
+
+        // Centerline of a 30x4 rectangle is y=2 all the way across.
+        for p in underlay {
+            #expect(abs(p.y - 2.0) <= 0.05)
+        }
+        let box = BoundingBox(points: underlay)
+        // Inset by 1mm from each end (0 and 30).
+        #expect(box.minX >= 0.9)
+        #expect(box.maxX <= 29.1)
+    }
+
+    @Test func edgeRunStaysInsideBoundary() {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20),
+        ], closed: true)])
+        var params = StitchGenerationParameters()
+        params.underlayInsetMM = 1.5
+
+        let underlay = UnderlayGenerator.generate(for: square, stitchType: .tatamiFill, parameters: params)
+        #expect(!underlay.isEmpty)
+        let box = BoundingBox(points: underlay)
+        #expect(box.minX >= 1.0 && box.minY >= 1.0)
+        #expect(box.maxX <= 19.0 && box.maxY <= 19.0)
+    }
+
+    @Test func noneTypeProducesNoUnderlay() {
+        let square = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20)], closed: true)])
+        var params = StitchGenerationParameters()
+        params.underlayType = UnderlayType.none
+        #expect(UnderlayGenerator.generate(for: square, stitchType: .satin, parameters: params).isEmpty)
+    }
+
+    @Test func runningStitchGetsNoUnderlayByDefault() {
+        let line = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 1), Point2D(0, 1)], closed: true)])
+        let params = StitchGenerationParameters()
+        #expect(UnderlayGenerator.generate(for: line, stitchType: .runningStitch, parameters: params).isEmpty)
+    }
+
+    @Test func tooShortColumnProducesNoCenterRunUnderlay() {
+        // A column shorter than 2x the inset can't have anything trimmed off both ends.
+        let tiny = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(1, 0), Point2D(1, 0.5), Point2D(0, 0.5)], closed: true)])
+        var params = StitchGenerationParameters()
+        params.underlayInsetMM = 1.0
+        #expect(UnderlayGenerator.generate(for: tiny, stitchType: .satin, parameters: params).isEmpty)
+    }
+
+    @Test func satinObjectFlattensWithUnderlayIncluded() throws {
+        let rect = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4)], closed: true)])
+        let object = EmbroideryObject(name: "Satin", shape: rect, stitchType: .satin, threadColor: .generic(RGBColor(hex: 0x0000FF)))
+        let doc = StitchDocument(name: "Test", physicalWidthMM: 30, physicalHeightMM: 4, objects: [object])
+
+        let withUnderlay = try DigitizePipeline.flatten(doc)
+
+        var noUnderlayObject = object
+        noUnderlayObject.parameters.underlayType = UnderlayType.none
+        let withoutUnderlay = try DigitizePipeline.flatten(StitchDocument(name: "Test2", physicalWidthMM: 30, physicalHeightMM: 4, objects: [noUnderlayObject]))
+
+        #expect(withUnderlay.stitchCount > withoutUnderlay.stitchCount)
+    }
+}

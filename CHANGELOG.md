@@ -4,7 +4,29 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
-## Phase 2 — Basic Auto Digitizing (in progress)
+## Phase 3 — Professional Digitizing (in progress)
+
+### Added
+- Underlay generator (`UnderlayGenerator.swift`): center-run underlay for
+  satin (derived from the same two rails `SatinColumnGenerator` sews
+  between, so centerline computation can't drift into two different
+  answers), edge-run underlay for tatami fill (naive per-vertex polygon
+  inset), automatic per-stitch-type defaults with a per-object override.
+  Wired into `DigitizePipeline` so underlay sews before an object's main
+  stitches. 6 new tests.
+- `StitchGenerationParameters` gained `underlayType`, `underlayStitchLengthMM`,
+  `underlayInsetMM`.
+- `PolygonGeometry` gained shared `pathLength`/`resampleByCount` helpers,
+  factored out of `SatinColumnGenerator` so underlay's centerline
+  derivation and satin's rail-pairing use the identical resampling logic.
+
+### Known limitations at this stage
+- Edge-run underlay's polygon inset is a naive per-vertex approximation —
+  doesn't handle self-intersection on sharp concave corners.
+- No pull/push compensation, object overlap, travel routing, jump/trim
+  optimization, tie-in/tie-off, or general stitch filtering yet.
+
+## Phase 2 — Basic Auto Digitizing (complete)
 
 ### Added
 - Tatami fill generator (`TatamiFillGenerator.swift`): even-odd scanline

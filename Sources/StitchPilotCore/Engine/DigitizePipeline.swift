@@ -69,9 +69,11 @@ public enum DigitizePipeline {
                 return base + base.reversed() + base
             }
         case .tatamiFill:
-            return TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
+            let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
+            return underlay + TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
         case .satin:
-            return try SatinColumnGenerator.generate(for: object.shape, parameters: object.parameters)
+            let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
+            return underlay + (try SatinColumnGenerator.generate(for: object.shape, parameters: object.parameters))
         }
     }
 }

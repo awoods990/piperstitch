@@ -207,11 +207,42 @@ each object's matched thread name.
   color region, anti-aliased edge handling)
 - Manufacturer thread catalogs, pending license research (spec §9)
 
-## Phase 3 — planned
+## Phase 3 — Underlay (implemented)
 
-Underlay generation, pull/push compensation, object overlap/inset-outset,
-travel routing, jump/trim optimization, tie-in/tie-off, corner handling,
-smarter sequencing.
+`UnderlayGenerator.swift` generates a lighter stabilizing layer sewn
+*before* an object's main stitches (spec §16). Automatic by default —
+"users should generally not need to configure underlay manually" — but
+`parameters.underlayType` overrides the automatic choice per object for
+professional use:
+
+- **Satin -> center run**: a running stitch along the column's centerline,
+  derived from the *same two rails* `SatinColumnGenerator` sews between
+  (`SatinColumnGenerator.computeRails` is exposed module-internally so this
+  can't drift into computing "centerline" a second, different way), inset
+  from the true ends so it doesn't poke out past the satin's own tapered
+  tips.
+- **Tatami fill -> edge run**: a running stitch around the shape boundary,
+  inset inward so it falls entirely beneath the fill that follows. The
+  inset uses a naive per-vertex polygon erosion (move each vertex inward
+  along the average of its two adjacent edges' inward normals) — an
+  approximation that doesn't handle self-intersection on sharp concave
+  corners the way a true straight-skeleton offset would, adequate for the
+  modest ~1mm insets underlay uses on typical logo/lettering shapes.
+- **Running/triple-run -> none**: already a single light pass with nothing
+  to stabilize underneath.
+
+Wired into `DigitizePipeline`: underlay stitches are generated first and
+prepended to the object's main stitches, so they physically sew before the
+satin/fill that follows, matching how underlay actually functions on a
+machine.
+
+## Phase 3 — planned next
+
+Pull/push compensation, object overlap/inset-outset, travel routing,
+jump/trim optimization, tie-in/tie-off, corner handling, smarter
+sequencing, and general stitch filtering (spec §30 — too-short/too-long
+stitch cleanup applied after generation regardless of which generator
+produced the stitches).
 
 ## Phase 4 — planned
 

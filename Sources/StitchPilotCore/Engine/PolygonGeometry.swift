@@ -45,4 +45,46 @@ public enum PolygonGeometry {
         }
         return (lo, hi)
     }
+
+    public static func pathLength(_ points: [Point2D]) -> Double {
+        guard points.count > 1 else { return 0 }
+        var total = 0.0
+        for i in 1..<points.count { total += points[i - 1].distance(to: points[i]) }
+        return total
+    }
+
+    /// Resamples a polyline into exactly `count + 1` points, evenly spaced
+    /// by fraction of total arc length (not by fixed stitch length) —
+    /// shared by `SatinColumnGenerator` (to pair two rails point-for-point
+    /// regardless of their individual lengths) and `UnderlayGenerator` (to
+    /// derive a satin column's centerline from the same rails).
+    public static func resampleByCount(_ points: [Point2D], count: Int) -> [Point2D] {
+        guard points.count > 1, count > 0 else { return points }
+        let total = pathLength(points)
+        guard total > 0 else { return Array(repeating: points[0], count: count + 1) }
+
+        var result: [Point2D] = []
+        var segIndex = 0
+        var segStart = points[0]
+        var distanceCoveredBeforeSeg = 0.0
+        var segLength = points[1].distance(to: points[0])
+
+        for step in 0...count {
+            let targetDistance = total * Double(step) / Double(count)
+            while distanceCoveredBeforeSeg + segLength < targetDistance, segIndex < points.count - 2 {
+                distanceCoveredBeforeSeg += segLength
+                segIndex += 1
+                segStart = points[segIndex]
+                segLength = points[segIndex + 1].distance(to: points[segIndex])
+            }
+            if segLength <= 0 {
+                result.append(segStart)
+            } else {
+                let t = min(1, max(0, (targetDistance - distanceCoveredBeforeSeg) / segLength))
+                let end = points[segIndex + 1]
+                result.append(Point2D(segStart.x + (end.x - segStart.x) * t, segStart.y + (end.y - segStart.y) * t))
+            }
+        }
+        return result
+    }
 }

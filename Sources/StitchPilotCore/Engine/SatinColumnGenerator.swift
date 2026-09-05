@@ -45,7 +45,12 @@ public enum SatinGenerationError: Error, LocalizedError {
 /// end cap is a point" from "this end cap is a flat edge that needs a
 /// squared crossing" is a follow-up refinement.
 public enum SatinColumnGenerator {
-    public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
+    /// Splits a shape's outer boundary into two rails — see the type-level
+    /// doc comment for the PCA + edge-based end-cap algorithm. Exposed
+    /// (module-internal) so `UnderlayGenerator` can derive a satin column's
+    /// centerline from the same two rails `generate` sews between, instead
+    /// of recomputing "where is this column's centerline" a second way.
+    static func computeRails(for shape: VectorShape) throws -> (railA: [Point2D], railB: [Point2D]) {
         guard let sub = shape.subPaths.first else {
             throw SatinGenerationError.shapeNotSuitable("no outline was provided")
         }
@@ -67,15 +72,18 @@ public enum SatinColumnGenerator {
 
         let railACore = walkForward(polygon, from: (startEdge + 1) % n, to: endEdge)
         let railBCore = Array(walkForward(polygon, from: (endEdge + 1) % n, to: startEdge).reversed())
-        let railA = [startMid] + railACore + [endMid]
-        let railB = [startMid] + railBCore + [endMid]
+        return ([startMid] + railACore + [endMid], [startMid] + railBCore + [endMid])
+    }
+
+    public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
+        let (railA, railB) = try computeRails(for: shape)
 
         let density = max(parameters.satinDensityMM, 0.1)
-        let approxLength = max(pathLength(railA), pathLength(railB))
+        let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
         let crossingCount = max(2, Int((approxLength / density).rounded()))
 
-        let resampledA = resampleByCount(railA, count: crossingCount)
-        let resampledB = resampleByCount(railB, count: crossingCount)
+        let resampledA = PolygonGeometry.resampleByCount(railA, count: crossingCount)
+        let resampledB = PolygonGeometry.resampleByCount(railB, count: crossingCount)
 
         var maxWidth = 0.0
         var stitches: [Point2D] = []
@@ -124,44 +132,4 @@ public enum SatinColumnGenerator {
         return result
     }
 
-    private static func pathLength(_ points: [Point2D]) -> Double {
-        guard points.count > 1 else { return 0 }
-        var total = 0.0
-        for i in 1..<points.count { total += points[i - 1].distance(to: points[i]) }
-        return total
-    }
-
-    /// Resamples a polyline into exactly `count + 1` points, evenly spaced
-    /// by fraction of total arc length (not by fixed stitch length) — used
-    /// here so both rails produce the same number of points for 1:1
-    /// pairing regardless of their individual lengths.
-    private static func resampleByCount(_ points: [Point2D], count: Int) -> [Point2D] {
-        guard points.count > 1, count > 0 else { return points }
-        let total = pathLength(points)
-        guard total > 0 else { return Array(repeating: points[0], count: count + 1) }
-
-        var result: [Point2D] = []
-        var segIndex = 0
-        var segStart = points[0]
-        var distanceCoveredBeforeSeg = 0.0
-        var segLength = points[1].distance(to: points[0])
-
-        for step in 0...count {
-            let targetDistance = total * Double(step) / Double(count)
-            while distanceCoveredBeforeSeg + segLength < targetDistance, segIndex < points.count - 2 {
-                distanceCoveredBeforeSeg += segLength
-                segIndex += 1
-                segStart = points[segIndex]
-                segLength = points[segIndex + 1].distance(to: points[segIndex])
-            }
-            if segLength <= 0 {
-                result.append(segStart)
-            } else {
-                let t = min(1, max(0, (targetDistance - distanceCoveredBeforeSeg) / segLength))
-                let end = points[segIndex + 1]
-                result.append(Point2D(segStart.x + (end.x - segStart.x) * t, segStart.y + (end.y - segStart.y) * t))
-            }
-        }
-        return result
-    }
 }

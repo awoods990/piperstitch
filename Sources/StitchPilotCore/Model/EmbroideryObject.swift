@@ -30,11 +30,26 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     public var fillAngleDegrees: Double = 0.0
     public var fillRowStaggerMM: Double = 1.2
 
-    // Phase 3 — reserved for underlay / pull compensation / inset-outset.
-    // Intentionally added in Phase 3 rather than stubbed now, so the
-    // parameter set reflects only what the engine actually implements.
+    // Phase 3 — underlay (spec §16)
+    /// `nil` = automatic (the engine picks a sensible default per stitch
+    /// type — see `UnderlayGenerator`). Professional users can override.
+    public var underlayType: UnderlayType? = nil
+    public var underlayStitchLengthMM: Double = 3.0
+    /// How far a center-run underlay's endpoints fall short of the
+    /// column's true end caps, and how far an edge-run underlay insets from
+    /// the shape boundary — keeps underlay from poking out past the final
+    /// satin/fill coverage.
+    public var underlayInsetMM: Double = 1.0
+
+    // Phase 3 — reserved for pull compensation / inset-outset (next).
 
     public init() {}
+}
+
+public enum UnderlayType: String, Codable, Sendable, CaseIterable {
+    case none
+    case centerRun
+    case edgeRun
 }
 
 /// One embroidery object: a geometric shape plus everything needed to sew
