@@ -2,23 +2,36 @@ import Foundation
 
 /// Brother/Baby Lock PES writer and independent reader.
 ///
-/// This writes the widely-used "truncated PES version 1" structure: the
-/// 8-byte `#PES0001` signature, a fixed 14-byte stub (in place of the
-/// fuller version's embedded thread-chart/sewing-segment metadata, which
-/// design software uses for re-editing but a machine doesn't need to sew),
-/// followed directly by an embedded PEC block — the part that actually
-/// carries stitch data and which the sewing machine reads. This is the same
-/// simplification several other embroidery tools use to produce valid,
-/// machine-sewable PES files without the much larger "full" wrapper.
+/// PES's actual general structure is: an 8-byte `#PES0001` signature,
+/// followed by a 4-byte little-endian file offset pointing to wherever the
+/// embedded PEC block actually starts — the part that carries stitch data
+/// and that a sewing machine reads — followed by however much
+/// version-specific metadata (embedded thread-chart/sewing-segment
+/// descriptions design software uses for re-editing, which a machine
+/// doesn't need to sew) the writer chose to put before it, followed by the
+/// PEC block at the recorded offset. This writer emits no metadata at all —
+/// the offset always points immediately past itself — which is a legitimate
+/// minimal use of the same mechanism, not a different, non-standard format;
+/// several other embroidery tools produce similarly minimal PES files for
+/// exactly this reason (a valid, machine-sewable file without the much
+/// larger "full" wrapper).
+///
+/// The reader follows that offset rather than assuming a fixed position,
+/// specifically because an early version of this reader *did* hard-code
+/// offset 22 (matching only this writer's own minimal output) and silently
+/// mis-parsed a real-world PES file from another project as a result —
+/// caught by `ThirdPartySampleTests`, which parses files this codebase
+/// didn't write. That bug is why the offset is treated as authoritative
+/// here instead of assumed.
 ///
 /// As with `DSTFormat`, the exact byte layout below (short/long value
 /// encoding, header field offsets, the Brother thread-index table in
 /// `BrotherThreadPalette.swift`) was verified empirically against
 /// pyembroidery (MIT license) — both by reading `PecWriter.py`/
-/// `PecReader.py` and by generating real PES files with it and inspecting
-/// the raw bytes — rather than reconstructed from memory, for the same
-/// reason DST's layout was: getting a safety-critical byte layout wrong
-/// produces a file that loads but sews incorrectly.
+/// `PecReader.py`/`PesWriter.py` and by generating real PES files with it
+/// and inspecting the raw bytes — rather than reconstructed from memory,
+/// for the same reason DST's layout was: getting a safety-critical byte
+/// layout wrong produces a file that loads but sews incorrectly.
 public enum PESFormatError: Error, LocalizedError {
     case emptyPattern
     case deltaOutOfRange(dx: Double, dy: Double)
@@ -57,7 +70,11 @@ public enum PESFormat {
 
         var data = Data()
         data.append("#PES0001".data(using: .ascii)!)
-        data.append(contentsOf: [0x16] + [UInt8](repeating: 0, count: 13)) // fixed truncated-v1 stub
+        // The PEC-block-offset field: this writer emits no metadata, so it
+        // always points immediately past itself (byte 12). Written as a
+        // real 4-byte LE offset per the format's actual mechanism, not a
+        // fixed magic stub — see the type doc comment.
+        data.append(contentsOf: uint32le(12))
 
         let paletteIndices = threadColors.map { UInt8(BrotherThreadPalette.nearestIndex(to: $0)) }
         data.append(makeHeader(designName: designName, paletteIndices: paletteIndices))
@@ -197,6 +214,9 @@ public enum PESFormat {
 
     private static func uint16le(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)] }
     private static func uint24le(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF)] }
+    private static func uint32le(_ v: Int) -> [UInt8] {
+        [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
+    }
 
     // MARK: - Reading (independent decode path, used for export self-validation)
 
@@ -206,12 +226,18 @@ public enum PESFormat {
     }
 
     public static func read(_ data: Data) throws -> DecodedPattern {
-        guard data.count > 22, let sig = String(data: data.prefix(8), encoding: .ascii), sig.hasPrefix("#PES") else {
+        guard data.count > 12, let sig = String(data: data.prefix(8), encoding: .ascii), sig.hasPrefix("#PES") else {
             throw PESFormatError.invalidSignature
         }
-        // 8 (signature) + 14 (truncated-v1 stub) = 22 bytes before the PEC header.
-        let headerStart = 22
-        guard data.count >= headerStart + 512 else { throw PESFormatError.truncatedFile }
+        // Bytes 8-11: a 4-byte little-endian offset to where the embedded
+        // PEC block actually starts (see the type doc comment) — followed
+        // there directly rather than assumed at a fixed position, since a
+        // real-world PES file can carry an arbitrary amount of metadata
+        // before it that only this offset correctly accounts for.
+        let offsetBytes = data[data.index(data.startIndex, offsetBy: 8)..<data.index(data.startIndex, offsetBy: 12)]
+        let pecBlockOffset = offsetBytes.enumerated().reduce(0) { $0 | (Int($1.element) << (8 * $1.offset)) }
+        guard pecBlockOffset >= 12, data.count >= pecBlockOffset + 512 else { throw PESFormatError.truncatedFile }
+        let headerStart = pecBlockOffset
 
         let laLine = data[headerStart..<(headerStart + 20)]
         let name = String(data: laLine, encoding: .ascii)?
