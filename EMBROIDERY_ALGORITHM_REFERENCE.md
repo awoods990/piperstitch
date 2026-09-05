@@ -289,6 +289,24 @@ come from.
     previous bounding-box-only check would misclassify as containment and
     wrongly reorder. The bounding-box check is kept as a cheap pre-check
     before the real (more expensive) polygon test.
+11. **Minimum satin width, for lettering quality** (this round):
+    `StitchTypeClassifier` already had a hairline-width cutoff (a shape
+    whose *average* width is too thin for satin sews as running stitch
+    instead) — but a shape whose average is fine can still narrow below
+    the practical minimum in one section (a tapering stroke, a serif) and
+    the classifier's single average never sees it, the exact mirror of
+    the "too wide" gap `generatePartial` closed earlier this round. The
+    old classifier-only cutoff is now `StitchGenerationParameters.
+    minSatinWidthMM` (a per-object, overridable value, matching
+    `maxSatinWidthMM`'s existing treatment — the classifier and generator
+    now share the same value instead of the classifier hard-coding its
+    own), and `SatinColumnGenerator.generatePartial` checks it per
+    crossing (only in the crossing-index interior, excluding the natural
+    end-cap taper zone every column has — see `interiorRange`), converting
+    a genuinely too-narrow run into a triple-run (bean-stitch) line along
+    the centerline instead of a satin zigzag. `generate` (the strict
+    variant) throws a new `columnTooNarrow` error for the same condition,
+    symmetric with its existing `columnTooWide`.
 
 ## Known remaining weaknesses
 
@@ -335,6 +353,17 @@ come from.
   the parent column), but two adjacent *unrelated* objects each getting
   their own independent push/pull estimate could still compound in ways
   neither estimate alone accounts for.
+- Minimum satin width has the same abrupt-seam and lone-crossing caveats
+  as maximum satin width (see the width-aware splitting item above) —
+  a triple-run/satin seam can be visually abrupt, and a single
+  below-minimum crossing is deliberately folded back into satin rather
+  than becoming a one-crossing line, by the same reasoning.
+- No lettering-specific handling beyond per-crossing minimum/maximum
+  width: small counters (the enclosed holes in letters like "e", "a",
+  "o") that are too small to fill at normal density aren't detected or
+  simplified, and there's no small-text-specific underlay or sequencing
+  (letters are still just individually-classified objects, ordered by
+  the same general-purpose scheduler as anything else).
 
 ## Recommended next improvements, in priority order
 

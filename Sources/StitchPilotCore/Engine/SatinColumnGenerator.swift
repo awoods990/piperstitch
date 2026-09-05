@@ -3,6 +3,7 @@ import Foundation
 public enum SatinGenerationError: Error, LocalizedError {
     case shapeNotSuitable(String)
     case columnTooWide(maxWidthMM: Double, limitMM: Double)
+    case columnTooNarrow(minWidthMM: Double, limitMM: Double)
 
     public var errorDescription: String? {
         switch self {
@@ -10,6 +11,8 @@ public enum SatinGenerationError: Error, LocalizedError {
             return "This shape isn't a usable satin column: \(reason)"
         case .columnTooWide(let width, let limit):
             return String(format: "This satin column is %.1fmm wide at its widest point, beyond the %.1fmm practical satin limit. Split it into sections or convert it to a fill.", width, limit)
+        case .columnTooNarrow(let width, let limit):
+            return String(format: "This satin column narrows to %.1fmm, below the %.1fmm practical minimum. Sew it as a running/triple-run line instead.", width, limit)
         }
     }
 }
@@ -83,12 +86,35 @@ public enum SatinColumnGenerator {
             throw SatinGenerationError.columnTooWide(maxWidthMM: maxWidth, limitMM: parameters.maxSatinWidthMM)
         }
 
+        // Only check "too narrow" in the interior (see `interiorRange`):
+        // every column tapers to near-zero width at its very tips by
+        // design (see this type's own doc comment on tapered end caps),
+        // which isn't the same thing as being impractically narrow
+        // throughout a real section of the column.
+        let interior = interiorRange(count: crossings.widths.count)
+        if let minWidth = crossings.widths[interior].min(), minWidth < parameters.minSatinWidthMM {
+            throw SatinGenerationError.columnTooNarrow(minWidthMM: minWidth, limitMM: parameters.minSatinWidthMM)
+        }
+
         var stitches: [Point2D] = []
         for i in 0..<crossings.expandedA.count {
             stitches.append(crossings.expandedA[i])
             stitches.append(crossings.expandedB[i])
         }
         return stitches
+    }
+
+    /// The crossing-index range excluded from natural end-cap tapering —
+    /// both `generate`'s strict narrow check and `generatePartial`'s
+    /// narrow-run detection only look here, since every column's width
+    /// tapers toward zero at its very tips by construction (both rails
+    /// share a single point at each end cap), which would otherwise make
+    /// every column look "too narrow" right where it's supposed to. Mirrors
+    /// the margin used by `SatinColumnGeneratorTests` to exclude the same
+    /// zone when checking width against an expected value.
+    private static func interiorRange(count: Int) -> Range<Int> {
+        let margin = min(count / 2, max(2, count / 10))
+        return margin..<(count - margin)
     }
 
     /// Resampled, compensated rail crossings shared by `generate` and
@@ -162,45 +188,58 @@ public enum SatinColumnGenerator {
         return (expandedA, expandedB, widths)
     }
 
-    /// Like `generate`, but never rejects a column for being too wide:
-    /// crossings that exceed `maxSatinWidthMM` are converted to tatami fill
-    /// sub-regions instead, while crossings that fit stay genuine satin —
-    /// the width-aware partial version of `generate`'s all-or-nothing check,
-    /// closer to Ink/Stitch's `SatinColumn.split()` idea (see
-    /// `EMBROIDERY_ALGORITHM_REFERENCE.md`) than converting the *whole*
-    /// object to fill the moment any part of it is too wide. `generate`
-    /// itself is kept as the strict, pure-satin variant (used directly by
-    /// tests that want a hard guarantee, and available to any future
-    /// preflight/validation check that wants to know "would this column
-    /// fit as clean satin?"); `DigitizePipeline` calls this one, since a
-    /// design should never simply fail to produce output over a width
-    /// violation in one section of one object.
+    private enum CrossingKind { case satin, fill, narrowRun }
+
+    /// Like `generate`, but never rejects a column for being too wide *or*
+    /// too narrow: crossings that exceed `maxSatinWidthMM` are converted to
+    /// tatami fill sub-regions, crossings that fall below `minSatinWidthMM`
+    /// (checked only in the interior — see `interiorRange`) are converted
+    /// to a triple-run line along the centerline instead, and crossings
+    /// that fit stay genuine satin — the width-aware partial version of
+    /// `generate`'s all-or-nothing checks, closer to Ink/Stitch's
+    /// `SatinColumn.split()` idea (see `EMBROIDERY_ALGORITHM_REFERENCE.md`)
+    /// than converting the *whole* object over a width violation in one
+    /// section. `generate` itself is kept as the strict, pure-satin variant
+    /// (used directly by tests that want a hard guarantee, and available to
+    /// any future preflight/validation check that wants to know "would
+    /// this column fit as clean satin?"); `DigitizePipeline` calls this one,
+    /// since a design should never simply fail to produce output over a
+    /// width violation in one section of one object.
     ///
-    /// A lone over-width crossing surrounded by in-range ones is folded
-    /// back into satin rather than becoming a one-crossing "fill" sliver —
-    /// there's no meaningful polygon to fill from a single crossing pair,
-    /// and it's well within the kind of measurement noise a column that's
-    /// otherwise a good satin candidate can have. A real fill sub-region
-    /// only forms from two or more consecutive over-width crossings.
+    /// A lone over/under-width crossing surrounded by in-range ones is
+    /// folded back into satin rather than becoming a one-crossing "fill"
+    /// or "narrow-run" sliver — there's no meaningful polygon (or
+    /// meaningful line) from a single crossing, and it's well within the
+    /// kind of measurement noise a column that's otherwise a good satin
+    /// candidate can have. A real fill or narrow-run sub-region only forms
+    /// from two or more consecutive out-of-range crossings.
     public static func generatePartial(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
         let crossings = try computeCrossings(for: shape, parameters: parameters)
         let expandedA = crossings.expandedA, expandedB = crossings.expandedB
+        let interior = interiorRange(count: crossings.widths.count)
 
-        var isWide = crossings.widths.map { $0 > parameters.maxSatinWidthMM }
-        for i in 0..<isWide.count where isWide[i] {
-            let prevWide = i > 0 && isWide[i - 1]
-            let nextWide = i < isWide.count - 1 && isWide[i + 1]
-            if !prevWide && !nextWide { isWide[i] = false }
+        var kind: [CrossingKind] = crossings.widths.enumerated().map { i, width in
+            if width > parameters.maxSatinWidthMM { return .fill }
+            if interior.contains(i), width < parameters.minSatinWidthMM { return .narrowRun }
+            return .satin
+        }
+        for i in 0..<kind.count where kind[i] != .satin {
+            let prevSame = i > 0 && kind[i - 1] == kind[i]
+            let nextSame = i < kind.count - 1 && kind[i + 1] == kind[i]
+            if !prevSame && !nextSame { kind[i] = .satin }
         }
 
         var stitches: [Point2D] = []
         var i = 0
-        while i < isWide.count {
+        while i < kind.count {
             var j = i
-            while j < isWide.count, isWide[j] == isWide[i] { j += 1 }
-            if isWide[i] {
+            while j < kind.count, kind[j] == kind[i] { j += 1 }
+            switch kind[i] {
+            case .fill:
                 stitches.append(contentsOf: fillSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
-            } else {
+            case .narrowRun:
+                stitches.append(contentsOf: narrowRunSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
+            case .satin:
                 for k in i..<j {
                     stitches.append(expandedA[k])
                     stitches.append(expandedB[k])
@@ -233,6 +272,25 @@ public enum SatinColumnGenerator {
         subParameters.pullCompensationMM = 0
         subParameters.pushCompensationMM = 0
         return TatamiFillGenerator.generate(for: polygon, parameters: subParameters)
+    }
+
+    /// Sews rail crossings `range` as a triple-run (bean-stitch) line along
+    /// their centerline instead of a satin zigzag — a column section too
+    /// narrow to zigzag reliably still needs to read as a bold line, and a
+    /// single plain running stitch would look visually thin next to actual
+    /// satin elsewhere on the same object. Resamples at `stitchLengthMM`
+    /// (not the much finer `satinDensityMM` the crossings themselves are
+    /// spaced at) before tripling, the same technique
+    /// `DigitizePipeline`'s `.tripleRun` case uses.
+    private static func narrowRunSegment(expandedA: [Point2D], expandedB: [Point2D], range: ClosedRange<Int>, parameters: StitchGenerationParameters) -> [Point2D] {
+        let centerline = range.map { midpoint(expandedA[$0], expandedB[$0]) }
+        guard centerline.count >= 2 else { return centerline }
+
+        let base = RunningStitchGenerator.generate(for: SubPath(points: centerline, closed: false),
+                                                     stitchLengthMM: parameters.stitchLengthMM,
+                                                     minStitchLengthMM: parameters.minStitchLengthMM)
+        guard base.count > 1 else { return base }
+        return base + base.reversed() + base
     }
 
     /// Moves `point` further away from `other` along the line between them, by `distance`.

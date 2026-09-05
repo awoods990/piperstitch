@@ -4,6 +4,39 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Minimum satin width, for lettering quality
+
+### Added
+- `StitchGenerationParameters.minSatinWidthMM` (default 1.0mm): the
+  minimum-width mirror of `maxSatinWidthMM`. `StitchTypeClassifier`'s
+  previously hard-coded, non-overridable cutoff moved here, so it's now a
+  per-object value matching how the maximum already worked.
+- `SatinColumnGenerator.generatePartial` now classifies each crossing
+  into satin / too-wide (fill) / too-narrow (new), instead of just
+  satin/too-wide. A too-narrow run (checked only in the crossing-index
+  interior, excluding each column's natural end-cap taper — see
+  `interiorRange`) becomes a triple-run (bean-stitch) line along the
+  centerline instead of a satin zigzag, closing the exact mirror-image
+  gap of what the width-aware satin splitting work fixed for "too wide":
+  a column whose *average* width is fine but that narrows below the
+  practical minimum in one section (a tapering stroke, a letter's serif)
+  previously had no defense-in-depth beyond the classifier's single
+  average, which can't see a local dip.
+- `generate` (the strict, whole-column variant) gained a matching
+  `SatinGenerationError.columnTooNarrow`, symmetric with the existing
+  `columnTooWide`.
+- 4 new tests: 2 in `SatinColumnGeneratorTests` (a uniformly hairline
+  column throws from `generate` and converts to a much shorter triple-run
+  line from `generatePartial`) and 1 in `StitchTypeClassifierTests`
+  (overriding `minSatinWidthMM` per object changes the classification
+  threshold).
+
+### Known limitations at this stage
+- Same abrupt-seam and lone-crossing caveats as the maximum-width case.
+- Doesn't address small counters (enclosed holes in letters like "e",
+  "a", "o") too small to fill at normal density, or any other
+  lettering-specific underlay/sequencing.
+
 ## True polygon containment for object sequencing (correctness)
 
 ### Added

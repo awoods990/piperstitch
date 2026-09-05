@@ -9,21 +9,20 @@ import Foundation
 /// along its principal (elongation) axis — the same measurement a person
 /// eyeballing a shape uses ("that's a thin stroke" vs. "that's a big
 /// blob") — and bucket by width:
-/// - narrower than `minSatinWidthMM`: too thin even for satin, sews as a
-///   running-stitch outline instead (spec §19 "small object management" —
-///   a hairline stroke).
+/// - narrower than `parameters.minSatinWidthMM`: too thin even for satin,
+///   sews as a running-stitch outline instead (spec §19 "small object
+///   management" — a hairline stroke).
 /// - up to `parameters.maxSatinWidthMM`: satin.
 /// - wider: tatami fill.
 ///
 /// This only looks at the shape's *outer* boundary (`subPaths[0]`) even
 /// when the shape has holes — holes affect how it should be *filled*, not
-/// whether it reads as a stroke or a blob in the first place.
+/// whether it reads as a stroke or a blob in the first place. Note this
+/// only catches a shape whose *average* width is too thin; a shape whose
+/// average is fine but that narrows below the minimum in one section
+/// (e.g. a tapering stroke) still classifies as `.satin` here and is
+/// instead caught per-section by `SatinColumnGenerator.generatePartial`.
 public enum StitchTypeClassifier {
-    /// Below this estimated width, satin would be too narrow to sew
-    /// reliably (thread bunching, not enough fabric for a stable zigzag) —
-    /// spec §19.
-    public static let minSatinWidthMM = 1.0
-
     public static func classify(shape: VectorShape, parameters: StitchGenerationParameters) -> StitchType {
         guard let outer = shape.subPaths.first, outer.points.count >= 3 else { return .runningStitch }
 
@@ -35,7 +34,7 @@ public enum StitchTypeClassifier {
         guard length > 0, area > 0 else { return .runningStitch }
         let averageWidth = area / length
 
-        if averageWidth < minSatinWidthMM { return .runningStitch }
+        if averageWidth < parameters.minSatinWidthMM { return .runningStitch }
         if averageWidth <= parameters.maxSatinWidthMM { return .satin }
         return .tatamiFill
     }

@@ -27,6 +27,17 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     // Phase 2 — satin
     public var satinDensityMM: Double = 0.4      // spacing between satin crossings
     public var maxSatinWidthMM: Double = 12.0    // beyond this, split or convert to fill
+    /// Below this, a section of a column is too narrow to zigzag reliably
+    /// (thread bunching, not enough fabric width for a stable satin
+    /// crossing) and sews as a triple-run (bean-stitch) line instead — the
+    /// narrow-width mirror of `maxSatinWidthMM`. `StitchTypeClassifier`
+    /// checks this same value against a shape's *average* width up front
+    /// (so a uniformly hairline shape never becomes `.satin` in the first
+    /// place); `SatinColumnGenerator.generatePartial` checks it again
+    /// per-crossing, since a column whose average is fine can still narrow
+    /// below this in one section (e.g. a tapering stroke) without the
+    /// classifier's single average ever seeing it.
+    public var minSatinWidthMM: Double = 1.0
 
     // Phase 2 — tatami fill
     public var fillSpacingMM: Double = 0.4

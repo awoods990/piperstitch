@@ -146,6 +146,36 @@ struct SatinColumnGeneratorTests {
         #expect(stitches[0].distance(to: stitches[1]) < 8, "the narrow end should still sew as a tight satin crossing")
     }
 
+    @Test func tooNarrowInteriorThrowsFromStrictGenerate() throws {
+        // A 30mm x 0.5mm column -- below the default 1.0mm practical satin
+        // minimum throughout its interior (the jog at each end is smaller
+        // than the resampling spacing here, so even crossings just past the
+        // margin already measure the full-body 0.5mm width).
+        let hairlineColumn = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 0.5), Point2D(0, 0.5),
+        ], closed: true)])
+        #expect(throws: SatinGenerationError.self) {
+            _ = try SatinColumnGenerator.generate(for: hairlineColumn, parameters: params())
+        }
+    }
+
+    @Test func generatePartialConvertsTooNarrowSectionToTripleRunLine() throws {
+        let hairlineColumn = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 0.5), Point2D(0, 0.5),
+        ], closed: true)])
+        let stitches = try SatinColumnGenerator.generatePartial(for: hairlineColumn, parameters: params())
+        #expect(!stitches.isEmpty)
+
+        // Pure satin at the default 0.4mm density over ~30mm would need
+        // roughly 150 points; converting the narrow interior to a much
+        // coarser triple-run line (stitchLengthMM, not satinDensityMM)
+        // should produce far fewer.
+        #expect(stitches.count < 100)
+
+        let box = BoundingBox(points: stitches)
+        #expect(box.maxX > 25) // still spans nearly the full column length
+    }
+
     @Test func integratesWithDigitizePipeline() throws {
         let rect = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(20, 0), Point2D(20, 3), Point2D(0, 3),

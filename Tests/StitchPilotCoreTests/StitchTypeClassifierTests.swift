@@ -28,6 +28,18 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: blob, parameters: defaultParams) == .tatamiFill)
     }
 
+    @Test func customMinSatinWidthIsRespected() {
+        // Same 4mm column that classifies as satin under the default 1.0mm
+        // minimum -- raising the per-object minimum should push it below
+        // the threshold instead.
+        var params = defaultParams
+        params.minSatinWidthMM = 5.0
+        let column = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: column, parameters: params) == .runningStitch)
+    }
+
     @Test func degenerateShapeDefaultsToRunningStitch() {
         let line = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(10, 0)], closed: false)])
         #expect(StitchTypeClassifier.classify(shape: line, parameters: defaultParams) == .runningStitch)

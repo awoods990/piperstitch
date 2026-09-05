@@ -499,6 +499,47 @@ Area (for the "meaningfully larger" margin) is now computed from the
 polygon itself (`PolygonGeometry.signedArea`) rather than the bounding
 box too, for the same reason.
 
+## Phase 3 (continued) — minimum satin width, for lettering (implemented)
+
+`StitchTypeClassifier` already refused to classify a shape as satin if
+its *average* width was too thin (sewing running stitch instead) — but a
+shape whose average is fine can still narrow below the practical minimum
+in one section (a tapering stroke, a serif on a letter) without the
+classifier's single average ever seeing it. This is the exact mirror of
+the "too wide" gap the width-aware satin splitting work closed earlier —
+so it gets the same treatment:
+
+- The classifier's previously hard-coded cutoff is now
+  `StitchGenerationParameters.minSatinWidthMM` (default 1.0mm, same value
+  as before), a per-object, overridable field matching how
+  `maxSatinWidthMM` already worked. `StitchTypeClassifier` and
+  `SatinColumnGenerator` now consult the same value instead of the
+  classifier keeping its own separate copy.
+- `SatinColumnGenerator.generatePartial` classifies each crossing into
+  one of three kinds — too wide (fill sub-region), too narrow (new: a
+  triple-run/bean-stitch line along the centerline), or fits (satin) —
+  generalizing what was previously a two-way (satin/fill) classification.
+  The narrow check only applies in the crossing-index *interior*
+  (`interiorRange`, excluding a margin at each end): every column tapers
+  toward zero width at its very tips by construction (shared end-cap
+  points — see this generator's own doc comment), which would otherwise
+  make every column look "too narrow" exactly where it's supposed to
+  taper. A lone below-minimum crossing surrounded by in-range ones folds
+  back to satin, the same hysteresis already used for lone over-width
+  crossings.
+- `generate` (the strict, whole-column variant) gained a matching
+  `columnTooNarrow` error, symmetric with its existing `columnTooWide`.
+- The narrow-run line resamples at `stitchLengthMM` (not the much finer
+  `satinDensityMM` the crossings are spaced at) before tripling — a plain
+  single running stitch would look visually thin next to actual satin
+  elsewhere on the same object; three passes approximate satin's boldness
+  on a stroke too narrow to actually zigzag.
+
+Still open for lettering specifically: small counters (the enclosed holes
+in letters like "e", "a", "o") that are too small to fill at normal
+density aren't detected or simplified, and there's no small-text-specific
+underlay or sequencing yet.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later
