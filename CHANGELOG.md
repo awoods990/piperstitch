@@ -35,6 +35,18 @@ works" — `README.md`'s feature list is aspirational/target state.
   underlay's inset and pull compensation's outward growth share one
   implementation.
 
+### Added (continued)
+- General stitch filtering (`StitchFilter.swift`, spec §30): applied to
+  every object's combined (underlay + main) generated points after
+  generation, regardless of stitch type — merges sub-minimum-length
+  stitches and splits any gap longer than `maxStitchLengthMM`.
+  `RunningStitchGenerator`'s previously-private duplicate of the merge
+  logic now delegates to this shared version. Centralizing it caught two
+  things a per-generator version couldn't: triple-run's exact-duplicate
+  turnaround point (now removed for free), and the underlay-to-main-
+  stitch transition gap, which only a pass running after concatenation
+  can see.
+
 ### Known limitations at this stage
 - Edge-run underlay's polygon inset is a naive per-vertex approximation —
   doesn't handle self-intersection on sharp concave corners.
@@ -43,7 +55,7 @@ works" — `README.md`'s feature list is aspirational/target state.
 - Fill's pull compensation doesn't shrink holes to match the outer
   boundary's outward growth.
 - No object overlap, travel routing, jump/trim optimization, tie-in/
-  tie-off, or general stitch filtering yet.
+  tie-off, or smarter sequencing yet.
 
 ## Phase 2 — Basic Auto Digitizing (complete)
 

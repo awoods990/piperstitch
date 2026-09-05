@@ -274,12 +274,34 @@ Not yet exposed as an editable value in the app UI (spec §17's "expose the
 calculated compensation to users" — Phase 5's professional object editor is
 the natural home for this alongside the other per-object overrides).
 
+## Phase 3 — General stitch filtering (implemented)
+
+`StitchFilter.swift` is a post-processing pass applied to *every* object's
+generated points regardless of which generator produced them (spec §30):
+merges consecutive points closer than `minStitchLengthMM` (snapping onto,
+rather than duplicating near, the true final point), and splits any gap
+longer than `maxStitchLengthMM` into evenly-spaced intermediate stitches.
+
+Applying this centrally rather than per-generator caught something the
+per-generator version (previously duplicated inside `RunningStitchGenerator`
+only) couldn't: a triple-run's forward/backward/forward reversal leaves an
+exact-duplicate point at each turnaround (distance 0, an actual zero-length
+stitch), which the shared min-length merge now removes for free. It also
+covers a gap the individual generators structurally can't see — the
+transition between an underlay's last point and the main stitching's first
+point isn't guaranteed to be short, and only a pass that runs *after*
+concatenating underlay + main stitches can catch it.
+
+The max-length split is a quality concern distinct from a machine format's
+hard per-record coordinate-range limit (e.g. DST's ±12.1mm, handled
+separately at export time in `DSTFormat`) — it exists so an overly long
+stitch never reaches export looking like a plausible design choice instead
+of the defect it is.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, travel routing, jump/trim optimization,
-tie-in/tie-off, corner handling, smarter sequencing, and general stitch
-filtering (spec §30 — too-short/too-long stitch cleanup applied after
-generation regardless of which generator produced the stitches).
+tie-in/tie-off, corner handling, and smarter sequencing.
 
 ## Phase 4 — planned
 

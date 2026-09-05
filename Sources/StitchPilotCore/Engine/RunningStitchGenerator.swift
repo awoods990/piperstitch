@@ -41,31 +41,8 @@ public enum RunningStitchGenerator {
             result.append(ring.last!)
         }
 
-        return mergeTinyStitches(result, minLengthMM: minStitchLengthMM)
-    }
-
-    /// Removes near-duplicate points that would otherwise produce
-    /// sub-minimum stitches (spec §30 "stitch filtering": too-short stitches
-    /// cause thread breaks and don't add visible detail).
-    private static func mergeTinyStitches(_ points: [Point2D], minLengthMM: Double) -> [Point2D] {
-        guard points.count > 2 else { return points }
-        var out: [Point2D] = [points[0]]
-        for p in points.dropFirst() {
-            if let last = out.last, last.distance(to: p) < minLengthMM {
-                continue
-            }
-            out.append(p)
-        }
-        if let last = out.last, let realLast = points.last, last != realLast {
-            if last.distance(to: realLast) < minLengthMM {
-                // Snap instead of appending: adding realLast here would
-                // reintroduce exactly the sub-minimum stitch this pass
-                // exists to remove.
-                out[out.count - 1] = realLast
-            } else {
-                out.append(realLast)
-            }
-        }
-        return out
+        // Sub-minimum-length cleanup is shared with every other generator
+        // via StitchFilter (spec §30) rather than duplicated here.
+        return StitchFilter.mergeTinyStitches(result, minLengthMM: minStitchLengthMM)
     }
 }

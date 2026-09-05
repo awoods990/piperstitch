@@ -53,6 +53,18 @@ public enum DigitizePipeline {
     }
 
     private static func stitchPoints(for object: EmbroideryObject) throws -> [Point2D] {
+        let raw = try rawStitchPoints(for: object)
+        // General stitch filtering (spec §30), applied after generation
+        // regardless of which generator produced the points: merges
+        // sub-minimum stitches (including, usefully, the exact-duplicate
+        // point every triple-run reversal leaves at its turnaround) and
+        // splits anything longer than the practical maximum -- e.g. the
+        // transition between an underlay's endpoint and the main stitching's
+        // start point, which isn't guaranteed to be short.
+        return StitchFilter.apply(raw, minLengthMM: object.parameters.minStitchLengthMM, maxLengthMM: object.parameters.maxStitchLengthMM)
+    }
+
+    private static func rawStitchPoints(for object: EmbroideryObject) throws -> [Point2D] {
         switch object.stitchType {
         case .runningStitch:
             return object.shape.subPaths.flatMap {

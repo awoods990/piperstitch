@@ -20,6 +20,9 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     // Phase 1/2 — running stitch
     public var stitchLengthMM: Double = 3.0
     public var minStitchLengthMM: Double = 0.4
+    // Phase 3 — general stitch filtering (spec §30), applied to every
+    // object's generated points regardless of stitch type.
+    public var maxStitchLengthMM: Double = 12.0
 
     // Phase 2 — satin
     public var satinDensityMM: Double = 0.4      // spacing between satin crossings
