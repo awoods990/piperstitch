@@ -64,6 +64,50 @@ cross-cutting pass planned for Phase 3, applied after generation regardless
 of which generator produced the stitches, rather than being reimplemented
 per generator.
 
+## Phase 2 — Satin column (implemented)
+
+`SatinColumnGenerator.swift` generates a zigzag satin stitch across a
+narrow column from a single closed boundary outline (no author-specified
+centerline needed):
+
+1. Find the shape's elongation direction via PCA on its vertices (the
+   covariance matrix's principal eigenvector).
+2. Find the two boundary *edges* whose average position is most extreme
+   along that axis — the column's two end caps. This must operate on
+   edges, not vertices: picking whichever two *vertices* are farthest
+   apart fails on the simplest possible case, an axis-aligned rectangle,
+   where the diagonal between two corners is longer than the distance
+   between the short sides, and picking whichever two vertices are most
+   extreme along the principal axis fails too, because a rectangle's short
+   side has *two* vertices tied for the extreme with no vertex at the true
+   end-cap midpoint. Only cutting at the edge itself, using its midpoint,
+   finds the real ends.
+3. Split the polygon into two rails at those edges, sharing each end cap's
+   midpoint as both rails' start/end point.
+4. Resample both rails to the same point count (by fraction of arc length,
+   not fixed stitch length, so they pair up 1:1 regardless of individual
+   rail length) at `satinDensityMM` spacing, and zigzag between
+   corresponding pairs.
+5. If the widest pairing exceeds `maxSatinWidthMM`, throw rather than
+   silently produce unstitchable satin (spec §12's "automatically divide or
+   convert excessively wide satin regions" — the divide/convert part is a
+   Phase 4 auto-repair action; for now the engine refuses and reports why).
+
+Works well for the common "sausage" case (letter strokes, simple logo
+strokes, star points). **Known limitations:**
+- Both rails share a single point at each end cap, so width tapers to
+  exactly 0 at the very tip — correct for a genuinely pointed end (a star
+  point) but an approximation for a flat/square-capped column (e.g. a
+  plain rectangle), where real digitizing software sews a full-width
+  closing stitch straight across instead of tapering into it.
+  `SatinColumnGeneratorTests.straightRectangleColumn` checks width
+  consistency only in the column's middle for exactly this reason.
+- Branching or very irregular shapes aren't handled — robust
+  centerline/skeleton-based detection for arbitrary geometry is a
+  follow-up.
+- No automatic classification of *which* shapes should become satin vs.
+  fill vs. running stitch yet (next item below).
+
 ## Phase 2 — planned next
 
 - Background/foreground detection and removal for raster input (partially
@@ -71,10 +115,9 @@ per generator.
 - Color quantization with the four presets in spec §8
 - Multi-region object segmentation for raster input (currently one object
   per detected silhouette; no per-color splitting within a region yet)
-- Satin-column detection and generation (centerline/rails, width-adaptive) —
-  the hardest remaining Phase 2 item, deliberately tackled separately from
-  tatami fill
-- Automatic stitch-type selection per object (running vs. satin vs. fill)
+- Automatic stitch-type selection per object (running vs. satin vs. fill) —
+  deciding *which* generator an object should use, now that all three
+  generators exist
 - Thread color matching (RGB/LAB + Delta-E) against a local thread library
 
 ## Phase 3 — planned

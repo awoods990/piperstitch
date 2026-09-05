@@ -14,12 +14,25 @@ works" — `README.md`'s feature list is aspirational/target state.
   `.tatamiFill` objects. 5 new tests including explicit hole-region
   verification.
 
+### Added (continued)
+- Satin column generator (`SatinColumnGenerator.swift`): PCA-based
+  elongation axis, edge-based (not vertex-based) end-cap detection so
+  square-ended rectangles split correctly into two rails, arc-length-
+  matched rail resampling, and a hard error (rather than silent bad
+  output) when a column exceeds the practical satin width. Two real bugs
+  were found and fixed via testing before this worked: farthest-pair-of-
+  vertices end detection picks diagonal corners on a rectangle instead of
+  its actual ends, and even principal-axis *vertex* extremes tie on a
+  rectangle's short side with no vertex at the true end-cap midpoint —
+  only cutting at the end-cap *edge* (using its midpoint) is correct. Wired
+  into `DigitizePipeline` for `.satin` objects. 4 new tests.
+
 ### Known limitations at this stage
-- Satin-column detection/generation not yet implemented — `.satin` still
-  throws `unsupportedStitchType`.
-- No underlay beneath fill yet (Phase 3).
+- No underlay beneath fill or satin yet (Phase 3).
 - No automatic stitch-type selection (running vs. satin vs. fill) — the
   caller must still choose `stitchType` explicitly per object.
+- Satin end caps always taper to a point (see DIGITIZING_ENGINE.md) —
+  correct for pointed ends, an approximation for flat/square ones.
 
 ## Phase 1 — Foundation (complete)
 

@@ -71,7 +71,7 @@ public enum DigitizePipeline {
         case .tatamiFill:
             return TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
         case .satin:
-            throw DigitizePipelineError.unsupportedStitchType(object.stitchType)
+            return try SatinColumnGenerator.generate(for: object.shape, parameters: object.parameters)
         }
     }
 }
