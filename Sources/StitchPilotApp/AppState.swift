@@ -43,11 +43,32 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// nil = no hoop constraint checked. Re-analyzes immediately on change
+    /// so switching hoops updates the readiness score without re-running
+    /// Auto Digitize (spec §36: "alert if design exceeds sewing area").
+    @Published var selectedHoop: HoopProfile? = HoopProfile.commonHoops[2] {
+        didSet {
+            guard let plan = stitchPlan else { return }
+            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM)
+        }
+    }
+
     @Published var statusMessage: String = "Drag in an image or SVG file to begin."
     @Published var errorMessage: String?
     @Published var isBusy = false
 
     private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
+
+    func openArtworkWithPanel() {
+        let panel = NSOpenPanel()
+        var types: [UTType] = [.svg, .png, .jpeg, .tiff, .bmp, .gif]
+        if let webp = UTType(filenameExtension: "webp") { types.append(webp) }
+        panel.allowedContentTypes = types
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            importFile(url: url)
+        }
+    }
 
     func importFile(url: URL) {
         errorMessage = nil
@@ -108,9 +129,24 @@ final class AppState: ObservableObject {
         regenerateFromStoredGeometry()
     }
 
+    /// Resizes the *current* document, whatever its origin (a fresh import
+    /// or a loaded `.stitchpilot` project) — regenerating each object's
+    /// geometry from the document's own current bounding box, never scaling
+    /// already-generated stitch coordinates (spec §39). This works
+    /// uniformly for both cases because it always re-derives from
+    /// `document` itself rather than depending on cached raw-import state,
+    /// which a loaded project doesn't have.
     func applyPhysicalSizeChange() {
-        guard !lastRawShapes.isEmpty else { return }
-        regenerateFromStoredGeometry()
+        guard let current = document else { return }
+        let currentBounds = current.boundingBox
+        guard !currentBounds.isEmpty else { return }
+
+        let resizedObjects = current.objects.map { object -> EmbroideryObject in
+            var resized = object
+            resized.shape = object.shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: currentBounds)
+            return resized
+        }
+        document = StitchDocument(name: current.name, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: resizedObjects)
         stitchPlan = nil
         readinessReport = nil
     }
@@ -145,7 +181,7 @@ final class AppState: ObservableObject {
             // after generation, not as a separate manual step — the user
             // should see whether a design is ready to sew as part of
             // seeing the preview, not have to remember to ask for it.
-            readinessReport = QualityAnalyzer.analyze(plan)
+            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM)
             statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
         } catch {
             errorMessage = friendlyMessage(for: error)
@@ -178,6 +214,58 @@ final class AppState: ObservableObject {
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try PESFormat.read(data)
             saveExportedFile(data, suggestedName: document.name + ".pes", extension: "pes")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
+    // MARK: - Project file (spec §6: the .stitchpilot editable master)
+
+    func saveProject() {
+        guard let document else {
+            errorMessage = "Nothing to save yet."
+            return
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = document.name + "." + ProjectFile.fileExtension
+        panel.allowedContentTypes = [UTType(filenameExtension: ProjectFile.fileExtension) ?? .data]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try ProjectFileFormat.write(document).write(to: url)
+            statusMessage = "Saved \(url.lastPathComponent)."
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
+    func openProjectWithPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: ProjectFile.fileExtension) ?? .data]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        openProject(url: url)
+    }
+
+    func openProject(url: URL) {
+        errorMessage = nil
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let loaded = try ProjectFileFormat.read(try Data(contentsOf: url))
+            document = loaded
+            physicalWidthMM = loaded.physicalWidthMM
+            physicalHeightMM = loaded.physicalHeightMM
+            // A loaded project's objects already carry final geometry,
+            // classification, and thread colors -- there's no "original
+            // raw import" to revert to, so the color-preset/thread-matching
+            // toggles simply have no effect until a new file is imported.
+            lastRawShapes = []
+            lastFillColors = []
+            lastCombinedBounds = .empty
+            lastImportedURL = nil
+            stitchPlan = nil
+            readinessReport = nil
+            statusMessage = "Opened \(url.lastPathComponent)."
         } catch {
             errorMessage = friendlyMessage(for: error)
         }

@@ -171,11 +171,22 @@ engine changes. See `FORMATS.md` for the status of each format.
 
 No Xcode.app is available in this environment, so there is no `.xcodeproj`.
 The app is built with `swift build -c release` and packaged into a normal
-`.app` bundle by `Scripts/build_app_bundle.sh` (Phase 5+), so end users never
-see Swift Package Manager, Terminal, or source code — see spec §3. Opening
+`.app` bundle by `Scripts/build_app_bundle.sh`, so end users never see Swift
+Package Manager, Terminal, or source code — see spec §3. Opening
 `Package.swift` in Xcode (when available) also works directly, with no
 `.xcodeproj` generation step needed, for anyone who wants to develop this in
 the Xcode IDE later.
+
+Verified end to end: `Scripts/build_app_bundle.sh` produces a `.app` that
+launches via `open` (the same path double-clicking in Finder takes) as a
+real, independent process — confirmed via `System Events` recognizing it as
+a running application and the system log showing AppKit actually creating
+and ordering its window to the front, plus a direct screenshot of the
+running window's content. The bundle carries a real icon
+(`Resources/StitchPilot.icns`, generated programmatically by
+`Scripts/generate_icon.swift` — a simple original stitch-motif mark, since
+no external design tools are available here) rather than shipping with a
+generic default.
 
 ## Third-party dependencies
 

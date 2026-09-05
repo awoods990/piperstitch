@@ -9,6 +9,7 @@ import StitchPilotCore
 struct StitchCanvasView: View {
     let document: StitchDocument?
     let stitchPlan: StitchPlan?
+    var hoop: HoopProfile?
 
     var body: some View {
         GeometryReader { geo in
@@ -17,9 +18,17 @@ struct StitchCanvasView: View {
                 let margin: CGFloat = 24
                 let availableW = size.width - margin * 2
                 let availableH = size.height - margin * 2
-                let scale = min(availableW / document.physicalWidthMM, availableH / document.physicalHeightMM)
-                let offsetX = margin + (availableW - document.physicalWidthMM * scale) / 2
-                let offsetY = margin + (availableH - document.physicalHeightMM * scale) / 2
+                // Fit whichever is larger, the design or the hoop, so a
+                // hoop bigger than the design (the common case) still shows
+                // the full hoop, and an oversized design against a small
+                // hoop still shows how much it overflows (spec §36).
+                let frameW = max(document.physicalWidthMM, hoop?.widthMM ?? 0)
+                let frameH = max(document.physicalHeightMM, hoop?.heightMM ?? 0)
+                let scale = min(availableW / frameW, availableH / frameH)
+                let centerX = margin + availableW / 2
+                let centerY = margin + availableH / 2
+                let offsetX = centerX - (document.physicalWidthMM / 2) * scale
+                let offsetY = centerY - (document.physicalHeightMM / 2) * scale
 
                 func toView(_ p: Point2D) -> CGPoint {
                     CGPoint(x: offsetX + p.x * scale, y: offsetY + p.y * scale)
@@ -29,6 +38,18 @@ struct StitchCanvasView: View {
                 let boundsRect = CGRect(x: offsetX, y: offsetY,
                                          width: document.physicalWidthMM * scale, height: document.physicalHeightMM * scale)
                 context.stroke(Path(boundsRect), with: .color(.gray.opacity(0.4)), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+
+                if let hoop {
+                    // Drawn as a rectangle regardless of the hoop's physical
+                    // shape (round/oval/rectangular hoops all exist) --
+                    // what matters here is the usable sewing field's W x H,
+                    // which is how hoops are actually specified.
+                    let designFits = document.physicalWidthMM <= hoop.widthMM && document.physicalHeightMM <= hoop.heightMM
+                    let hoopRect = CGRect(x: centerX - CGFloat(hoop.widthMM) * scale / 2, y: centerY - CGFloat(hoop.heightMM) * scale / 2,
+                                           width: CGFloat(hoop.widthMM) * scale, height: CGFloat(hoop.heightMM) * scale)
+                    context.stroke(Path(hoopRect), with: .color(designFits ? .blue.opacity(0.6) : .red.opacity(0.8)),
+                                    style: StrokeStyle(lineWidth: 1.5))
+                }
 
                 // Artwork reference (faint fill of each object's shape).
                 for object in document.objects {

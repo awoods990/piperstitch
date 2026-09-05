@@ -362,13 +362,42 @@ awareness), and the automatic-repair loop (spec §34 — re-analyze after
 fixing until the score stabilizes). Those are Phase 4/5 follow-ups; this is
 the honest "what the engine can actually check today" slice.
 
+## Phase 5 — Hoop profiles (basic form implemented)
+
+`HoopProfile.swift` provides a small set of common, generic hoop sizes
+(spec §36 — sizes are public physical facts about hoop hardware, not tied
+to a manufacturer) and a picker in the app; `QualityAnalyzer`'s hoop-fit
+check (which existed since the readiness score landed but had no way to be
+invoked with a real hoop) now actually runs against the selected one, and
+the canvas draws the hoop boundary — red when the design exceeds it. Full
+machine-specific hoop catalogs, and hoop-aware placement suggestions, are a
+later refinement.
+
+## Foundation — `.stitchpilot` project file (implemented)
+
+`ProjectFile.swift` is spec §6's "editable master format." Every model
+type (`StitchDocument`, `EmbroideryObject`, `VectorShape`, `ThreadColor`,
+`StitchGenerationParameters`, ...) was already `Codable` from Phase 1
+onward specifically so this would be nearly free once needed — this is a
+thin JSON wrapper (with a schema version, matching `StitchDocument`'s own)
+plus file I/O, not a new data model. Retains everything spec §6 asks for
+that the engine has actually built: object hierarchy, physical dimensions,
+thread assignments, stitch types, and per-object generation parameters
+(density, underlay, pull compensation, stitch-type overrides). Fields spec
+§6 lists that don't exist yet (fabric/machine/hoop profile *references*,
+revision history, a digitizer-adjustments log distinct from the generation
+parameters themselves) will extend this wrapper when those features exist.
+
 ## Phase 4 — planned
 
-Density heatmap, the Embroidery Readiness Score, automatic repair loop.
+Density heatmap, the automatic repair loop (re-analyze after fixing until
+the score stabilizes).
 
 ## Phases 5–7 — planned
 
-Fabric/machine/hoop profiles, production worksheet, thread consumption
+Fabric/machine profiles (hoop profiles exist in a basic form — see above —
+but fabric-aware density/underlay/compensation and machine-specific
+capability limits don't yet), production worksheet, thread consumption
 estimation, advanced lettering, cap mode, appliqué, photo-embroidery mode,
 batch digitizing, correction-learning architecture.
 

@@ -27,6 +27,7 @@ mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${PRODUCT_NAME}"
 cp "Resources/Info.plist" "${APP_DIR}/Contents/Info.plist"
+cp "Resources/StitchPilot.icns" "${APP_DIR}/Contents/Resources/StitchPilot.icns"
 
 echo "==> Built ${APP_DIR}"
 echo "Run with: open \"${APP_DIR}\""

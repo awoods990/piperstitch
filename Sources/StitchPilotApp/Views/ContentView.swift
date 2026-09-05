@@ -13,7 +13,7 @@ struct ContentView: View {
             Divider()
 
             ZStack {
-                StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan)
+                StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, hoop: app.selectedHoop)
                 if app.document == nil {
                     dropPrompt
                 }
@@ -30,11 +30,18 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    openFilePicker()
+                Menu {
+                    Button("Open Artwork...") { app.openArtworkWithPanel() }
+                    Button("Open Project...") { app.openProjectWithPanel() }
                 } label: {
                     Label("Open", systemImage: "folder")
                 }
+                Button {
+                    app.saveProject()
+                } label: {
+                    Label("Save Project", systemImage: "square.and.arrow.down")
+                }
+                .disabled(app.document == nil)
                 Button {
                     app.autoDigitize()
                 } label: {
@@ -91,17 +98,6 @@ struct ContentView: View {
         }
         return true
     }
-
-    private func openFilePicker() {
-        let panel = NSOpenPanel()
-        var types: [UTType] = [.svg, .png, .jpeg, .tiff, .bmp, .gif]
-        if let webp = UTType(filenameExtension: "webp") { types.append(webp) }
-        panel.allowedContentTypes = types
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url {
-            app.importFile(url: url)
-        }
-    }
 }
 
 private struct ObjectListView: View {
@@ -153,6 +149,15 @@ private struct InspectorView: View {
                 }
                 Toggle("Lock aspect ratio", isOn: $app.lockAspectRatio)
                 Button("Apply Size") { app.applyPhysicalSizeChange() }
+            }
+
+            Section("Hoop") {
+                Picker("Hoop", selection: $app.selectedHoop) {
+                    Text("None").tag(HoopProfile?.none)
+                    ForEach(HoopProfile.commonHoops) { hoop in
+                        Text("\(hoop.name) (\(Int(hoop.widthMM))×\(Int(hoop.heightMM))mm)").tag(HoopProfile?.some(hoop))
+                    }
+                }
             }
 
             Section("Color Reduction") {

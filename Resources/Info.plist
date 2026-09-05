@@ -10,6 +10,8 @@
 	<string>com.stitchpilot.app</string>
 	<key>CFBundleExecutable</key>
 	<string>StitchPilot</string>
+	<key>CFBundleIconFile</key>
+	<string>StitchPilot.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
