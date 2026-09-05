@@ -68,7 +68,9 @@ public enum DigitizePipeline {
                 // technique for a stronger, more visible outline.
                 return base + base.reversed() + base
             }
-        case .satin, .tatamiFill:
+        case .tatamiFill:
+            return TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
+        case .satin:
             throw DigitizePipelineError.unsupportedStitchType(object.stitchType)
         }
     }

@@ -36,13 +36,44 @@ different-color objects get a trim + color change. This is intentionally
 naive — it does *not* yet do hidden-travel routing, jump/trim minimization,
 or registration-aware reordering (spec §23–§26); those are Phase 3.
 
+## Phase 2 — Tatami fill (implemented)
+
+`TatamiFillGenerator.swift` generates scanline ("tatami") fill for a closed
+region: rotate the shape so the configured fill angle becomes horizontal,
+walk scanlines at `fillSpacingMM` intervals computing edge-crossing
+intervals with the standard **even-odd scanline fill rule**, resample each
+interval into stitches at `stitchLengthMM`, alternate direction every row
+(boustrophedon — consecutive rows connect with a short stitch instead of a
+jump), stagger the stitch phase between rows by `fillRowStaggerMM` so seams
+don't line up into a visible grid, then rotate back.
+
+Using the even-odd rule across *all* of a shape's sub-paths together means
+holes need no special case: a second sub-path (e.g. the counter of a letter
+"O") just contributes extra scanline crossings that toggle the inside/
+outside state, automatically excluding that region from fill — verified in
+`TatamiFillGeneratorTests.holeIsRespected`. This directly implements the
+"prevent negative spaces from closing" concern in spec §21, at least for the
+geometric case; density/pull-driven closing of negative space (§21's other
+concern — holes closing up under sewing tension) is a Phase 3
+concern once pull compensation exists.
+
+**Known limitation:** no underlay yet (Phase 3), and there is no minimum
+run-length filtering — a scanline that clips a shape's corner can produce a
+very short run/stitch. General stitch filtering (spec §30) is a dedicated
+cross-cutting pass planned for Phase 3, applied after generation regardless
+of which generator produced the stitches, rather than being reimplemented
+per generator.
+
 ## Phase 2 — planned next
 
-- Background/foreground detection and removal for raster input
+- Background/foreground detection and removal for raster input (partially
+  done: `ImageImporter` already detects transparent/uniform backgrounds)
 - Color quantization with the four presets in spec §8
-- Object segmentation (connected components + contour tracing → vector regions)
-- Satin-column detection and generation (centerline/rails, width-adaptive)
-- Tatami fill generation (spacing, angle, row stagger)
+- Multi-region object segmentation for raster input (currently one object
+  per detected silhouette; no per-color splitting within a region yet)
+- Satin-column detection and generation (centerline/rails, width-adaptive) —
+  the hardest remaining Phase 2 item, deliberately tackled separately from
+  tatami fill
 - Automatic stitch-type selection per object (running vs. satin vs. fill)
 - Thread color matching (RGB/LAB + Delta-E) against a local thread library
 

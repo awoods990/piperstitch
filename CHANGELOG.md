@@ -4,7 +4,24 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
-## Phase 1 — Foundation (in progress)
+## Phase 2 — Basic Auto Digitizing (in progress)
+
+### Added
+- Tatami fill generator (`TatamiFillGenerator.swift`): even-odd scanline
+  fill with configurable angle/spacing/row-stagger, boustrophedon row
+  connection, automatic hole support (holes are just additional sub-paths —
+  no special-casing needed). Wired into `DigitizePipeline` for
+  `.tatamiFill` objects. 5 new tests including explicit hole-region
+  verification.
+
+### Known limitations at this stage
+- Satin-column detection/generation not yet implemented — `.satin` still
+  throws `unsupportedStitchType`.
+- No underlay beneath fill yet (Phase 3).
+- No automatic stitch-type selection (running vs. satin vs. fill) — the
+  caller must still choose `stitchType` explicitly per object.
+
+## Phase 1 — Foundation (complete)
 
 ### Added
 - Project scaffolding: Swift Package Manager workspace (`StitchPilotCore`
