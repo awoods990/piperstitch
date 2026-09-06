@@ -4,6 +4,68 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: a hole/counter in a fill shape rendered as solid, not hollow
+
+A user reported a real logo (a wordmark with letters, including two "B"s)
+where a letter's counter (the enclosed hole inside a "B") showed as
+correctly outlined when the object was selected, but rendered solid in
+both preview modes — reproduced directly against the actual SVG via
+`DigitizeCLI`.
+
+### Root cause
+
+`TatamiFillGenerator`'s even-odd scanline logic already correctly excluded
+hole pixels from the fill (`holeIsRespected` passed) — the bug was one
+level down. When a hole split a scanline row into two separate crossing
+intervals ("runs"), both runs were flattened into that row's *single*
+stitch sequence regardless, so the needle stitched a plain, dense segment
+*straight through* the hole's middle on every row that crossed it.
+Individually unremarkable, but repeated across the hole's full height at
+normal fill spacing (as fine as 0.4mm), those bridging stitches alone were
+dense enough to visually fill the hole back in — even though no fill
+*point* was ever technically inside it, which is exactly why the existing
+`holeIsRespected` test didn't catch it: it checked point positions, not the
+segments between them.
+
+### Fix
+
+`TatamiFillGenerator` now groups each row's runs into independently-
+connected "chains" across rows by X-overlap (`chainRuns`) before resampling
+into stitches, so a hole produces two separately-stitched regions that
+never cross it, instead of one flattened sequence that does. Each chain
+keeps its own boustrophedon alternation (now keyed by each run's absolute
+row index, not its position in whatever chain/segment it ends up in, so
+splicing chains together can't desync it from true row adjacency).
+
+Concatenating the chains back into one sequence needed its own fix along
+the way: an initial nearest-endpoint-greedy ordering (mirroring
+`ObjectSequencer`'s own approach) could pick a "nearest" chain whose
+straight connector cut through a *different*, unrelated hole entirely for
+shapes with two separated holes — caught by a second synthetic test
+(`multipleNonOverlappingHolesAreEachBoundedNotOnePerRow`) modeling a "B"'s
+two counters. The real fix: splice each side-chain in immediately adjacent
+to the exact row where it split off from the main fill (keyed by row
+index), not reordered by geometric distance — since a fully-enclosed hole
+never actually removes a row from the main chain's own sequence (every row
+still gets *a* run, just a narrower one on one side), "the main chain's row
+numbers have a gap" turned out not to be a reliable splice signal either;
+an intermediate version of this fix assumed it was, and silently fell back
+to appending the side-chain at the very end for exactly this common case.
+
+**Remaining, smaller residual**: this generator has no way to mark an
+actual jump within a single object's own point stream (only real
+architectural jump support — a larger, separate change — would remove this
+completely), so a small, *bounded* number of connector stitches — one where
+a chain splits off, one where it rejoins — can still legitimately cross a
+hole once each, worst case, rather than not at all. For a perfectly
+rectangular hole (no narrower "pinch point" to route the transition
+through at any row) this is as visible as it'll get; a real rounded letter
+counter tapers at top and bottom exactly where the splice happens, so in
+practice the residual is far smaller — confirmed by re-rendering the actual
+reported logo: both "B" counters are now correctly hollow, with only a
+short connector tail at the bottom of each, down from being entirely
+filled in.
+
 ## Broader real-world test cycles: format-reader validation + a studied fill technique
 
 Continuing the "run test cycles against public embroidery data" request:

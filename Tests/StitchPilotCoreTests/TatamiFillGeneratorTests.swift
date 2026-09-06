@@ -105,6 +105,84 @@ struct TatamiFillGeneratorTests {
         #expect(!solidPointsInHoleRegion.isEmpty)
     }
 
+    /// `holeIsRespected` above only checks that no fill *point* lands
+    /// inside the hole -- it doesn't check the *segments between*
+    /// consecutive points, so it couldn't catch a real bug: every row that
+    /// crossed the hole was split into two separate runs (correctly, one on
+    /// each side), but both runs got flattened into one row's stitch
+    /// sequence regardless, so the needle stitched a straight, dense
+    /// segment *through* the hole on every single row that crossed it —
+    /// individually unremarkable, but repeated across the hole's full
+    /// height at normal row spacing, visually filling it back in even
+    /// though no single stitch *point* was ever inside it. Found against a
+    /// real letterform ("B", two counters) in a user's logo — see
+    /// CHANGELOG.md.
+    ///
+    /// Fixed by grouping same-side runs into their own connected "chains"
+    /// across rows and splicing each chain in right next to the row it
+    /// split from, rather than flattening every row's runs together
+    /// regardless. That eliminates the *systematic, one-per-row* crossing,
+    /// but for a hole with no narrower "pinch point" to route the
+    /// transition through (a perfect rectangle, worst case, at every row) a
+    /// small, *bounded* number of connector stitches -- one where a
+    /// side-chain splits off, one where it rejoins -- can still legitimately
+    /// cross the hole once each: this generator has no way to mark an
+    /// actual jump within a single object's own point stream, only real
+    /// jump support (a larger, separate change) removes them completely.
+    /// A real rounded letter counter tapers at top and bottom exactly where
+    /// that splice happens, so in practice this residual is far smaller
+    /// than this deliberately-worst-case rectangular hole exercises -- see
+    /// CHANGELOG.md for the actual rendered result. This test asserts the
+    /// property that's actually fixed: crossings bounded to a small
+    /// constant, not one per row.
+    @Test func stitchSegmentsCrossingAHoleAreBoundedNotOnePerRow() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(30, 0), Point2D(30, 30), Point2D(0, 30)], closed: true)
+        let hole = SubPath(points: [Point2D(10, 10), Point2D(20, 10), Point2D(20, 20), Point2D(10, 20)], closed: true)
+        let shapeWithHole = VectorShape(subPaths: [outer, hole])
+
+        let points = TatamiFillGenerator.generate(for: shapeWithHole, parameters: squareParams(spacing: 0.5))
+        #expect(points.count > 1)
+
+        let crossings = countSegmentsCrossingHole(points, hole: (minX: 10, minY: 10, maxX: 20, maxY: 20))
+        // The hole is 10mm tall at 0.5mm row spacing -- roughly 20 rows
+        // cross it, so the old per-row bug would show ~20 crossings here.
+        #expect(crossings <= 2, "expected at most one entry + one exit connector, found \(crossings)")
+    }
+
+    /// The real bug this guards against involved a shape with *two*
+    /// non-overlapping holes at different heights (a "B"'s two counters) --
+    /// a case the single-hole tests above don't exercise, since chaining
+    /// runs across rows must correctly split into a *new* chain each time a
+    /// second hole opens, not just track one split/merge pair.
+    @Test func multipleNonOverlappingHolesAreEachBoundedNotOnePerRow() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 40), Point2D(0, 40)], closed: true)
+        let upperHole = SubPath(points: [Point2D(5, 5), Point2D(15, 5), Point2D(15, 15), Point2D(5, 15)], closed: true)
+        let lowerHole = SubPath(points: [Point2D(5, 25), Point2D(15, 25), Point2D(15, 35), Point2D(5, 35)], closed: true)
+        let shape = VectorShape(subPaths: [outer, upperHole, lowerHole])
+
+        let points = TatamiFillGenerator.generate(for: shape, parameters: squareParams(spacing: 0.5))
+        #expect(points.count > 1)
+
+        let upperCrossings = countSegmentsCrossingHole(points, hole: (minX: 5, minY: 5, maxX: 15, maxY: 15))
+        let lowerCrossings = countSegmentsCrossingHole(points, hole: (minX: 5, minY: 25, maxX: 15, maxY: 35))
+        #expect(upperCrossings <= 2, "expected at most one entry + one exit connector for the upper hole, found \(upperCrossings)")
+        #expect(lowerCrossings <= 2, "expected at most one entry + one exit connector for the lower hole, found \(lowerCrossings)")
+    }
+
+    /// Counts stitch segments whose midpoint falls inside `hole` -- a
+    /// reasonable approximation for the near-horizontal/vertical fill
+    /// segments this generator produces.
+    private func countSegmentsCrossingHole(_ points: [Point2D], hole: (minX: Double, minY: Double, maxX: Double, maxY: Double)) -> Int {
+        guard points.count > 1 else { return 0 }
+        var count = 0
+        for i in 1..<points.count {
+            let a = points[i - 1], b = points[i]
+            let mid = Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
+            if mid.x > hole.minX, mid.x < hole.maxX, mid.y > hole.minY, mid.y < hole.maxY { count += 1 }
+        }
+        return count
+    }
+
     @Test func emptyShapeProducesNoStitches() {
         let tiny = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(0.01, 0), Point2D(0.01, 0.01)], closed: true)])
         let points = TatamiFillGenerator.generate(for: tiny, parameters: squareParams())

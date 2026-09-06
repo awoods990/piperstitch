@@ -10,11 +10,18 @@ import Foundation
 /// Algorithm: rotate the shape so the fill angle becomes horizontal, grow
 /// the boundary for pull compensation, walk scanlines at `fillSpacingMM`
 /// intervals computing edge-crossing intervals (standard even-odd scanline
-/// fill), shrink each row's overall span for push compensation, resample
-/// each interval into stitches at `stitchLengthMM`, alternate direction
-/// each row (boustrophedon, so consecutive rows connect with a short
-/// stitch instead of a jump), stagger the stitch phase between rows so
-/// seams don't line up into a visible grid, then rotate the result back.
+/// fill), shrink each row's overall span for push compensation. A hole
+/// splits some rows into more than one crossing interval ("run") — rather
+/// than flattening every row's runs into one stitch sequence regardless
+/// (which would stitch a straight, solid-looking bridge across the hole on
+/// every row that crosses it), `chainRuns` groups runs into independently-
+/// connected regions across rows by X-overlap first, so a hole produces
+/// separate chains that never cross it. Each chain is then resampled into
+/// stitches at `stitchLengthMM` with its own boustrophedon alternation
+/// (consecutive rows of that region connect with a short stitch instead of
+/// a jump) and stitch-phase stagger (so seams don't line up into a visible
+/// grid), `sequenceChains` orders the chains for minimal travel between
+/// them, and the concatenated result is rotated back.
 public enum TatamiFillGenerator {
     public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
         guard !shape.subPaths.isEmpty else { return [] }
@@ -66,7 +73,10 @@ public enum TatamiFillGenerator {
         let pushCompMM = parameters.pushCompensationMM
             ?? PullCompensationCalculator.estimatePush(stitchType: .tatamiFill, densityMM: spacing, objectLengthMM: box.width)
 
-        var rows: [[Point2D]] = [] // each row: resampled stitch points, in rotated space, in walking order
+        // Collect each row's crossing-pairs as raw intervals first, without
+        // resampling yet -- `chainRuns` below needs to see run-to-run
+        // adjacency across rows before any stitch points exist.
+        var rowRuns: [[Run]] = []
         var rowIndex = 0
         var y = box.minY + spacing / 2 // center rows within the shape rather than starting exactly on the edge
 
@@ -76,29 +86,167 @@ public enum TatamiFillGenerator {
                 crossings[0] += pushCompMM / 2
                 crossings[crossings.count - 1] -= pushCompMM / 2
             }
-            var rowPoints: [Point2D] = []
-            let phase = (Double(rowIndex) * stagger).truncatingRemainder(dividingBy: stitchLength)
-
+            var runs: [Run] = []
             var runIndex = 0
             while runIndex + 1 < crossings.count {
                 let xStart = crossings[runIndex]
                 let xEnd = crossings[runIndex + 1]
                 runIndex += 2
                 guard xEnd > xStart else { continue }
-                rowPoints.append(contentsOf: resampleRun(y: y, xStart: xStart, xEnd: xEnd, stitchLength: stitchLength, phase: phase))
+                runs.append(Run(start: xStart, end: xEnd, y: y, rowIndex: rowIndex))
             }
-
-            if !rowPoints.isEmpty {
-                // Boustrophedon: alternate direction so consecutive rows connect end-to-end.
-                if rowIndex % 2 == 1 { rowPoints.reverse() }
-                rows.append(rowPoints)
-            }
+            rowRuns.append(runs)
             rowIndex += 1
             y += spacing
         }
 
-        let flatRotated = rows.flatMap { $0 }
-        return flatRotated.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) }
+        let chains = chainRuns(rowRuns)
+        let orderedChains = sequenceChains(chains)
+
+        var rotatedResult: [Point2D] = []
+        for chain in orderedChains {
+            for run in chain {
+                let phase = (Double(run.rowIndex) * stagger).truncatingRemainder(dividingBy: stitchLength)
+                var points = resampleRun(y: run.y, xStart: run.start, xEnd: run.end, stitchLength: stitchLength, phase: phase)
+                // Boustrophedon: alternate direction by each run's own
+                // *absolute* row index (not its position within whatever
+                // chain/segment it ended up in after splicing), so
+                // direction stays consistent with true row adjacency
+                // regardless of how `sequenceChains` split a chain into
+                // pieces to splice side-strips in between them.
+                if run.rowIndex % 2 == 1 { points.reverse() }
+                rotatedResult.append(contentsOf: points)
+            }
+        }
+
+        return rotatedResult.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) }
+    }
+
+    /// One scanline row's crossing interval, in rotated space, before
+    /// resampling into actual stitch points.
+    private struct Run {
+        var start: Double
+        var end: Double
+        var y: Double
+        var rowIndex: Int
+    }
+
+    /// Groups runs into connected chains across rows by X-overlap, so a
+    /// hole that splits one row into two runs produces two independently-
+    /// connected fill regions instead of one row's "run" list being
+    /// flattened and stitched straight across the gap between them. Without
+    /// this, every row crossing a hole added one dense stitch bridging
+    /// straight through its middle -- individually invisible, but repeated
+    /// at normal row spacing (as low as ~0.4mm) across the hole's full
+    /// height, those bridging stitches alone were dense enough to visually
+    /// fill the hole back in, even though the shape data and even-odd
+    /// scanline logic already correctly excluded it. Found against a real
+    /// multi-hole letterform ("B", two counters) in a user's logo — a
+    /// single-hole synthetic test (`TatamiFillGeneratorTests.
+    /// holeIsRespected`) didn't catch it because it only checked that no
+    /// fill *points* land inside the hole, not that no stitch *segment*
+    /// crosses through it (see CHANGELOG.md).
+    ///
+    /// Matching is greedy-by-overlap, resolved most-overlap-first so two
+    /// rows competing for the same chain don't get assigned arbitrarily:
+    /// a hole opening (1 row's run -> 2 next row's runs) starts a new
+    /// chain for whichever run doesn't win the best-overlap match; a hole
+    /// closing (2 active chains -> 1 run) continues whichever chain
+    /// overlaps most and leaves the other to end where it is -- coverage
+    /// is unaffected either way (every run always joins some chain), only
+    /// which underlying thread path continues which region.
+    private static func chainRuns(_ rowRuns: [[Run]]) -> [[Run]] {
+        var chains: [[Run]] = []
+        var activeChainIndices: [Int] = []
+
+        for runs in rowRuns {
+            var candidates: [(runIndex: Int, chainIndex: Int, overlap: Double)] = []
+            for (ri, run) in runs.enumerated() {
+                for chainIndex in activeChainIndices {
+                    guard let lastRun = chains[chainIndex].last else { continue }
+                    let overlap = min(run.end, lastRun.end) - max(run.start, lastRun.start)
+                    if overlap > 0 { candidates.append((ri, chainIndex, overlap)) }
+                }
+            }
+            candidates.sort { $0.overlap > $1.overlap }
+
+            var runToChain = [Int?](repeating: nil, count: runs.count)
+            var chainClaimed = Set<Int>()
+            for candidate in candidates {
+                guard runToChain[candidate.runIndex] == nil, !chainClaimed.contains(candidate.chainIndex) else { continue }
+                runToChain[candidate.runIndex] = candidate.chainIndex
+                chainClaimed.insert(candidate.chainIndex)
+            }
+
+            var newActive: [Int] = []
+            for (ri, run) in runs.enumerated() {
+                if let chainIndex = runToChain[ri] {
+                    chains[chainIndex].append(run)
+                    newActive.append(chainIndex)
+                } else {
+                    chains.append([run])
+                    newActive.append(chains.count - 1)
+                }
+            }
+            activeChainIndices = newActive
+        }
+        return chains
+    }
+
+    /// Orders chains for final concatenation by splicing each side-chain in
+    /// immediately adjacent to the exact row where it split off from the
+    /// main fill, instead of appending disconnected chains in some other
+    /// order and hoping a straight connector between them happens to look
+    /// reasonable.
+    ///
+    /// A fully-enclosed hole (an ordinary letter counter, not one that
+    /// touches the shape's outer edge) never actually removes a row from
+    /// the main chain's own row sequence -- every row still gives the main
+    /// chain *a* run, just a narrower one on one side of the hole, while
+    /// the hole's other side becomes a separate short side-chain for
+    /// exactly the hole's row range. So "the main chain's row numbers have
+    /// a gap" is not a reliable signal of where a hole is (an earlier
+    /// version of this function assumed it was, found nothing to splice for
+    /// this exact case, and fell through to appending the side-chain at the
+    /// very end -- reintroducing a long-distance connector that could cut
+    /// straight back through the hole it came from). The reliable signal is
+    /// simpler: a side-chain's *first* row tells you exactly which row of
+    /// the main chain it split away from, so that's where it belongs.
+    private static func sequenceChains(_ chains: [[Run]]) -> [[Run]] {
+        guard chains.count > 1 else { return chains }
+        // The chain with the most rows is, in practice, the one that
+        // continues across every hole's split and merge -- every other
+        // chain is a short side-strip confined to one hole's row range.
+        guard let rootIndex = chains.indices.max(by: { chains[$0].count < chains[$1].count }) else { return chains }
+
+        var chainsStartingAtRow: [Int: [Int]] = [:]
+        for (ci, chain) in chains.enumerated() where ci != rootIndex {
+            guard let firstRowIndex = chain.first?.rowIndex else { continue }
+            chainsStartingAtRow[firstRowIndex, default: []].append(ci)
+        }
+
+        var ordered: [[Run]] = []
+        var pending: [Run] = []
+        func flushPending() {
+            guard !pending.isEmpty else { return }
+            ordered.append(pending)
+            pending = []
+        }
+
+        for run in chains[rootIndex] {
+            pending.append(run)
+            // Splice in every side-chain that begins at this exact row,
+            // right after finishing the root's own run for it -- the
+            // shortest possible connector in both directions, since the
+            // side-chain's own first (and, after it, the root's very next)
+            // row are immediately adjacent to this one.
+            if let starting = chainsStartingAtRow[run.rowIndex] {
+                flushPending()
+                for chainIndex in starting { ordered.append(chains[chainIndex]) }
+            }
+        }
+        flushPending()
+        return ordered
     }
 
     /// Even-odd rule: all edges from all sub-paths (holes included) are
