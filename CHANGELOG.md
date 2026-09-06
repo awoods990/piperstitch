@@ -4,6 +4,43 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## 2-opt local-search refinement of object sequencing (stitch-conversion performance)
+
+### Added
+- `ObjectSequencer` follows its greedy construction with a bounded 2-opt
+  local-search pass: repeatedly tries reversing a contiguous stretch of
+  the order and keeps the best improving reversal found each pass, until
+  a full pass finds none. Fixes the classic nearest-neighbor failure
+  mode a pure greedy scheduler can't see coming — two spatially separate
+  clusters visited in an interleaved zigzag instead of one cluster then
+  the other.
+- Reversing a stretch also flips each item's own entry/exit choice, which
+  leaves every edge *inside* the stretch unchanged (same two points,
+  distance is symmetric) — so only the two boundary edges need
+  re-scoring per candidate reversal, turning an O(n) cost recomputation
+  into O(1) and making an exhaustive O(n²)-per-pass search practical.
+- A reversal is rejected if any containment edge has both ends inside
+  the stretch being reversed — sufficient because anything outside a
+  reversed stretch keeps its exact absolute position, so a containment
+  edge with only one end inside can never end up on the wrong side of
+  the other. Skipped above 300 objects (runtime safety valve) and capped
+  at a fixed number of passes.
+- 2 new tests: a hand-worked nearest-neighbor trap (5 same-color points
+  at x = 0, 1, -2, 4, -8) where greedy alone produces a 22mm tour and
+  2-opt finds the single reversal reaching the true 16mm optimum for a
+  fixed starting point, verified by hand-enumerating the alternatives;
+  and a containment-safety regression test confirming the constraint
+  survives even with real 2-opt work to do. Full suite (129 tests) green,
+  and no pre-existing test's exact-order expectations changed (they all
+  have 3 or fewer objects, below the size where 2-opt does anything).
+
+### Known limitations at this stage
+- Local search, not a guaranteed jump-minimal order — can converge to a
+  local optimum a smarter move set (e.g. Or-opt, 3-opt) would escape.
+- Still treats each object as an atomic, pre-built unit; a real
+  graph-based router (Ink/Stitch's `auto_satin.py` approach) routes
+  through a satin column's own structure instead.
+
 ## Object Inspector: manual per-object overrides before export
 
 ### Added

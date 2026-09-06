@@ -540,12 +540,50 @@ in letters like "e", "a", "o") that are too small to fill at normal
 density aren't detected or simplified, and there's no small-text-specific
 underlay or sequencing yet.
 
+## Phase 3 (continued) — 2-opt sequencing refinement (implemented)
+
+The greedy scheduler in `ObjectSequencer` is inherently short-sighted:
+picking the locally-nearest candidate at each step can't see that it
+leaves a worse jump later, the classic failure mode being two spatially
+separate clusters visited in an interleaved zigzag instead of one cluster
+then the other. A bounded 2-opt local-search pass now runs after the
+greedy construction:
+
+- Repeatedly look for a contiguous stretch of the order whose *reversal*
+  lowers total cost (color changes weighted far above raw distance, so
+  it never sacrifices color grouping for a shorter jump), and keep the
+  best one found each pass until a full pass finds no more improvement.
+- Reversing a stretch also flips each item's own `reversed` flag (which
+  end it's approached from), so it's still entered from a
+  self-consistent side. This has a useful consequence: every edge
+  *inside* the reversed stretch is unchanged by the move (it's the same
+  two points either way, and distance is symmetric), so only the two
+  *boundary* edges need re-scoring per candidate — turning what would be
+  an O(n) cost recomputation per candidate into O(1), which is what
+  makes an exhaustive O(n²)-per-pass search practical at all.
+- A reversal is only considered if no containment edge (see
+  `ObjectSequencer`'s "must sew before" partial order) has both ends
+  inside the stretch being reversed — provably sufficient, since
+  anything *outside* a reversed stretch keeps its exact absolute
+  position, so a containment edge with only one end inside the stretch
+  can never end up on the wrong side of the other end.
+- Skipped above `maxObjectsForTwoOpt` (300) objects as a runtime safety
+  valve, and capped at a fixed number of passes.
+
+Verified with a hand-worked nearest-neighbor trap: 5 same-color points at
+x = 0, 1, -2, 4, -8 (in that authoring order). Greedy alone visits them
+in that same order for 22mm of total travel (matching a by-hand trace of
+the algorithm); 2-opt finds the single reversal that cuts it to 16mm,
+matching the true optimum for a tour required to start at x=0 (found by
+hand-enumerating the remaining orderings) — see `EMBROIDERY_ALGORITHM_
+REFERENCE.md` for the full worked cost calculation.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, hidden travel routing (sewing under later
-stitching instead of jumping), corner handling, and contour fill (see
-`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements" for
-the full prioritized list).
+stitching instead of jumping — now the top item in
+`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements"),
+corner handling, and contour fill.
 
 ## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
 

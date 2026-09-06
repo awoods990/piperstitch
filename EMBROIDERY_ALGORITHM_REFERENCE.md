@@ -307,16 +307,44 @@ come from.
     the centerline instead of a satin zigzag. `generate` (the strict
     variant) throws a new `columnTooNarrow` error for the same condition,
     symmetric with its existing `columnTooWide`.
+12. **2-opt local-search refinement of object sequencing** (this round):
+    the greedy scheduler is inherently short-sighted — it can't see that
+    the locally-nearest candidate now leaves a worse jump later, the
+    classic failure mode being two spatially separate clusters visited in
+    an interleaved zigzag instead of one cluster then the other.
+    `ObjectSequencer` now follows the greedy construction with a bounded
+    2-opt pass: repeatedly try reversing a contiguous stretch of the
+    order (with each item's own entry/exit choice flipped too, so it's
+    still approached from a self-consistent end) and keep it only if it
+    lowers total cost (color changes weighted far above raw distance, so
+    it never trades color grouping away for a shorter jump) *and* doesn't
+    place a contained object before whatever must contain it — checked by
+    rejecting any reversal whose range contains both ends of a
+    containment edge, proven safe in `twoOptImprove`'s doc comment
+    (nothing outside a reversed range ever changes its absolute
+    position, so a containment edge with only one end inside the range
+    can never be violated by that reversal). Reversing a stretch and
+    flipping each item's own direction leaves every edge *inside* the
+    stretch unchanged (same two points, distance is symmetric), so only
+    the two boundary edges need re-scoring per candidate reversal — this
+    is what makes an exhaustive O(n²)-per-pass search tractable instead
+    of needing to recompute the whole tour's cost per candidate.
+    Verified with a hand-worked nearest-neighbor trap (5 points at
+    x = 0, 1, -2, 4, -8): greedy alone produces a 22mm tour, matching a
+    by-hand trace; 2-opt finds the single reversal that reaches 16mm,
+    matching the fixed-start optimum found by hand-enumerating all
+    orderings.
 
 ## Known remaining weaknesses
 
-- Object sequencing is still a greedy heuristic (color match, then
-  nearest point), not a real graph-based router the way Ink/Stitch's
-  `auto_satin` builds for satin columns specifically (which restructures
-  the column itself into a running-stitch graph and finds a path through
-  it, not just orders whole pre-built objects) — it doesn't guarantee a
-  jump-minimal order, only a better one than authoring order, and it can't
-  reorder across a containment constraint (nor should it).
+- Object sequencing is a greedy-plus-2-opt heuristic, not a real
+  graph-based router the way Ink/Stitch's `auto_satin` builds for satin
+  columns specifically (which restructures the column *itself* into a
+  running-stitch graph and finds a path through it, not just orders
+  whole pre-built objects) — 2-opt improves on pure greedy but still
+  isn't a guaranteed jump-minimal order (it can converge to a local
+  optimum a smarter move set would escape), and it can't reorder across
+  a containment constraint (nor should it).
 - No contour fill (needs a robust repeated polygon-offset primitive this
   project doesn't have yet).
 - Width-aware satin splitting classifies each crossing independently
@@ -367,16 +395,24 @@ come from.
 
 ## Recommended next improvements, in priority order
 
-1. Contour fill, once a real polygon-offset primitive exists.
-2. A real graph-based router for satin objects specifically, the way
+1. Hidden travel routing: when a same-color jump's path will end up
+   covered by stitching sewn later, route it as buried running stitch
+   instead of a jump(+trim past `maxJumpWithoutTrimMM`) — avoiding the
+   trim entirely rather than just shortening the jump, the way real
+   digitizing software does. Needs a way to detect "will this path be
+   covered by later same-design stitching," which is the real design
+   work here.
+2. Contour fill, once a real polygon-offset primitive exists.
+3. A real graph-based router for satin objects specifically, the way
    `auto_satin.py` does — restructuring a satin column into a
    running-stitch graph and finding a path through it, rather than
-   `ObjectSequencer`'s current per-object greedy ordering (which now uses
-   real endpoints and can reverse a path, but still treats each object as
-   an atomic, pre-built unit).
-3. Smooth the stitch-density transition at a width-aware satin split's
+   `ObjectSequencer`'s current per-object greedy-plus-2-opt ordering
+   (which now uses real endpoints, can reverse a path, and applies a
+   bounded local-search refinement, but still treats each object as an
+   atomic, pre-built unit rather than routing through its structure).
+4. Smooth the stitch-density transition at a width-aware satin split's
    narrow/wide seam (see `generatePartial`'s known limitation above) —
    currently a clean but abrupt technique change at the boundary.
-4. Extend `ObjectSequencer`'s polygon containment test to all of a
+5. Extend `ObjectSequencer`'s polygon containment test to all of a
    shape's sub-paths (not just the outer boundary), so an object sitting
    inside another's hole isn't misclassified as contained.

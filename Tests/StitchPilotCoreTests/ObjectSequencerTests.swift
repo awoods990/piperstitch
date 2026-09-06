@@ -143,6 +143,43 @@ struct ObjectSequencerTests {
         #expect(sequenced[1].points == [Point2D(10, 5), Point2D(0, 5)])
     }
 
+    @Test func twoOptFixesGreedyNearestNeighborZigzag() {
+        // A classic nearest-neighbor trap: 5 same-color points at x =
+        // 0, 1, -2, 4, -8 (authored in that index order, all y=0). Greedy
+        // nearest-neighbor (starting at index 0 by authoring-order
+        // tie-break, since nothing's placed yet) visits them in that same
+        // 0, 1, -2, 4, -8 order for a total travel of 22mm -- but a single
+        // segment reversal (swap the -2 and 4 positions in the visiting
+        // order) reaches 0, 1, 4, -2, -8 for only 16mm. Hand-verified: this
+        // is exactly the single best-improving reversal 2-opt should find.
+        func point(_ x: Double, name: String) -> EmbroideryObject {
+            square(x - 0.5, -0.5, 1, name: name)
+        }
+        let objects = [point(0, name: "p0"), point(1, name: "p1"), point(-2, name: "p2"), point(4, name: "p3"), point(-8, name: "p4")]
+
+        let sequenced = ObjectSequencer.sequence(objects)
+        let xs = sequenced.map { $0.shape.boundingBox.center.x }
+        let totalTravel = zip(xs, xs.dropFirst()).reduce(0.0) { $0 + abs($1.1 - $1.0) }
+
+        #expect(totalTravel <= 16.01, "2-opt should reach the known 16mm order instead of settling for greedy's 22mm zigzag (got \(totalTravel)mm via \(xs))")
+    }
+
+    @Test func twoOptNeverViolatesContainmentEvenAmongDistanceTemptations() {
+        // "outer" must sew before "inner" (it contains it). Two more
+        // same-color, distantly-placed objects give the 2-opt pass real
+        // work to do; the containment constraint must survive regardless
+        // of what reversals it tries along the way.
+        let inner = square(45, 45, 10, name: "inner")
+        let a = square(200, 200, 5, name: "a")
+        let b = square(202, 202, 5, name: "b")
+        let outer = square(0, 0, 100, name: "outer")
+
+        let sequenced = ObjectSequencer.sequence([inner, a, b, outer])
+        let outerPos = sequenced.firstIndex { $0.name == "outer" }!
+        let innerPos = sequenced.firstIndex { $0.name == "inner" }!
+        #expect(outerPos < innerPos)
+    }
+
     @Test func integratesWithDigitizePipelineColorSequenceConsistently() throws {
         let inner = square(45, 45, 10, name: "inner")
         var outer = square(0, 0, 100, name: "outer")

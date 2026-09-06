@@ -43,6 +43,22 @@ import Foundation
 /// follow, so this can't scatter an ordering the artwork's nesting
 /// actually depends on.
 ///
+/// 3. A bounded 2-opt local-search pass then refines that greedy order:
+///    greedy construction is inherently short-sighted (it can't see that
+///    picking the *locally* nearest candidate now leaves a worse jump
+///    later), the classic failure case being two spatially separate
+///    clusters visited in an interleaved zigzag instead of one cluster
+///    then the other. 2-opt repeatedly tries reversing a contiguous
+///    stretch of the order and keeps the reversal only if it lowers total
+///    cost (color changes weighted far above raw travel distance, so it
+///    never trades away color grouping for a shorter jump) and only if
+///    doing so wouldn't violate a containment edge with both ends inside
+///    the reversed stretch. See `twoOptImprove`'s doc comment for why this
+///    is efficient enough to run unconditionally (bounded object counts
+///    aside): reversing a stretch and flipping each item's own
+///    entry/exit choice leaves every *internal* edge's cost unchanged, so
+///    only the two boundary edges need re-evaluating per candidate.
+///
 /// `sequence` (below) uses each object's bounding-box *center* as its
 /// proximity proxy — cheap, but not what a machine actually travels
 /// to/from. `sequenceGenerated` uses the real first/last points of each
@@ -137,6 +153,99 @@ public enum ObjectSequencer {
         guard order.count == n else {
             let placed = Set(order.map { $0.index })
             return order + (0..<n).filter { !placed.contains($0) }.map { ($0, false) }
+        }
+        return twoOptImprove(order, colors: colors, entryPoints: entryPoints, exitPoints: exitPoints, predecessors: predecessors)
+    }
+
+    /// Every color switch costs a real machine stop for a thread change;
+    /// this weight (in the same "mm" units the distance terms use) just
+    /// needs to be comfortably larger than any realistic single jump so
+    /// 2-opt never trades away color grouping for a shorter jump — it
+    /// isn't a measured physical cost.
+    private static let colorChangeCostMM = 1000.0
+    /// Above this many objects, skip 2-opt entirely and return the greedy
+    /// order as-is: each pass is O(n^2) and a worthwhile design rarely has
+    /// anywhere near this many separately-sequenced objects, so this is a
+    /// safety valve against pathological runtime, not a tuned threshold.
+    private static let maxObjectsForTwoOpt = 300
+    private static let maxTwoOptPasses = 25
+
+    /// Bounded local-search refinement of a valid, containment-respecting
+    /// `order`: repeatedly looks for a contiguous stretch `[i...j]` whose
+    /// *reversal* (with each item's own `reversed` flag flipped too, so
+    /// each item is still approached from a self-consistent end) lowers
+    /// total cost, and keeps the best one found each pass, stopping once a
+    /// full pass finds no improvement or `maxTwoOptPasses` is reached.
+    ///
+    /// Reversing a stretch and flipping each item's `reversed` flag leaves
+    /// every edge strictly *inside* the stretch unchanged: for two
+    /// adjacent items in the old order, the edge was
+    /// `distance(exit(a), entry(b))`; after both are flipped and their
+    /// relative order reversed, the new adjacent edge is
+    /// `distance(exit(b-flipped), entry(a-flipped))` = `distance(entry(b),
+    /// exit(a))` — the same two points, order doesn't matter for a
+    /// Euclidean distance. Only the two *boundary* edges (into position
+    /// `i` from whatever precedes it, and out of position `j` to whatever
+    /// follows) actually change, so each candidate reversal can be scored
+    /// in O(1) instead of by recomputing the whole tour's cost — this is
+    /// the standard reason 2-opt is tractable at all.
+    private static func twoOptImprove(_ order: [(index: Int, reversed: Bool)], colors: [RGBColor], entryPoints: [Point2D], exitPoints: [Point2D], predecessors: [[Int]]) -> [(index: Int, reversed: Bool)] {
+        let n = order.count
+        guard n > 3, n <= maxObjectsForTwoOpt else { return order }
+
+        var order = order
+        var positionOf = [Int](repeating: 0, count: n) // objectIndex -> current position
+        for (pos, entry) in order.enumerated() { positionOf[entry.index] = pos }
+
+        func edgeCost(_ a: (index: Int, reversed: Bool), _ b: (index: Int, reversed: Bool)) -> Double {
+            guard colors[a.index] == colors[b.index] else { return colorChangeCostMM }
+            let exitA = a.reversed ? entryPoints[a.index] : exitPoints[a.index]
+            let entryB = b.reversed ? exitPoints[b.index] : entryPoints[b.index]
+            return exitA.distance(to: entryB)
+        }
+
+        func flipped(_ item: (index: Int, reversed: Bool)) -> (index: Int, reversed: Bool) {
+            (item.index, !item.reversed)
+        }
+
+        // No precedence edge may have both endpoints inside [lo, hi]:
+        // reversing would then place one side of that edge on the wrong
+        // side of the other.
+        func segmentRespectsContainment(_ lo: Int, _ hi: Int) -> Bool {
+            for pos in lo...hi {
+                for pred in predecessors[order[pos].index] {
+                    let predPos = positionOf[pred]
+                    if predPos >= lo, predPos <= hi { return false }
+                }
+            }
+            return true
+        }
+
+        for _ in 0..<maxTwoOptPasses {
+            var bestDelta = -0.001 // strictly-improving threshold, avoids float-noise thrashing
+            var bestRange: (Int, Int)?
+
+            for i in 0..<(n - 1) {
+                for j in (i + 1)..<n {
+                    guard segmentRespectsContainment(i, j) else { continue }
+
+                    let oldCostBefore = i > 0 ? edgeCost(order[i - 1], order[i]) : 0
+                    let oldCostAfter = j < n - 1 ? edgeCost(order[j], order[j + 1]) : 0
+                    let newCostBefore = i > 0 ? edgeCost(order[i - 1], flipped(order[j])) : 0
+                    let newCostAfter = j < n - 1 ? edgeCost(flipped(order[i]), order[j + 1]) : 0
+
+                    let delta = (newCostBefore + newCostAfter) - (oldCostBefore + oldCostAfter)
+                    if delta < bestDelta {
+                        bestDelta = delta
+                        bestRange = (i, j)
+                    }
+                }
+            }
+
+            guard let (lo, hi) = bestRange else { break } // converged: no improving reversal left
+            order[lo...hi].reverse()
+            for k in lo...hi { order[k].reversed.toggle() }
+            for pos in lo...hi { positionOf[order[pos].index] = pos }
         }
         return order
     }
