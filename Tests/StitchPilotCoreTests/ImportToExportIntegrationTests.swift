@@ -81,5 +81,14 @@ struct ImportToExportIntegrationTests {
         let pesDecoded = try PESFormat.read(pesData)
         let pesColorChanges = pesDecoded.commands.filter { if case .colorChange = $0 { return true }; return false }.count
         #expect(pesColorChanges == 3)
+
+        // `flattenWithColors` shares one generation pass for both outputs
+        // instead of each caller redoing it independently (a real, user-
+        // visible slowdown for a design with many objects -- see
+        // CHANGELOG.md); it must still agree exactly with calling `flatten`
+        // and `colorSequence` separately.
+        let (combinedPlan, combinedColors) = try DigitizePipeline.flattenWithColors(document)
+        #expect(combinedPlan.commands == plan.commands)
+        #expect(combinedColors.map { $0.rgb } == colors.map { $0.rgb })
     }
 }

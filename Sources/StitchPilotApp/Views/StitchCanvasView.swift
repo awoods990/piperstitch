@@ -18,7 +18,16 @@ enum StitchPreviewMode: String, CaseIterable, Identifiable {
 struct StitchCanvasView: View {
     let document: StitchDocument?
     let stitchPlan: StitchPlan?
+    /// The plan's per-run color sequence, computed once alongside it (see
+    /// `AppState.autoDigitize`/`DigitizePipeline.flattenWithColors`) and
+    /// passed in rather than recomputed here — recomputing it means redoing
+    /// the whole per-object generation pass again just for colors, real
+    /// user-visible latency for a design with many objects.
+    var colors: [ThreadColor] = []
     var hoop: HoopProfile?
+    /// The object currently selected in the object list, highlighted in the
+    /// canvas so the user can see which shape they're working on.
+    var selectedObjectID: EmbroideryObject.ID?
 
     @State private var mode: StitchPreviewMode = .realistic
     @State private var realisticImage: CGImage?
@@ -68,18 +77,20 @@ struct StitchCanvasView: View {
                     // No plan yet -- nothing to preview realistically, so
                     // always show the artwork reference fill regardless of mode.
                     drawArtworkFill(document, context: context, toView: toView, opacity: 0.85)
+                    drawSelectionHighlight(document, context: context, toView: toView)
                     return
                 }
 
                 if mode == .realistic, let realisticImage {
                     context.draw(Image(decorative: realisticImage, scale: 1, orientation: .up), in: boundsRect)
+                    drawSelectionHighlight(document, context: context, toView: toView)
                     return
                 }
 
                 drawArtworkFill(document, context: context, toView: toView, opacity: 0.12)
 
                 var colorIndex = 0
-                var currentColor = colorFor(document, index: 0)
+                var currentColor = colorFor(index: 0)
                 var lastPoint: CGPoint?
                 var stitchPath = Path()
                 var jumpPath = Path()
@@ -108,7 +119,7 @@ struct StitchCanvasView: View {
                     case .colorChange:
                         flushStitchPath()
                         colorIndex += 1
-                        currentColor = colorFor(document, index: colorIndex)
+                        currentColor = colorFor(index: colorIndex)
                         lastPoint = nil
                     case .trim, .stop:
                         // Thread's cut here -- don't let the next point draw
@@ -120,6 +131,7 @@ struct StitchCanvasView: View {
                 }
                 flushStitchPath()
                 context.stroke(jumpPath, with: .color(.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 2]))
+                drawSelectionHighlight(document, context: context, toView: toView)
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -150,9 +162,6 @@ struct StitchCanvasView: View {
 
     private func regenerateRealisticImageIfNeeded() {
         guard mode == .realistic, let document, let stitchPlan, planSignature != renderedSignature else { return }
-        // Must be the actual per-run color sequence, not raw object order --
-        // ObjectSequencer can reorder objects relative to `document.objects`.
-        let colors = (try? DigitizePipeline.colorSequence(for: document)) ?? document.objects.map { $0.threadColor }
         realisticImage = StitchRenderer.render(stitchPlan, widthMM: document.physicalWidthMM, heightMM: document.physicalHeightMM, colors: colors)
         renderedSignature = planSignature
     }
@@ -173,11 +182,31 @@ struct StitchCanvasView: View {
         }
     }
 
-    private func colorFor(_ document: StitchDocument, index: Int) -> Color {
-        guard !document.objects.isEmpty else { return .black }
-        let obj = document.objects[min(index, document.objects.count - 1)]
-        return Color(red: Double(obj.threadColor.rgb.r) / 255,
-                      green: Double(obj.threadColor.rgb.g) / 255,
-                      blue: Double(obj.threadColor.rgb.b) / 255)
+    /// Outlines the selected object's shape in an accent color so the user
+    /// can see which object the Object Inspector is currently editing,
+    /// regardless of preview mode -- drawn last, on top of everything else,
+    /// with a white halo underneath so it stays visible against any thread
+    /// or background color.
+    private func drawSelectionHighlight(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint) {
+        guard let selectedObjectID, let object = document.objects.first(where: { $0.id == selectedObjectID }) else { return }
+        var path = Path()
+        for subPath in object.shape.subPaths {
+            guard let first = subPath.points.first else { continue }
+            path.move(to: toView(first))
+            for pt in subPath.points.dropFirst() { path.addLine(to: toView(pt)) }
+            if subPath.closed { path.closeSubpath() }
+        }
+        context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: 4.5, lineJoin: .round))
+        context.stroke(path, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round, dash: [6, 4]))
+    }
+
+    /// `colors` is the actual per-run color sequence (see this type's
+    /// `colors` property doc comment) -- indexing into it directly, rather
+    /// than into `document.objects`, matters once `ObjectSequencer` has
+    /// reordered objects relative to the document's own order.
+    private func colorFor(index: Int) -> Color {
+        guard !colors.isEmpty else { return .black }
+        let color = colors[min(index, colors.count - 1)]
+        return Color(red: Double(color.rgb.r) / 255, green: Double(color.rgb.g) / 255, blue: Double(color.rgb.b) / 255)
     }
 }

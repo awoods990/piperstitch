@@ -127,4 +127,37 @@ struct ImageImportTests {
         #expect(colors.contains { RGBColor.deltaE($0, RGBColor(hex: 0x00FF00)) < 10 })
         #expect(colors.contains { RGBColor.deltaE($0, RGBColor(hex: 0x0000FF)) < 10 })
     }
+
+    /// `CGContext` only supports *premultiplied*-alpha bitmaps as a drawing
+    /// destination, so a semi-transparent pixel's raw stored RGB is
+    /// `trueColor * alpha`, not its true color -- a gold pixel at 50% alpha
+    /// stores as dark brown-ish, not gold. A real bug read that raw,
+    /// still-premultiplied RGB directly as if it were the pixel's true
+    /// color, so every anti-aliased edge in real artwork (there can be
+    /// thousands, one ring around every letter and detail in a text-heavy
+    /// logo) got misread as its own spurious dark "color" distinct from
+    /// both the true foreground and the background -- each becoming its
+    /// own tiny traced object. Found via `DigitizeCLI` against
+    /// `SMA Logo.webp`, a school-seal-and-text logo, which produced over a
+    /// million stitches before this and the tracer-closure fix below (see
+    /// CHANGELOG.md). This constructs a single 50%-alpha gold square and
+    /// checks the detected color is still recognizably gold, not the
+    /// darkened premultiplied value.
+    @Test func semiTransparentPixelsResolveToTrueColorNotPremultipliedDarkening() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 60
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        // Gold at 50% alpha -- premultiplied storage would be roughly half
+        // brightness (dark olive/brown), nothing like true gold.
+        let gold = CGColor(colorSpace: colorSpace, components: [212.0 / 255, 175.0 / 255, 55.0 / 255, 0.5])!
+        context.setFillColor(gold)
+        context.fill(CGRect(x: 15, y: 15, width: 20, height: 20))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!))
+        #expect(result.shapes.count == 1)
+        let detected = try #require(result.fillColors.first ?? nil)
+        #expect(RGBColor.deltaE(detected, RGBColor(hex: 0xD4AF37)) < 15,
+                "detected color \(detected) should be close to true gold, not premultiplied-darkened")
+    }
 }

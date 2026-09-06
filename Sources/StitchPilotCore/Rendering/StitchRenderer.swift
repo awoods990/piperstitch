@@ -12,15 +12,19 @@ import Foundation
 /// can display directly, and `renderPNGData(...)` is the same thing encoded
 /// to PNG bytes for command-line/test tooling.
 ///
-/// The technique: stroke each color run's stitch path at a real thread
-/// width (not a thin 1px wireframe line) with rounded caps/joins, then
-/// stroke it again, thinner and in a light, low-opacity overlay, straight
-/// down the same centerline. Overlapping thread-width strokes accumulate
-/// into a solid, woven-looking block wherever stitches are dense (satin
-/// zigzags, fill rows) — which is exactly the visual signature of real
-/// embroidery — and the second, lighter pass suggests the sheen of a round
-/// thread catching the light, cheaply (the same path stroked twice, not a
-/// per-segment gradient computation).
+/// The technique: stroke each individual stitch segment (not one merged
+/// polyline per color run) at a real thread width with rounded caps/joins,
+/// alternating a slightly darker/lighter shade every other stitch so
+/// individual stitches actually read as separate threads rather than one
+/// flat ribbon. Then stroke a thin, bright highlight over each segment
+/// *offset perpendicular to that segment's own direction* (not down its
+/// centerline) — a real thread is a cylinder, so its specular highlight
+/// runs along one side of it, and which side that is rotates with the
+/// thread's own direction; a centered highlight looks like a flat painted
+/// stripe, an offset one reads as round. Overlapping thread-width strokes
+/// still accumulate into a solid, woven-looking block wherever stitches are
+/// dense (satin zigzags, fill rows), which is the real visual signature of
+/// embroidery.
 public enum StitchRenderer {
     public struct Options {
         /// Real machine embroidery thread is roughly 0.3-0.5mm in diameter
@@ -71,28 +75,45 @@ public enum StitchRenderer {
         ctx.setLineJoin(.round)
 
         let threadWidthPt = CGFloat(options.threadWidthMM)
-        let highlightWidthPt = threadWidthPt * 0.4
+        let highlightWidthPt = threadWidthPt * 0.35
 
         var colorIndex = 0
         var currentColor = colors.first?.rgb ?? RGBColor(hex: 0x000000)
         var lastPoint: CGPoint?
-        var stitchPath = CGMutablePath()
+        // Two shade buckets (alternating per stitch) instead of one merged
+        // path, so consecutive stitches read as distinct threads rather
+        // than a flat ribbon; a separate highlight path holds each
+        // segment's own perpendicular-offset sheen line (see the type doc
+        // comment on why it's offset rather than centered).
+        var darkPath = CGMutablePath()
+        var lightPath = CGMutablePath()
+        var highlightPath = CGMutablePath()
         let jumpPath = CGMutablePath()
+        var segmentParity = false
         var hasStitchSegment = false
 
         func flushStitchPath() {
             guard hasStitchSegment else { return }
-            ctx.addPath(stitchPath)
-            ctx.setStrokeColor(red: CGFloat(currentColor.r) / 255, green: CGFloat(currentColor.g) / 255, blue: CGFloat(currentColor.b) / 255, alpha: 1)
+            let r = CGFloat(currentColor.r) / 255, g = CGFloat(currentColor.g) / 255, b = CGFloat(currentColor.b) / 255
+
+            ctx.addPath(darkPath)
+            ctx.setStrokeColor(red: r * 0.88, green: g * 0.88, blue: b * 0.88, alpha: 1)
             ctx.setLineWidth(threadWidthPt)
             ctx.strokePath()
 
-            ctx.addPath(stitchPath)
-            ctx.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 0.35)
+            ctx.addPath(lightPath)
+            ctx.setStrokeColor(red: min(1, r * 1.08 + 0.02), green: min(1, g * 1.08 + 0.02), blue: min(1, b * 1.08 + 0.02), alpha: 1)
+            ctx.setLineWidth(threadWidthPt)
+            ctx.strokePath()
+
+            ctx.addPath(highlightPath)
+            ctx.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 0.4)
             ctx.setLineWidth(highlightWidthPt)
             ctx.strokePath()
 
-            stitchPath = CGMutablePath()
+            darkPath = CGMutablePath()
+            lightPath = CGMutablePath()
+            highlightPath = CGMutablePath()
             hasStitchSegment = false
         }
 
@@ -101,8 +122,23 @@ public enum StitchRenderer {
             case .stitch(let p):
                 let cp = CGPoint(x: p.x, y: p.y)
                 if let last = lastPoint {
-                    stitchPath.move(to: last)
-                    stitchPath.addLine(to: cp)
+                    (segmentParity ? lightPath : darkPath).addLines(between: [last, cp])
+                    segmentParity.toggle()
+
+                    let dx = cp.x - last.x, dy = cp.y - last.y
+                    let len = (dx * dx + dy * dy).squareRoot()
+                    if len > 0.0001 {
+                        // Perpendicular to this segment's own direction,
+                        // offset toward one consistent side (a thread's
+                        // sheen runs along whichever side faces the light,
+                        // which rotates with the thread but stays on one
+                        // side of it) -- not centered on the stitch.
+                        let nx = -dy / len, ny = dx / len
+                        let offset = CGFloat(options.threadWidthMM) * 0.2
+                        let a = CGPoint(x: last.x + nx * offset, y: last.y + ny * offset)
+                        let b = CGPoint(x: cp.x + nx * offset, y: cp.y + ny * offset)
+                        highlightPath.addLines(between: [a, b])
+                    }
                     hasStitchSegment = true
                 }
                 lastPoint = cp

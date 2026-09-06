@@ -22,4 +22,28 @@ struct PolylineSimplifyTests {
         let points = [Point2D(0, 0), Point2D(1, 1)]
         #expect(PolylineSimplify.douglasPeucker(points, epsilon: 0.1) == points)
     }
+
+    /// Exact Douglas-Peucker is worst-case O(n²); a raster-traced pixel
+    /// boundary's near-collinear staircase steps are exactly the kind of
+    /// input that triggers it (a real 126,017-point boundary from a single
+    /// tiny image fragment took minutes here alone — see CHANGELOG.md).
+    /// A zigzag staircase of many points is a reasonable stand-in for that
+    /// shape; this just needs to *finish* (the test would hang indefinitely
+    /// on the old unbounded recursive implementation) and still produce a
+    /// sane, small simplification.
+    @Test func largeStaircaseInputFinishesQuicklyAndSimplifiesWell() {
+        var points: [Point2D] = []
+        for i in 0..<40000 {
+            points.append(Point2D(Double(i / 2), Double(i % 2)))
+        }
+        let simplified = PolylineSimplify.douglasPeucker(points, epsilon: 0.5)
+        // The real guarantee this test is protecting is that the call
+        // *returns promptly at all* (it would hang indefinitely on the old
+        // unbounded recursive implementation) and that its output stays
+        // bounded by the pre-decimation cap regardless of input size.
+        #expect(simplified.count < 3000, "output should never exceed the pre-decimation cap")
+        #expect(simplified.count < points.count, "should still be a real reduction from the raw input")
+        #expect(simplified.first == points.first)
+        #expect(simplified.last == points.last)
+    }
 }

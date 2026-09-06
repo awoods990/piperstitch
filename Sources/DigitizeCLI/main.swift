@@ -9,10 +9,17 @@ import StitchPilotCore
 //
 // Usage: DigitizeCLI <input file> <output.png> [widthMM] [heightMM] [maxColors]
 
+setbuf(stdout, nil)
+
 let args = CommandLine.arguments
 guard args.count >= 3 else {
     print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8]")
     exit(1)
+}
+
+let startTime = Date()
+func checkpoint(_ label: String) {
+    print(String(format: "[%.2fs] %@", Date().timeIntervalSince(startTime), label))
 }
 
 let inputURL = URL(fileURLWithPath: args[1])
@@ -42,6 +49,7 @@ do {
         fillColors = result.fillColors
     }
     guard !rawShapes.isEmpty else { fail("No usable shapes found in \(inputURL.lastPathComponent).") }
+    checkpoint("Imported \(rawShapes.count) raw shapes")
 
     var combined = BoundingBox.empty
     for shape in rawShapes { combined = combined.union(shape.boundingBox) }
@@ -56,12 +64,14 @@ do {
         objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))
     }
+    checkpoint("Built \(objects.count) objects")
 
     let document = StitchDocument(name: inputURL.deletingPathExtension().lastPathComponent,
                                    physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
-    let plan = try DigitizePipeline.flatten(document)
-    let colors = try DigitizePipeline.colorSequence(for: document)
+    let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
+    checkpoint("Flattened plan: \(plan.stitchCount) stitches, \(colors.count) colors")
     let report = QualityAnalyzer.analyze(plan)
+    checkpoint("Quality analysis done")
 
     print("=== \(inputURL.lastPathComponent) ===")
     print("Objects: \(objects.count)  Stitches: \(plan.stitchCount)  Colors: \(colors.count)  Color changes: \(plan.colorChangeCount)  Trims: \(plan.trimCount)")

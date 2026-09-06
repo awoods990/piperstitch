@@ -14,7 +14,8 @@ struct ContentView: View {
             Divider()
 
             ZStack {
-                StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, hoop: app.selectedHoop)
+                StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, colors: app.lastColorSequence,
+                                  hoop: app.selectedHoop, selectedObjectID: app.selectedObjectID)
                 if app.document == nil {
                     dropPrompt
                 }
@@ -109,10 +110,12 @@ struct ContentView: View {
             Text("OneClickStitch").font(.title2).fontWeight(.semibold)
             Text("Turn any image into embroidery.")
                 .foregroundStyle(.secondary)
-            Text("Drop an image or SVG file here to begin")
+            Text("Drop an image or SVG file here, or click to choose one")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { app.openArtworkWithPanel() }
     }
 
     private var statusBar: some View {

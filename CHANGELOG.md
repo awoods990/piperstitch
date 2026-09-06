@@ -4,6 +4,101 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Two real raster-import bugs found against a real logo, plus UI fixes
+
+A user report ("a small image produced over a million stitches, and lines
+were jagged") led to testing against a real-world file (`SMA Logo.webp`, a
+detailed school seal-and-text logo) via `DigitizeCLI`, rather than only the
+existing synthetic `TestArtwork/` fixtures — and found two real, serious
+bugs in `ImageImporter`, not a tuning problem.
+
+### Fixed
+- **Raster boundary tracing never actually closed, for any shape, ever**
+  (`ImageImporter.traceBoundary`): the Moore-neighbor contour tracer's
+  closing check compared the walk's current position against `first` using
+  an *assumed* backtrack direction (west, chosen only to bootstrap the very
+  first neighbor search) — but the walk's real closing re-entry direction
+  depends on the shape and is generally different (empirically, always the
+  opposite side for a simple square). That assumed check never matched, so
+  every trace ran to its `maxSteps` backstop and returned whatever partial
+  walk it had accumulated, labeled as if it were a complete boundary. For a
+  well-formed shape this was merely wasteful — the same correct loop
+  retraced dozens of times over (confirmed by the existing `ImageImportTests`
+  suite running **56x faster** after the fix, 4.3s → 0.08s, with identical
+  results) — but for a thin or pinch-pointed fragment (common in anti-
+  aliased detail: text serifs, seal ridges) the walk can oscillate without
+  ever recurring at all, producing a wildly disproportionate "boundary."
+  One 39-pixel fragment of `SMA Logo.webp` produced a 126,017-point
+  boundary this way. Fixed using the actual textbook Jacob's stopping
+  criterion: compare against the state right after the walk's first real
+  step (the second boundary point, entered from `first`), which is the
+  state that genuinely recurs — and reject a trace that hits `maxSteps`
+  without ever recurring, instead of returning it as if valid.
+- **Anti-aliased edges read as spurious dark "colors"**
+  (`ImageImporter.renderRGBA`/`unpremultiply`, new): pixels were rendered
+  into a *premultiplied*-alpha `CGContext` (the only kind Core Graphics
+  supports as a drawing destination) and then read directly as if straight
+  (non-premultiplied) RGB — so any partially-transparent pixel's stored
+  color was `trueColor × alpha`, e.g. a 50%-alpha gold edge pixel stored as
+  dark olive-brown, not gold. Every anti-aliased edge in real artwork (one
+  ring around every letter and detail in a text-heavy logo) therefore read
+  as its own spurious color distinct from both the true foreground and the
+  background, each becoming its own tiny traced object. Fixed by un-
+  premultiplying the whole pixel buffer once, right after rendering, before
+  any color is read from it.
+  - **Combined effect**: `SMA Logo.webp` (512×123px, a shield seal + three
+    lines of text) went from "over a million stitches" and a multi-minute
+    hang to 187 objects, 2,728 stitches, in ~6 seconds — and the rendered
+    result is now actually legible as the source logo, not garbled shapes.
+    187 objects is still more than a hand-digitizer would use (each text
+    glyph becomes its own object, as does residual anti-aliasing noise the
+    8-pixel minimum-area filter didn't catch) — a reasonable next target,
+    not addressed in this pass.
+- **Douglas-Peucker polyline simplification, exact worst case is O(n²)**
+  (`PolylineSimplify.douglasPeucker`): raster-traced pixel boundaries are
+  exactly the kind of near-collinear "staircase" input that triggers DP's
+  worst case, and the 126,017-point degenerate boundary above sent this
+  single call into a multi-minute hang on its own, independent of the
+  tracer bug — kept as a fix in its own right (defense in depth against any
+  other pathologically large boundary, not just that specific one).
+  Rewrote iteratively (an explicit stack, not recursion — the same
+  degenerate input can also recurse as deep as the input size, risking a
+  stack overflow) and added a pre-decimation cap: above 3,000 points,
+  uniformly downsample before running the exact algorithm, bounding worst-
+  case work regardless of input size. Embroidery stitch width is coarser
+  than pixel-level detail, so the lost sub-pixel fidelity above that
+  threshold costs nothing visible.
+- **`flatten`/`colorSequence` called separately re-ran the entire
+  generation pipeline twice** (`DigitizePipeline`): both independently
+  called the same expensive per-object generation-and-sequencing pass. Not
+  wrong, but for a design with many objects (187, for the logo above) this
+  is a real, user-visible slowdown, compounded further since `AppState`
+  called `flatten` once and `colorSequence` again at export time, and
+  `StitchCanvasView`'s realistic preview called `colorSequence` a third
+  time. Added `flattenWithColors(_:)`, computing both from one shared pass;
+  `AppState.autoDigitize` now calls it once and caches the result
+  (`lastColorSequence`) for export and the canvas preview to reuse, instead
+  of each recomputing it. Cut the logo's end-to-end CLI time from ~10s to
+  ~6.4s on top of the bugs above.
+
+### Added
+- **Selected-object highlighting**: the object currently selected in the
+  object list is now outlined (white halo + dashed accent stroke, so it
+  stays visible against any thread or background color) directly in the
+  canvas, in both preview modes — previously there was no visual link
+  between the object list and the canvas at all.
+- **Click-to-browse import**: the empty-state drop prompt is now tappable,
+  opening the same file picker as File > Open > Open Artwork, instead of
+  drag-and-drop being the only way in.
+- Realistic preview texture: each stitch segment is now drawn individually
+  (alternating between two slightly different shades) instead of one
+  merged path per color run, and the sheen highlight is offset
+  perpendicular to *each segment's own direction* rather than centered on
+  it — a thread is a cylinder, so its specular highlight runs along
+  whichever side faces the light, which rotates with the thread's own
+  direction; a centered highlight reads as a flat painted stripe, an offset
+  one reads as round.
+
 ## Realistic preview, manual editing, and a real quality-measurement bug found by testing
 
 ### Added

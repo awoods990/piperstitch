@@ -50,6 +50,17 @@ public enum DigitizePipeline {
     }
 
     public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
+        try flattenWithColors(document, maxJumpWithoutTrimMM: maxJumpWithoutTrimMM).plan
+    }
+
+    /// `flatten` and `colorSequence` together, sharing the one expensive
+    /// generation-and-sequencing pass instead of each independently redoing
+    /// it — calling both separately (as every caller originally did) means
+    /// generating every object's stitches twice, which for a design with
+    /// hundreds of small objects (a detailed raster import especially) is a
+    /// real, user-visible slowdown, not just wasted CPU cycles. Callers that
+    /// need both should prefer this over `flatten(_:)` + `colorSequence(for:)`.
+    public static func flattenWithColors(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> (plan: StitchPlan, colors: [ThreadColor]) {
         // Hidden travel routing (spec §25/§26): a same-color gap long
         // enough to otherwise need a trim gets routed as buried running
         // stitch instead, when the path is entirely covered by the next
@@ -59,6 +70,11 @@ public enum DigitizePipeline {
         // for no benefit.
         let bridged = HiddenTravelRouter.bridgeSameColorGaps(try sequencedGeneratedObjects(document), thresholdMM: maxJumpWithoutTrimMM)
         let generated = bridged.map { (color: $0.object.threadColor, points: $0.points) }
+
+        var colors: [ThreadColor] = []
+        for entry in generated where colors.last?.rgb != entry.color.rgb {
+            colors.append(entry.color)
+        }
 
         var commands: [StitchCommand] = []
         var previousColor: ThreadColor?
@@ -102,7 +118,7 @@ public enum DigitizePipeline {
 
         commands.append(.trim)
         commands.append(.end)
-        return StitchPlan(commands: commands)
+        return (StitchPlan(commands: commands), colors)
     }
 
     /// Generates every object's stitch points first, independently of

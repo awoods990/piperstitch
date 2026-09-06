@@ -14,6 +14,11 @@ final class AppState: ObservableObject {
     @Published var document: StitchDocument?
     @Published var stitchPlan: StitchPlan?
     @Published var readinessReport: EmbroideryReadinessReport?
+    /// The color sequence for the current `stitchPlan`, computed alongside
+    /// it in `autoDigitize()` -- exported and the canvas preview both need
+    /// this, and recomputing it independently (as they each used to) means
+    /// redoing the whole per-object generation pass again just for colors.
+    @Published private(set) var lastColorSequence: [ThreadColor] = []
     @Published var physicalWidthMM: Double = 100
     @Published var physicalHeightMM: Double = 100
     @Published var lockAspectRatio: Bool = true
@@ -216,8 +221,17 @@ final class AppState: ObservableObject {
         guard let document else { return }
         errorMessage = nil
         do {
-            let plan = try DigitizePipeline.flatten(document)
+            // Computes the plan and color sequence together in one pass --
+            // see `flattenWithColors`'s doc comment on why that matters for
+            // a design with many objects (a detailed raster import
+            // especially): generating every object's stitches twice over
+            // (once here, again whenever something needs the colors) was a
+            // real, user-visible slowdown. `lastColorSequence` lets export
+            // and the canvas preview reuse this same result instead of
+            // recomputing it themselves.
+            let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
             stitchPlan = plan
+            lastColorSequence = colors
             // Quality analysis (spec §33/§76) runs automatically right
             // after generation, not as a separate manual step — the user
             // should see whether a design is ready to sew as part of
@@ -256,8 +270,7 @@ final class AppState: ObservableObject {
         do {
             let data: Data
             if url.pathExtension.lowercased() == "pes" {
-                let colors = try DigitizePipeline.colorSequence(for: document)
-                data = try PESFormat.write(plan, designName: document.name, threadColors: colors.map { $0.rgb })
+                data = try PESFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
                 _ = try PESFormat.read(data) // self-validate before ever handing the file to the user (spec §59)
             } else {
                 data = try DSTFormat.write(plan, designName: document.name)
@@ -291,8 +304,7 @@ final class AppState: ObservableObject {
             return
         }
         do {
-            let colors = try DigitizePipeline.colorSequence(for: document)
-            let data = try PESFormat.write(plan, designName: document.name, threadColors: colors.map { $0.rgb })
+            let data = try PESFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try PESFormat.read(data)
             saveExportedFile(data, suggestedName: document.name + ".pes", extension: "pes")
