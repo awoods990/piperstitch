@@ -25,15 +25,40 @@ interoperability data, not creative digitizing decisions).
 |---|---|---|
 | [inkstitch/inkstitch](https://github.com/inkstitch/inkstitch) | GPL-3.0 | `lib/elements/satin_column.py`, `lib/stitches/fill.py`, `lib/stitches/auto_satin.py`, `lib/stitches/contour_fill.py`, `lib/stitches/running_stitch.py` — read via GitHub's raw source, not cloned or vendored |
 | [EmbroidePy/pyembroidery](https://github.com/EmbroidePy/pyembroidery) | MIT | Already the reference for `DSTFormat.swift`/`PESFormat.swift`'s byte layouts (see `FORMATS.md`); revisited here for its `EmbPattern` object model as a second "neutral representation" data point |
-| [EmbroidePy/samples](https://github.com/EmbroidePy/samples) | MIT | Two files (`random1-ew.dst`, `random1-ew.pes`) vendored into `Tests/StitchPilotCoreTests/Fixtures/ThirdPartySamples/` under that MIT license, used as independently-authored real-world files to validate StitchPilot's readers (see `ThirdPartySampleTests.swift`) |
+| [EmbroidePy/samples](https://github.com/EmbroidePy/samples) | MIT | Six files (`random1-ew.{dst,pes}`, `random1-wilcom.dst`, `random1-brother-v6.pes`, `scene.{dst,pes}`) vendored into `Tests/StitchPilotCoreTests/Fixtures/ThirdPartySamples/` under that MIT license, spanning multiple exporters and designs, used as independently-authored real-world files to validate StitchPilot's readers (see `ThirdPartySampleTests.swift`). The full upstream repository (654 files, every design × every supported machine format) was cloned separately and run once through both readers as a broader one-off pass — all parsed successfully; see `CHANGELOG.md` |
+| [CreativeInquiry/PEmbroider](https://github.com/CreativeInquiry/PEmbroider) | GPLv3 / Anti-Capitalist License | `src/processing/embroider/PEmbroiderHatchSpine.java`, `PEmbroiderTSP.java`, `PEmbroiderHatchSatin.java` — read via a shallow local clone for algorithmic understanding only, same ground rule as Ink/Stitch below; nothing copied or vendored |
 
-No Ink/Stitch sample files were vendored — they ship under the same GPL-3.0
-terms as the codebase, and StitchPilot's own synthetic `TestArtwork/` (built
-specifically to avoid third-party licensing questions, per `TESTING.md`)
-already serves the same "known test input" role for source artwork. The
-EmbroidePy samples were used instead for the one thing they're uniquely
-useful for and clearly licensed to permit: validating format *reading*
-against files this project didn't write.
+No Ink/Stitch or PEmbroider source or sample files were vendored — they ship
+under GPL-3.0-family terms, and StitchPilot's own synthetic `TestArtwork/`
+(built specifically to avoid third-party licensing questions, per
+`TESTING.md`) already serves the same "known test input" role for source
+artwork. The EmbroidePy samples were used instead for the one thing they're
+uniquely useful for and clearly licensed to permit: validating format
+*reading* against files this project didn't write.
+
+### PEmbroider: confirms the sequencing approach, flags a real fill-direction gap
+
+- **`PEmbroiderTSP.java`** — a "Basic TSP implementation: Greedy + 2-Opt,"
+  by its own header comment, sequencing stitch groups to minimize travel.
+  This is exactly `ObjectSequencer.swift`'s own approach (greedy nearest-
+  neighbor construction, then 2-opt refinement — see `CHANGELOG.md`'s
+  Phase 4 entry), arrived at independently. Useful confirmation that this
+  isn't an idiosyncratic choice; no change made.
+- **`PEmbroiderHatchSpine.java`** — a materially different fill technique
+  from `TatamiFillGenerator`'s: rather than scanning at one fixed angle
+  across the whole shape (`FillAngleSelector`'s job here), it computes the
+  shape's medial axis/skeleton (via raster morphological thinning) and
+  generates hatch lines that follow *that*, so fill direction bends with a
+  curved or tapered shape instead of staying constant across it — the
+  standard professional technique for organic shapes (a curved letter, a
+  leaf, a tapered limb) where one fixed angle looks visibly wrong on part
+  of the shape. **Not implemented here**: it requires a raster-based
+  skeletonization pass this codebase doesn't have (StitchPilot's fill
+  pipeline is polygon-based, not raster-based, once past `ImageImporter`'s
+  initial vectorization), a genuinely different feature rather than a
+  tweak to the existing angle-selection logic. Recorded here as the
+  clearest concrete lead for whenever curved/organic fill shapes become a
+  priority — see "Recommended next improvements" below.
 
 ## What Ink/Stitch actually does, and what StitchPilot took from it
 
@@ -442,3 +467,11 @@ come from.
 5. Extend `ObjectSequencer`'s polygon containment test to all of a
    shape's sub-paths (not just the outer boundary), so an object sitting
    inside another's hole isn't misclassified as contained.
+6. Skeleton/medial-axis-following fill direction for curved or tapered
+   shapes, the technique PEmbroider's `PEmbroiderHatchSpine` uses (see
+   above) — `FillAngleSelector` currently picks one fixed angle for the
+   whole shape, which is visibly wrong on part of an organic shape (a
+   curved letter, a leaf) that a direction-following fill handles
+   correctly. Real, unscoped design work: needs either a raster
+   skeletonization pass or a polygon-based medial-axis approximation,
+   neither of which exists in this codebase yet.

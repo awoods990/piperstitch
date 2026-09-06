@@ -12,6 +12,41 @@ import StitchPilotCore
 setbuf(stdout, nil)
 
 let args = CommandLine.arguments
+
+if args.count >= 3, args[1] == "--validate-formats" {
+    // One-off cross-validation pass: read every real-world DST/PES file
+    // under a directory (e.g. a clone of EmbroidePy/samples) with
+    // StitchPilot's own readers and report which fail. Not the normal
+    // digitize-artwork path this tool otherwise exercises -- see
+    // ThirdPartySampleTests.swift for the permanent, vendored-fixture
+    // version of this same idea.
+    let dir = URL(fileURLWithPath: args[2])
+    let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+    var passed = 0, failed = 0
+    for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+        let ext = file.pathExtension.lowercased()
+        guard ext == "dst" || ext == "pes" else { continue }
+        do {
+            let data = try Data(contentsOf: file)
+            let commands = ext == "dst" ? try DSTFormat.read(data).commands : try PESFormat.read(data).commands
+            let stitchCount = commands.filter { if case .stitch = $0 { return true }; return false }.count
+            let box = BoundingBox(points: commands.compactMap { $0.point })
+            let sane = stitchCount > 0 && box.width > 0 && box.width < 1000 && box.height > 0 && box.height < 1000
+            if sane {
+                passed += 1
+            } else {
+                failed += 1
+                print("SUSPECT \(file.lastPathComponent): stitches=\(stitchCount) box=\(box.width)x\(box.height)")
+            }
+        } catch {
+            failed += 1
+            print("FAIL \(file.lastPathComponent): \(error)")
+        }
+    }
+    print("--- \(passed) passed, \(failed) failed/suspect ---")
+    exit(failed == 0 ? 0 : 1)
+}
+
 guard args.count >= 3 else {
     print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8]")
     exit(1)

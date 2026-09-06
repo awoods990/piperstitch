@@ -15,48 +15,75 @@ struct ThirdPartySampleTests {
         Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "Fixtures/ThirdPartySamples")!
     }
 
-    @Test func readsRealWorldDSTFile() throws {
-        let data = try Data(contentsOf: fixtureURL("random1-ew.dst"))
-        let decoded = try DSTFormat.read(data)
-        let stitchCount = decoded.commands.filter { if case .stitch = $0 { return true }; return false }.count
-        #expect(stitchCount > 0, "a real DST file from another project should decode to at least some stitches")
+    private func stitchCount(_ commands: [StitchCommand]) -> Int {
+        commands.filter { if case .stitch = $0 { return true }; return false }.count
+    }
 
-        let points = decoded.commands.compactMap { $0.point }
-        let box = BoundingBox(points: points)
-        #expect(box.width > 0 && box.width < 500, "sanity: a real design's width should be a plausible physical size, not garbage from a parsing error")
-        #expect(box.height > 0 && box.height < 500)
+    /// A sane, non-garbage decode: at least some real stitches, and a
+    /// physically plausible design size -- not a crash, and not silently
+    /// "succeeding" with nonsense from a parsing error.
+    private func assertSaneDecode(_ commands: [StitchCommand], file: String) {
+        let count = stitchCount(commands)
+        #expect(count > 0, "\(file): a real file from another project should decode to at least some stitches")
+        let box = BoundingBox(points: commands.compactMap { $0.point })
+        #expect(box.width > 0 && box.width < 500, "\(file): plausible physical width, not garbage from a parsing error")
+        #expect(box.height > 0 && box.height < 500, "\(file): plausible physical height, not garbage from a parsing error")
+    }
+
+    @Test func readsRealWorldDSTFile() throws {
+        let decoded = try DSTFormat.read(Data(contentsOf: fixtureURL("random1-ew.dst")))
+        assertSaneDecode(decoded.commands, file: "random1-ew.dst")
     }
 
     @Test func readsRealWorldPESFile() throws {
-        let data = try Data(contentsOf: fixtureURL("random1-ew.pes"))
-        let decoded = try PESFormat.read(data)
-        let stitchCount = decoded.commands.filter { if case .stitch = $0 { return true }; return false }.count
-        #expect(stitchCount > 0, "a real PES file from another project should decode to at least some stitches")
-
-        let points = decoded.commands.compactMap { $0.point }
-        let box = BoundingBox(points: points)
-        #expect(box.width > 0 && box.width < 500)
-        #expect(box.height > 0 && box.height < 500)
+        let decoded = try PESFormat.read(Data(contentsOf: fixtureURL("random1-ew.pes")))
+        assertSaneDecode(decoded.commands, file: "random1-ew.pes")
     }
 
-    /// Both files are the same underlying "random1" design exported to two
-    /// different formats by EmbroidePy/samples -- their stitch counts
-    /// should be in the same ballpark (not identical: format-specific
-    /// quantization, trim conventions, and defensive records differ, as
-    /// documented in FORMATS.md) if both of StitchPilot's readers are
-    /// decoding real content rather than garbage.
-    @Test func dstAndPESAgreeOnRoughDesignSize() throws {
-        let dstData = try Data(contentsOf: fixtureURL("random1-ew.dst"))
-        let pesData = try Data(contentsOf: fixtureURL("random1-ew.pes"))
+    /// The same "random1" design, but from a *different* originating
+    /// software (Wilcom's own DST writer, not EmbroidePy's) -- catches a
+    /// bug that happens to only affect one exporter's particular encoding
+    /// conventions, which `random1-ew.dst` alone wouldn't.
+    @Test func readsRealWorldDSTFileFromADifferentExporter() throws {
+        let decoded = try DSTFormat.read(Data(contentsOf: fixtureURL("random1-wilcom.dst")))
+        assertSaneDecode(decoded.commands, file: "random1-wilcom.dst")
+    }
 
-        let dstDecoded = try DSTFormat.read(dstData)
-        let pesDecoded = try PESFormat.read(pesData)
+    /// Same idea for PES: Brother's own writer (v6), not EmbroidePy's.
+    @Test func readsRealWorldPESFileFromADifferentExporter() throws {
+        let decoded = try PESFormat.read(Data(contentsOf: fixtureURL("random1-brother-v6.pes")))
+        assertSaneDecode(decoded.commands, file: "random1-brother-v6.pes")
+    }
 
-        let dstStitches = dstDecoded.commands.filter { if case .stitch = $0 { return true }; return false }.count
-        let pesStitches = pesDecoded.commands.filter { if case .stitch = $0 { return true }; return false }.count
+    /// A different design entirely ("scene", not "random1") -- guards
+    /// against a reader that happens to work only for the one design shape
+    /// already covered above.
+    @Test func readsADifferentRealWorldDesign() throws {
+        let dstDecoded = try DSTFormat.read(Data(contentsOf: fixtureURL("scene.dst")))
+        let pesDecoded = try PESFormat.read(Data(contentsOf: fixtureURL("scene.pes")))
+        assertSaneDecode(dstDecoded.commands, file: "scene.dst")
+        assertSaneDecode(pesDecoded.commands, file: "scene.pes")
+    }
 
+    /// Both files are the same underlying design exported to two different
+    /// formats by EmbroidePy/samples -- their stitch counts should be in
+    /// the same ballpark (not identical: format-specific quantization, trim
+    /// conventions, and defensive records differ, as documented in
+    /// FORMATS.md) if both of StitchPilot's readers are decoding real
+    /// content rather than garbage.
+    private func assertRoughlyAgree(dst: String, pes: String) throws {
+        let dstStitches = stitchCount(try DSTFormat.read(Data(contentsOf: fixtureURL(dst))).commands)
+        let pesStitches = stitchCount(try PESFormat.read(Data(contentsOf: fixtureURL(pes))).commands)
         #expect(dstStitches > 0 && pesStitches > 0)
         let ratio = Double(max(dstStitches, pesStitches)) / Double(min(dstStitches, pesStitches))
-        #expect(ratio < 2.0, "the same design in two formats shouldn't have wildly different stitch counts (DST: \(dstStitches), PES: \(pesStitches))")
+        #expect(ratio < 2.0, "\(dst) vs \(pes): the same design in two formats shouldn't have wildly different stitch counts (DST: \(dstStitches), PES: \(pesStitches))")
+    }
+
+    @Test func dstAndPESAgreeOnRoughDesignSize() throws {
+        try assertRoughlyAgree(dst: "random1-ew.dst", pes: "random1-ew.pes")
+    }
+
+    @Test func dstAndPESAgreeOnRoughDesignSizeForADifferentDesign() throws {
+        try assertRoughlyAgree(dst: "scene.dst", pes: "scene.pes")
     }
 }

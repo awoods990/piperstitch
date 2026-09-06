@@ -4,6 +4,42 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Broader real-world test cycles: format-reader validation + a studied fill technique
+
+Continuing the "run test cycles against public embroidery data" request:
+cloned two more reference projects the user pointed to and used each for
+what it's actually good for, rather than treating both the same way.
+
+- **[EmbroidePy/samples](https://github.com/EmbroidePy/samples)** (MIT):
+  cloned the full repository (654 files — 5 designs × every machine format
+  supported by EmbroidePy, Brother, Wilcom, "me," and "premier" software)
+  and ran every DST/PES file (98 total) through `DSTFormat.read`/
+  `PESFormat.read` via a temporary `DigitizeCLI --validate-formats
+  <directory>` mode. **All 98 parsed successfully** with sane stitch
+  counts and bounding boxes — no bugs found here, a genuine (negative)
+  result worth recording. Expanded the permanently-vendored fixture set
+  from 2 files (one design, one exporter) to 6, adding a different
+  exporter's DST (`random1-wilcom.dst`), a different exporter's PES
+  (`random1-brother-v6.pes`), and an entirely different design
+  (`scene.dst`/`scene.pes`) — broadening `ThirdPartySampleTests` coverage
+  without vendoring all 654 files, most of which are redundant re-encodings
+  of the same handful of designs. See `Tests/StitchPilotCoreTests/Fixtures/
+  ThirdPartySamples/README.md` for exactly what's vendored and why.
+- **[CreativeInquiry/PEmbroider](https://github.com/CreativeInquiry/PEmbroider)**
+  (GPLv3/Anti-Capitalist License): a Processing embroidery library, not a
+  sample-file corpus, so read for algorithmic understanding only (same
+  ground rule as Ink/Stitch — see `EMBROIDERY_ALGORITHM_REFERENCE.md`).
+  Confirms `ObjectSequencer`'s greedy+2-opt sequencing already matches this
+  project's own approach (its `PEmbroiderTSP.java` is, by its own header
+  comment, "Basic TSP implementation: Greedy + 2-Opt"). Also surfaced a
+  real, unimplemented gap: `PEmbroiderHatchSpine.java` follows a shape's
+  medial axis/skeleton for fill direction, so it bends with a curved or
+  tapered shape instead of `FillAngleSelector`'s one fixed angle for the
+  whole shape — recorded as a "Recommended next improvement" in
+  `EMBROIDERY_ALGORITHM_REFERENCE.md` rather than attempted here, since it
+  needs a raster or polygon-based skeletonization primitive this codebase
+  doesn't have yet, real unscoped design work rather than a tunable.
+
 ## Two real raster-import bugs found against a real logo, plus UI fixes
 
 A user report ("a small image produced over a million stitches, and lines
