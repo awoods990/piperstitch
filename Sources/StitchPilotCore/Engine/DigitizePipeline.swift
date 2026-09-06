@@ -157,7 +157,26 @@ public enum DigitizePipeline {
             }
         case .tatamiFill:
             let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
-            return underlay + TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
+            let fill = TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
+            // Edge-run underlay (the default for fill) traces a *closed*
+            // loop, so its start/end point is arbitrary -- any point along
+            // it can be the seam without changing physical coverage at
+            // all. Left at wherever the trace happened to start, the seam
+            // can land far from the fill's own first row, and since this
+            // whole object is one continuous same-color run, that gap
+            // becomes a single very long "stitch" (not a jump) that
+            // StitchFilter then chops into several segments spanning most
+            // of the design -- a real, visible diagonal thread that has
+            // nothing to do with the actual artwork. Rotating the loop to
+            // end as close as possible to the fill's own start avoids it.
+            // Only safe for a genuinely closed-loop underlay (edge-run,
+            // fill's default) -- centerRun/zigzag are open paths whose
+            // endpoints are physically meaningful, not arbitrary.
+            let effectiveUnderlay = object.parameters.underlayType ?? .edgeRun
+            let alignedUnderlay = effectiveUnderlay == .edgeRun
+                ? rotateClosedLoopToEndNear(underlay, target: fill.first)
+                : underlay
+            return alignedUnderlay + fill
         case .satin:
             // Spec: "automatically divide or convert excessively wide satin
             // regions to another stitch type." generatePartial keeps
@@ -169,5 +188,24 @@ public enum DigitizePipeline {
             let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
             return underlay + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))
         }
+    }
+
+    /// Rotates a *closed-loop* point sequence (traced start-to-end back to
+    /// roughly its own start) so it ends as close as possible to `target`
+    /// instead of wherever it happened to start — physically identical
+    /// coverage either way, since a loop's seam point is arbitrary, but it
+    /// avoids handing the caller a long, unrelated transition distance to
+    /// whatever comes next. Only meaningful for a genuine closed loop; an
+    /// open path's endpoints are physically significant and must not be
+    /// reordered this way.
+    private static func rotateClosedLoopToEndNear(_ loop: [Point2D], target: Point2D?) -> [Point2D] {
+        guard let target, loop.count > 2 else { return loop }
+        var bestIndex = 0
+        var bestDistance = Double.infinity
+        for (i, p) in loop.enumerated() {
+            let d = p.distance(to: target)
+            if d < bestDistance { bestDistance = d; bestIndex = i }
+        }
+        return Array(loop[(bestIndex + 1)...]) + Array(loop[...bestIndex])
     }
 }

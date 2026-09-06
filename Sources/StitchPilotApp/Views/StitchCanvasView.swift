@@ -1,15 +1,28 @@
 import SwiftUI
 import StitchPilotCore
 
-/// Phase 1 preview: draws the artwork's object outlines, and — once Auto
-/// Digitize has run — the actual generated stitch path on top (solid lines
-/// for needle-down stitches, dashed for jumps). Later phases add the
-/// remaining preview modes from spec §41 (realistic thread, density
-/// heatmap, sequence playback) as additional render passes here.
+/// Two preview modes, switchable at any time once a stitch plan exists:
+/// "Technical" draws the artwork's object outlines and the generated stitch
+/// path as thin wireframe lines (solid for needle-down stitches, dashed for
+/// jumps) — useful for verifying individual stitch placement. "Realistic"
+/// renders the same plan through `StitchRenderer`'s thread simulation (spec
+/// §41 "let the user see what the embroidered file will look like before
+/// finalizing") so the canvas shows an approximation of the actual sewn-out
+/// result rather than a technical diagram.
+enum StitchPreviewMode: String, CaseIterable, Identifiable {
+    case technical = "Technical"
+    case realistic = "Realistic"
+    var id: String { rawValue }
+}
+
 struct StitchCanvasView: View {
     let document: StitchDocument?
     let stitchPlan: StitchPlan?
     var hoop: HoopProfile?
+
+    @State private var mode: StitchPreviewMode = .realistic
+    @State private var realisticImage: CGImage?
+    @State private var renderedSignature: Int?
 
     var body: some View {
         GeometryReader { geo in
@@ -51,22 +64,19 @@ struct StitchCanvasView: View {
                                     style: StrokeStyle(lineWidth: 1.5))
                 }
 
-                // Artwork reference (faint fill of each object's shape).
-                for object in document.objects {
-                    var path = Path()
-                    for subPath in object.shape.subPaths {
-                        guard let first = subPath.points.first else { continue }
-                        path.move(to: toView(first))
-                        for pt in subPath.points.dropFirst() { path.addLine(to: toView(pt)) }
-                        if subPath.closed { path.closeSubpath() }
-                    }
-                    let swiftColor = Color(red: Double(object.threadColor.rgb.r) / 255,
-                                            green: Double(object.threadColor.rgb.g) / 255,
-                                            blue: Double(object.threadColor.rgb.b) / 255)
-                    context.fill(path, with: .color(swiftColor.opacity(stitchPlan == nil ? 0.85 : 0.12)))
+                guard let stitchPlan else {
+                    // No plan yet -- nothing to preview realistically, so
+                    // always show the artwork reference fill regardless of mode.
+                    drawArtworkFill(document, context: context, toView: toView, opacity: 0.85)
+                    return
                 }
 
-                guard let stitchPlan else { return }
+                if mode == .realistic, let realisticImage {
+                    context.draw(Image(decorative: realisticImage, scale: 1, orientation: .up), in: boundsRect)
+                    return
+                }
+
+                drawArtworkFill(document, context: context, toView: toView, opacity: 0.12)
 
                 var colorIndex = 0
                 var currentColor = colorFor(document, index: 0)
@@ -99,7 +109,12 @@ struct StitchCanvasView: View {
                         flushStitchPath()
                         colorIndex += 1
                         currentColor = colorFor(document, index: colorIndex)
-                    case .trim, .stop, .end:
+                        lastPoint = nil
+                    case .trim, .stop:
+                        // Thread's cut here -- don't let the next point draw
+                        // a spurious line back to wherever it was last cut.
+                        lastPoint = nil
+                    case .end:
                         break
                     }
                 }
@@ -108,6 +123,54 @@ struct StitchCanvasView: View {
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .overlay(alignment: .top) {
+            if stitchPlan != nil {
+                Picker("Preview", selection: $mode) {
+                    ForEach(StitchPreviewMode.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                .padding(8)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 8)
+            }
+        }
+        .onAppear { regenerateRealisticImageIfNeeded() }
+        .onChange(of: mode) { _ in regenerateRealisticImageIfNeeded() }
+        .onChange(of: planSignature) { _ in regenerateRealisticImageIfNeeded() }
+    }
+
+    /// A cheap stand-in for "has the plan actually changed" -- exact
+    /// equality isn't needed here, just enough sensitivity that a real
+    /// digitize re-run reliably invalidates the cached realistic render.
+    private var planSignature: Int? {
+        guard let stitchPlan else { return nil }
+        return stitchPlan.commands.hashValue
+    }
+
+    private func regenerateRealisticImageIfNeeded() {
+        guard mode == .realistic, let document, let stitchPlan, planSignature != renderedSignature else { return }
+        // Must be the actual per-run color sequence, not raw object order --
+        // ObjectSequencer can reorder objects relative to `document.objects`.
+        let colors = (try? DigitizePipeline.colorSequence(for: document)) ?? document.objects.map { $0.threadColor }
+        realisticImage = StitchRenderer.render(stitchPlan, widthMM: document.physicalWidthMM, heightMM: document.physicalHeightMM, colors: colors)
+        renderedSignature = planSignature
+    }
+
+    private func drawArtworkFill(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint, opacity: Double) {
+        for object in document.objects {
+            var path = Path()
+            for subPath in object.shape.subPaths {
+                guard let first = subPath.points.first else { continue }
+                path.move(to: toView(first))
+                for pt in subPath.points.dropFirst() { path.addLine(to: toView(pt)) }
+                if subPath.closed { path.closeSubpath() }
+            }
+            let swiftColor = Color(red: Double(object.threadColor.rgb.r) / 255,
+                                    green: Double(object.threadColor.rgb.g) / 255,
+                                    blue: Double(object.threadColor.rgb.b) / 255)
+            context.fill(path, with: .color(swiftColor.opacity(opacity)))
+        }
     }
 
     private func colorFor(_ document: StitchDocument, index: Int) -> Color {

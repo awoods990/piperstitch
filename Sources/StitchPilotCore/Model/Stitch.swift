@@ -63,7 +63,12 @@ public struct StitchPlan: Codable, Sendable {
                 last = p
             case .jump(let p):
                 last = p
-            case .colorChange, .trim, .stop, .end:
+            case .colorChange, .trim, .stop:
+                // The thread is cut (or the machine stops) here -- whatever
+                // comes next starts a fresh, physically disconnected thread,
+                // not a continuation of the distance from `last`.
+                last = nil
+            case .end:
                 break
             }
         }
@@ -81,7 +86,9 @@ public struct StitchPlan: Codable, Sendable {
                 last = p
             case .jump(let p):
                 last = p
-            case .colorChange, .trim, .stop, .end:
+            case .colorChange, .trim, .stop:
+                last = nil
+            case .end:
                 break
             }
         }

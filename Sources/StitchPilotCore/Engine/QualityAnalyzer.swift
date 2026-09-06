@@ -62,16 +62,23 @@ public enum QualityAnalyzer {
         var tooLong = 0
         var last: Point2D?
         for command in plan.commands {
-            guard case .stitch(let p) = command else {
-                if case .jump(let p) = command { last = p }
-                continue
+            switch command {
+            case .jump(let p):
+                last = p
+            case .colorChange, .trim, .stop:
+                // Thread's cut here; the next point starts a new, physically
+                // disconnected thread, not a continuation of `last`.
+                last = nil
+            case .stitch(let p):
+                if let l = last {
+                    let d = l.distance(to: p)
+                    if d < 0.15 { tooShort += 1 }
+                    if d > 12.5 { tooLong += 1 }
+                }
+                last = p
+            case .end:
+                break
             }
-            if let l = last {
-                let d = l.distance(to: p)
-                if d < 0.15 { tooShort += 1 }
-                if d > 12.5 { tooLong += 1 }
-            }
-            last = p
         }
         if tooShort > 0 {
             issues.append(QualityIssue(severity: .warning,
@@ -98,7 +105,9 @@ public enum QualityAnalyzer {
                 last = p
             case .stitch(let p):
                 last = p
-            default:
+            case .colorChange, .trim, .stop:
+                last = nil
+            case .end:
                 break
             }
         }

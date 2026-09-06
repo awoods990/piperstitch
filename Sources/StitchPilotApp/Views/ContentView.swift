@@ -161,6 +161,12 @@ private struct ObjectListView: View {
                         Text(object.stitchType.rawValue).font(.caption).foregroundStyle(.secondary)
                     }
                     .tag(object.id)
+                    .contextMenu {
+                        Button("Delete Object", role: .destructive) {
+                            app.selectedObjectID = object.id
+                            app.deleteSelectedObject()
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
             } else {
@@ -301,7 +307,30 @@ private struct ObjectInspectorSection: View {
     var body: some View {
         Section("Selected Object") {
             if let object = app.selectedObject {
-                Text(object.name).font(.headline)
+                HStack {
+                    Text(object.name).font(.headline)
+                    Spacer()
+                    Button(role: .destructive) {
+                        app.deleteSelectedObject()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Delete this object")
+                }
+
+                Picker("Thread Color", selection: binding(object, \.threadColor)) {
+                    ForEach(ThreadLibrary.genericPalette) { color in
+                        Label {
+                            Text(color.name)
+                        } icon: {
+                            Circle()
+                                .fill(Color(red: Double(color.rgb.r) / 255, green: Double(color.rgb.g) / 255, blue: Double(color.rgb.b) / 255))
+                                .frame(width: 10, height: 10)
+                        }
+                        .tag(color)
+                    }
+                }
 
                 Picker("Stitch Type", selection: binding(object, \.stitchType)) {
                     ForEach(StitchType.allCases, id: \.self) { type in

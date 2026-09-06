@@ -36,6 +36,21 @@ struct GeometryTests {
         #expect(plan.stitchCount == 3)
         #expect(plan.colorChangeCount == 1)
         #expect(plan.trimCount == 1)
-        #expect(abs(plan.maxStitchLength() - 4) <= 0.0001)
+        // The (6,0) -> (6,4) gap straddles the colorChange -- the thread is
+        // cut there, so it's not a real 4mm stitch; the longest *actual*
+        // stitch is one of the two 3mm segments before it.
+        #expect(abs(plan.maxStitchLength() - 3) <= 0.0001)
+    }
+
+    /// A colorChange (and a trim) physically cuts the thread -- the point
+    /// right after one must not be measured as a continuation of the
+    /// distance from whatever came before it, no matter how far apart they
+    /// are. Companion to the fix verified above via `maxStitchLength()`;
+    /// this checks `totalStitchLength` doesn't add that phantom gap either.
+    @Test func totalStitchLengthExcludesTheGapAcrossAColorChange() {
+        var plan = StitchPlan()
+        plan.commands = [.jump(Point2D(0, 0)), .stitch(Point2D(3, 0)), .stitch(Point2D(6, 0)), .colorChange, .stitch(Point2D(6, 4)), .stitch(Point2D(6, 8)), .trim, .end]
+        // 3 (0->3) + 3 (3->6) + 4 (6,4 -> 6,8) = 10; NOT +4 for the phantom (6,0)->(6,4) gap across colorChange.
+        #expect(abs(plan.totalStitchLength - 10) <= 0.0001)
     }
 }

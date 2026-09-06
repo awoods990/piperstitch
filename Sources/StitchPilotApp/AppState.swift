@@ -84,6 +84,20 @@ final class AppState: ObservableObject {
         document = current
     }
 
+    /// Removes the selected object entirely (spec: let the user edit the
+    /// file, not just tweak per-object parameters) -- e.g. dropping a
+    /// mis-detected speck or a background shape the auto-import picked up.
+    /// Like `updateSelectedObject`, only touches the master document; the
+    /// stitch plan (if any) is now stale until the next Auto Digitize, same
+    /// as any other manual edit.
+    func deleteSelectedObject() {
+        guard let id = selectedObjectID, var current = document,
+              let index = current.objects.firstIndex(where: { $0.id == id }) else { return }
+        current.objects.remove(at: index)
+        document = current
+        selectedObjectID = nil
+    }
+
     private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
 
     func openArtworkWithPanel() {

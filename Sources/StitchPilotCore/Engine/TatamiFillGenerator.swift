@@ -120,15 +120,34 @@ public enum TatamiFillGenerator {
         return xs.sorted()
     }
 
+    /// Resamples one row's interval at approximately `stitchLength`,
+    /// starting the first interior stitch at the staggered `phase` offset
+    /// (preserving the anti-grid benefit of staggering — see this type's
+    /// own doc comment on why rows are staggered at all), but then evenly
+    /// redistributing the *remaining* distance to `xEnd` across a whole
+    /// number of steps close to `stitchLength`, rather than stepping by a
+    /// fixed `stitchLength` and appending one final "catch-up" point
+    /// wherever that happens to land. A fixed step leaves that catch-up
+    /// segment anywhere from ~0 to a full `stitchLength` long; evening out
+    /// the remainder keeps every row landing exactly on the true edge with
+    /// a uniform final step instead — a small cleanliness improvement, not
+    /// a fix for any specific visible defect (a dramatic-looking
+    /// criss-cross pattern initially suspected to be caused by this turned
+    /// out, on direct inspection, to be the ordinary tie-in/tie-off anchor
+    /// stitches — see CHANGELOG.md).
     private static func resampleRun(y: Double, xStart: Double, xEnd: Double, stitchLength: Double, phase: Double) -> [Point2D] {
         var points: [Point2D] = [Point2D(xStart, y)]
-        var x = xStart + (phase > 0 ? phase : stitchLength)
-        while x < xEnd {
-            points.append(Point2D(x, y))
-            x += stitchLength
+        let firstOffset = phase > 0 ? phase : stitchLength
+        let firstInterior = xStart + firstOffset
+        guard firstInterior < xEnd else {
+            if xEnd - xStart > 0.01 { points.append(Point2D(xEnd, y)) }
+            return points
         }
-        if points.last!.x < xEnd - 0.01 {
-            points.append(Point2D(xEnd, y))
+        let remaining = xEnd - firstInterior
+        let stepCount = max(1, Int((remaining / stitchLength).rounded()))
+        let step = remaining / Double(stepCount)
+        for i in 0...stepCount {
+            points.append(Point2D(firstInterior + step * Double(i), y))
         }
         return points
     }

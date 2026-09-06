@@ -4,6 +4,90 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Realistic preview, manual editing, and a real quality-measurement bug found by testing
+
+### Added
+- **Realistic sewn-out preview** (`Sources/StitchPilotCore/Rendering/StitchRenderer.swift`,
+  new): renders a `StitchPlan` to a raster image approximating actual thread
+  — each color run stroked at real thread width with rounded joins, plus a
+  second, thinner, low-opacity white pass down the same centerline to
+  suggest a round thread's sheen — rather than a technical wireframe. Wired
+  into `StitchCanvasView` as a "Realistic" preview mode (segmented picker,
+  defaults on once a stitch plan exists) alongside the original "Technical"
+  wireframe mode, which stays available for verifying individual stitch
+  placement. The realistic render is cached and only regenerated when the
+  plan actually changes (a `commands.hashValue`-based signature), not on
+  every window resize.
+- **`DigitizeCLI`** (new SPM executable target, `Sources/DigitizeCLI/`): a
+  no-GUI harness around the exact digitizing pipeline the app uses —
+  import → build objects → `DigitizePipeline.flatten` → `QualityAnalyzer` →
+  `StitchRenderer` — for running test cycles against real artwork and
+  inspecting output without driving the SwiftUI app (this environment has
+  no accessibility/AppleScript automation available for that). This is how
+  the bug below was actually found: by rendering and reading real output,
+  not by reasoning about the code in the abstract.
+- **Manual editing**: delete an object (trash icon in the Object Inspector,
+  or right-click a row in the object list) and override an object's thread
+  color from `ThreadLibrary.genericPalette` (Object Inspector), both
+  building on the Object Inspector's existing per-object parameter editing.
+
+### Fixed
+- **A real, confirmed measurement bug, found via `DigitizeCLI` test cycles
+  against `TestArtwork/multi_color_badge.svg`**: `StitchPlan.
+  maxStitchLength()`/`totalStitchLength`, `QualityAnalyzer.
+  checkStitchLengths`/`checkJumps`, and both preview renderers
+  (`StitchRenderer`, `StitchCanvasView`'s wireframe) all walked
+  `plan.commands` tracking "the last point" but never reset it across
+  `.colorChange`/`.trim`/`.stop`. Since the thread is physically cut at a
+  trim, the first stitch of the run that follows has nothing to do with
+  wherever the previous color's thread ended — but all six places measured
+  (or, in the two renderers, actually *drew*) a phantom segment spanning
+  that gap. On the badge test file this reported a 38mm "stitch" (the real
+  longest stitch was 4.4mm) and a false "3 stitches exceed 12.5mm" quality
+  warning, dropping the readiness score from a deserved 95 to 89; in the
+  new realistic/wireframe previews it would have drawn a visible, wrongly
+  colored line bridging every color change in any multi-color design. Fixed
+  by resetting the tracked point to `nil` at `.colorChange`/`.trim`/`.stop`
+  in all six places. The actual DST/PES *exporters* were never affected —
+  they encode real physical needle deltas from machine state, not a
+  measured "last point," so real sewn output was always correct; this was
+  purely a quality-report and preview-rendering defect. Regression tests:
+  `QualityAnalyzerTests.distantStitchesAcrossATrimDoNotFalselyFlagAsOneLongStitch`,
+  `GeometryTests.totalStitchLengthExcludesTheGapAcrossAColorChange`,
+  `StitchRendererTests.colorChangeDoesNotDrawABridgingLineAcrossTheGap`.
+- **Underlay/fill seam misalignment** (`DigitizePipeline.rawStitchPoints`):
+  a `.tatamiFill` object's edge-run underlay traces a closed loop whose
+  start/end point is physically arbitrary, but was left wherever the trace
+  happened to start — which could land far from the fill's own first
+  point, and since underlay+fill is one continuous same-color run, that gap
+  became a single very long "stitch" that `StitchFilter` then chopped into
+  several segments spanning much of the design. Fixed by rotating the
+  underlay loop's seam to end as close as possible to the fill's first
+  point before concatenating (only valid for a genuinely closed loop —
+  edge-run, fill's default; center-run/zigzag underlays are open paths
+  whose endpoints are physically meaningful and are left alone). Confirmed
+  via `DigitizeCLI`: max stitch length on `simple_square_logo.svg` dropped
+  from 11.31mm to 3.25mm.
+- `TatamiFillGenerator.resampleRun` now evenly redistributes the remaining
+  distance across a row after its staggered first stitch, instead of
+  stepping by a fixed length and leaving an arbitrary-length "catch-up"
+  segment wherever that happens to land — a smaller, secondary cleanliness
+  improvement found during the same test cycles (it did not change the
+  visual appearance of anything actually wrong; see the investigation notes
+  below).
+
+### Investigated and ruled out
+- A visually dramatic "sawtooth"/criss-cross pattern near fill boundaries,
+  first noticed while building the diagnostic tooling above, turned out
+  **not** to be a generation defect after extensive direct data inspection
+  (raw fill points, underlay points, and final filtered plan points were
+  all clean and monotonic at every boundary checked). It's the intentional
+  tie-in/tie-off anchor "there and back" lock stitches (`TieStitchGenerator`)
+  — real, standard embroidery practice — which simply look dramatic when
+  rendered at real thread width against closely-spaced (~0.4mm) fill rows.
+  No change needed; recorded here so a future investigation doesn't repeat
+  the same multi-hour trace.
+
 ## Rebrand to OneClickStitch, and a real one-click action
 
 ### Added

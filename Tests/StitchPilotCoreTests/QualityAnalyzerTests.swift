@@ -55,4 +55,26 @@ struct QualityAnalyzerTests {
         let report = QualityAnalyzer.analyze(plan)
         #expect(report.score >= 0 && report.score <= 100)
     }
+
+    /// The thread is physically cut at a trim -- the first stitch of the run
+    /// that follows a colorChange doesn't continue a physical stitch from
+    /// wherever the previous color's thread ended, no matter how far apart
+    /// the two points are. A real bug had `checkStitchLengths` (and
+    /// `StitchPlan.maxStitchLength()`/`totalStitchLength`) measure straight
+    /// across that gap, misreporting an ordinary multi-color design as
+    /// having an enormous stitch — found via `DigitizeCLI` test cycles
+    /// against `TestArtwork/multi_color_badge.svg` (a 38mm phantom "stitch"
+    /// that vanished once this was fixed; see CHANGELOG.md).
+    @Test func distantStitchesAcrossATrimDoNotFalselyFlagAsOneLongStitch() {
+        var plan = StitchPlan()
+        plan.commands = [
+            .jump(Point2D(0, 0)), .stitch(Point2D(0, 0)), .stitch(Point2D(1, 0)),
+            .trim, .colorChange,
+            .stitch(Point2D(50, 50)), .stitch(Point2D(51, 50)),
+            .end,
+        ]
+        #expect(plan.maxStitchLength() < 12.5)
+        let report = QualityAnalyzer.analyze(plan)
+        #expect(!report.issues.contains { $0.message.contains("exceed 12.5mm") })
+    }
 }
