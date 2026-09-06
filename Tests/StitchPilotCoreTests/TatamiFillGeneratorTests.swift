@@ -169,6 +169,43 @@ struct TatamiFillGeneratorTests {
         #expect(lowerCrossings <= 2, "expected at most one entry + one exit connector for the lower hole, found \(lowerCrossings)")
     }
 
+    /// A rectangular hole's left/right edges never move, so the same side
+    /// always wins `chainRuns`' overlap-based continuation at both its
+    /// opening and closing row -- the one chain spanning the whole shape
+    /// (`sequenceChains`'s "root") always happens to start at row 0. A
+    /// *slanted* hole can flip which side wins between opening and closing
+    /// (here: the narrow sliver at the top is on the left, but by the
+    /// bottom it's on the right, so the side that keeps more overlap with
+    /// the surrounding solid rows switches), which can make the winning
+    /// "biggest" chain start partway through the shape instead of at row 0
+    /// -- silently dropping the *other* chain's entire region, a real bug
+    /// confirmed against a real letterform (see CHANGELOG.md), since
+    /// nothing in `sequenceChains`'s main splice loop ever visits row 0 to
+    /// find it. This checks fill actually reaches both sides of the hole
+    /// at its very top and very bottom, not just somewhere in the middle.
+    @Test func slantedHoleWhoseWinningSideFlipsStillGetsFullyFilledAroundIt() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 45), Point2D(0, 45)], closed: true)
+        // Narrow sliver on the left at the top (y=5: left width 2, right width 10),
+        // narrow sliver on the right at the bottom (y=25: left width 10, right width 2).
+        let hole = SubPath(points: [Point2D(2, 5), Point2D(10, 5), Point2D(18, 25), Point2D(10, 25)], closed: true)
+        let shape = VectorShape(subPaths: [outer, hole])
+
+        let points = TatamiFillGenerator.generate(for: shape, parameters: squareParams(spacing: 0.5))
+        #expect(points.count > 1)
+
+        // Near the hole's top: fill should reach close to both x=0 and x=20
+        // somewhere in y=[4,6] -- i.e. neither side was dropped.
+        func reachesBothSides(nearY: Double) -> Bool {
+            let nearby = points.filter { abs($0.y - nearY) < 1.0 }
+            guard !nearby.isEmpty else { return false }
+            let minX = nearby.map { $0.x }.min() ?? .infinity
+            let maxX = nearby.map { $0.x }.max() ?? -.infinity
+            return minX < 3 && maxX > 17
+        }
+        #expect(reachesBothSides(nearY: 5), "fill should reach both sides of the shape near the hole's top, not just one")
+        #expect(reachesBothSides(nearY: 25), "fill should reach both sides of the shape near the hole's bottom, not just one")
+    }
+
     /// Counts stitch segments whose midpoint falls inside `hole` -- a
     /// reasonable approximation for the near-horizontal/vertical fill
     /// segments this generator produces.

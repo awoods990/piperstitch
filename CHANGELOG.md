@@ -4,6 +4,51 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: part of a "B" (or any two-hole letterform) went completely unstitched
+
+The user selected a "B" object in the app and noticed the technical preview
+only filled part of the letter, even though the selection outline correctly
+traced the whole shape.
+
+### Root cause
+
+`sequenceChains`'s "root" (the chain that continues through every hole's
+split and merge, everything else spliced in relative to it) was chosen as
+"whichever chain has the most total rows." That's usually the chain that
+spans the shape's entire height — but not always: a hole's two sides don't
+have to be won by the *same* side at both its opening row and its closing
+row (a rectangular hole's edges never move, so the same side reliably wins
+both, but a real rounded letter counter's edges do move, and which side
+keeps more overlap with the surrounding solid rows can flip). When it
+flips, the chain that ends up biggest can start *partway through* the
+shape instead of at row 0 — and the main splice loop only ever checks rows
+that root's own chain actually visits, so a chain starting before root even
+begins (or extending past where it ends) was never found at all. Confirmed
+against the real logo: roughly a third of one "B" was silently dropped
+from the fill entirely.
+
+### Fix
+
+Added a safety net: any chain the main splice loop doesn't reach is still
+included, inserted at the front if it starts before root's own first row
+(much closer to where it naturally belongs than appending at the very end
+would be) or deferred to the very end if splicing it mid-stream would make
+root jump backward to its own remaining rows afterward. Coverage is now
+guaranteed regardless of which side wins any given hole's split or merge;
+the exact connector routing for these specific multi-hole cases isn't
+always the shortest possible (a short, visible connector line can still
+cross a hole once, same documented limitation as before), but no region is
+ever silently missing. New regression test uses a shape with a *slanted*
+hole specifically (the winning side must flip between opening and closing
+for the bug to trigger at all — a plain rectangular hole never exercises
+it), checking fill reaches both sides of the hole at its very top and very
+bottom, not just somewhere in the middle.
+
+Also added `DigitizeCLI`'s `ONLY_OBJECT` env var as a permanent diagnostic
+(isolates and renders a single object by index) — this bug, like the ones
+above it, was found by rendering one specific real object at high zoom and
+seeing an actual gap, not by reasoning about the code in the abstract.
+
 ## Fixed: small lettering with counters (O, R, P, A...) came out illegible
 
 Following the hole-fill fix below, the user reported the *same* logo's

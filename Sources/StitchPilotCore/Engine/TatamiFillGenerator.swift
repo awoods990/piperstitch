@@ -215,8 +215,9 @@ public enum TatamiFillGenerator {
     private static func sequenceChains(_ chains: [[Run]]) -> [[Run]] {
         guard chains.count > 1 else { return chains }
         // The chain with the most rows is, in practice, the one that
-        // continues across every hole's split and merge -- every other
-        // chain is a short side-strip confined to one hole's row range.
+        // continues across most holes' splits and merges -- most other
+        // chains are short side-strips confined to one hole's row range,
+        // starting and ending somewhere inside this one's own row span.
         guard let rootIndex = chains.indices.max(by: { chains[$0].count < chains[$1].count }) else { return chains }
 
         var chainsStartingAtRow: [Int: [Int]] = [:]
@@ -225,7 +226,10 @@ public enum TatamiFillGenerator {
             chainsStartingAtRow[firstRowIndex, default: []].append(ci)
         }
 
+        let rootLastRow = chains[rootIndex].last?.rowIndex ?? Int.max
+        var placed = Set([rootIndex])
         var ordered: [[Run]] = []
+        var deferredToEnd: [[Run]] = []
         var pending: [Run] = []
         func flushPending() {
             guard !pending.isEmpty else { return }
@@ -239,13 +243,59 @@ public enum TatamiFillGenerator {
             // right after finishing the root's own run for it -- the
             // shortest possible connector in both directions, since the
             // side-chain's own first (and, after it, the root's very next)
-            // row are immediately adjacent to this one.
+            // row are immediately adjacent to this one. Except: a chain
+            // that itself outlives root (its own last row is past root's)
+            // would hijack root's flow -- splicing it in here mid-stream,
+            // then coming back to root's remaining rows afterward, means
+            // jumping backward from wherever *that* chain ends to root's
+            // own next row, which can be a long, awkward connector (found
+            // against a real "B": one hole's other-side chain outlived
+            // root, entered here, and left a visible diagonal line back
+            // across the counter once spliced mid-stream -- see
+            // CHANGELOG.md). Defer those to the very end instead, where
+            // root's flow stays uninterrupted and only the one deferred
+            // chain's own entry connector is imperfect, not root's exit too.
             if let starting = chainsStartingAtRow[run.rowIndex] {
                 flushPending()
-                for chainIndex in starting { ordered.append(chains[chainIndex]) }
+                for chainIndex in starting {
+                    placed.insert(chainIndex)
+                    if (chains[chainIndex].last?.rowIndex ?? Int.min) > rootLastRow {
+                        deferredToEnd.append(chains[chainIndex])
+                    } else {
+                        ordered.append(chains[chainIndex])
+                    }
+                }
             }
         }
         flushPending()
+        ordered.append(contentsOf: deferredToEnd)
+
+        // Safety net: a real "B" (two holes) can produce a chain whose own
+        // row range starts *before* root's or extends *past* root's own
+        // end -- e.g. root winning the first hole's left side, right side,
+        // then continuing solo, only for a *different* chain to win the
+        // second hole's other side and outlive root entirely. Such a chain
+        // never has a row that coincides with one of root's own rows, so
+        // the splice above never finds it -- which silently dropped an
+        // entire region of a real letterform's fill (confirmed against a
+        // user's logo: roughly a third of a "B" went unstitched). Appending
+        // it here isn't always the shortest possible connector, but
+        // guaranteed full coverage matters far more than routing elegance
+        // for a case rare enough that root-based splicing alone can't
+        // reach it — see CHANGELOG.md. A leftover chain that starts
+        // *before* root's own first row belongs at the very front, not the
+        // very back -- root's first-placed piece starts right where such a
+        // chain tends to end (it's what root took over from), so this is a
+        // much shorter connector than appending after everything, even
+        // though it's still not a fully general shortest-path placement.
+        let rootFirstRow = chains[rootIndex].first?.rowIndex ?? Int.min
+        for (ci, chain) in chains.enumerated() where !placed.contains(ci) {
+            if let firstRow = chain.first?.rowIndex, firstRow < rootFirstRow {
+                ordered.insert(chain, at: 0)
+            } else {
+                ordered.append(chain)
+            }
+        }
         return ordered
     }
 

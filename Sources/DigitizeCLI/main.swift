@@ -102,6 +102,11 @@ do {
     }
     checkpoint("Built \(objects.count) objects")
 
+    if let onlyStr = ProcessInfo.processInfo.environment["ONLY_OBJECT"], let only = Int(onlyStr), only >= 1, only <= objects.count {
+        objects = [objects[only - 1]]
+        print("Isolated Object \(only): \(objects[0].stitchType.rawValue), subPaths=\(objects[0].shape.subPaths.count)")
+    }
+
     let document = StitchDocument(name: inputURL.deletingPathExtension().lastPathComponent,
                                    physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
     let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
