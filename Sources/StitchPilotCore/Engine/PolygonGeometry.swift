@@ -22,16 +22,30 @@ public enum PolygonGeometry {
     /// `polygon` as implicitly closed (tests the edge from the last point
     /// back to the first), matching every other polygon helper here.
     public static func pointInPolygon(_ point: Point2D, polygon: [Point2D]) -> Bool {
-        guard polygon.count >= 3 else { return false }
+        pointInPolygons(point, polygons: [polygon])
+    }
+
+    /// Even-odd ray-casting test across *multiple* closed polygons at
+    /// once, combining every polygon's edges into one shared crossing
+    /// count — the same technique `TatamiFillGenerator.scanlineCrossings`
+    /// uses for a full scanline, just for a single point/single test.
+    /// Passing a shape's hole sub-paths alongside its outer boundary gets
+    /// hole semantics for free: a point inside the outer loop but also
+    /// inside a hole loop toggles twice (even = outside), matching the
+    /// even-odd fill rule used everywhere else in this codebase.
+    public static func pointInPolygons(_ point: Point2D, polygons: [[Point2D]]) -> Bool {
         var inside = false
-        var j = polygon.count - 1
-        for i in 0..<polygon.count {
-            let pi = polygon[i], pj = polygon[j]
-            if (pi.y > point.y) != (pj.y > point.y) {
-                let crossingX = (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x
-                if point.x < crossingX { inside.toggle() }
+        for polygon in polygons {
+            guard polygon.count >= 3 else { continue }
+            var j = polygon.count - 1
+            for i in 0..<polygon.count {
+                let pi = polygon[i], pj = polygon[j]
+                if (pi.y > point.y) != (pj.y > point.y) {
+                    let crossingX = (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x
+                    if point.x < crossingX { inside.toggle() }
+                }
+                j = i
             }
-            j = i
         }
         return inside
     }

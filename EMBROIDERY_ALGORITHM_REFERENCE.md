@@ -334,6 +334,29 @@ come from.
     by-hand trace; 2-opt finds the single reversal that reaches 16mm,
     matching the fixed-start optimum found by hand-enumerating all
     orderings.
+13. **Hidden travel routing** (`HiddenTravelRouter`, this round): a
+    same-color jump long enough to need a trim gets routed as buried
+    running stitch instead, when the straight path from the previous
+    object's exit to the next object's entry lies entirely inside the
+    *next* object's own shape. Deliberately scoped to only this provably
+    safe case rather than the general one (any later object, not just
+    the immediate next, potentially covering it) — since the next object
+    is sewn immediately afterward, its own stitching is guaranteed to
+    cover that exact area, no assumption about anything else needed.
+    Coverage is checked by sampling several points strictly *between*
+    the two endpoints (excluding the endpoints themselves — B's entry in
+    particular sits essentially on B's own boundary by construction,
+    which is a numerically ambiguous case for even-odd point-in-polygon
+    testing and irrelevant to the decision anyway, since a plain jump
+    would travel between the same two fixed points regardless).
+    `PolygonGeometry` gained `pointInPolygons` (even-odd across multiple
+    closed loops at once, so a shape's hole sub-paths are respected — a
+    point inside the outer boundary but also inside a hole is correctly
+    "not covered"). Only fires above the actual trim threshold in use,
+    since a same-color jump short enough to not need a trim already
+    becomes an untrimmed thread carry that ends up buried the same way
+    once the next object covers it — bridging that case would only add
+    stitches for no benefit.
 
 ## Known remaining weaknesses
 
@@ -392,16 +415,19 @@ come from.
   simplified, and there's no small-text-specific underlay or sequencing
   (letters are still just individually-classified objects, ordered by
   the same general-purpose scheduler as anything else).
+- `HiddenTravelRouter` only bridges into the *immediate next* object,
+  not any later one — a same-color gap between two objects with a third,
+  larger background object covering the path but scheduled even later
+  (or a different-color object opaque enough to hide it) isn't caught.
+  The general case needs reasoning about arbitrary future coverage,
+  which is real, unscoped design work (see priority list below).
 
 ## Recommended next improvements, in priority order
 
-1. Hidden travel routing: when a same-color jump's path will end up
-   covered by stitching sewn later, route it as buried running stitch
-   instead of a jump(+trim past `maxJumpWithoutTrimMM`) — avoiding the
-   trim entirely rather than just shortening the jump, the way real
-   digitizing software does. Needs a way to detect "will this path be
-   covered by later same-design stitching," which is the real design
-   work here.
+1. Generalize `HiddenTravelRouter` beyond the immediate-next-object case:
+   reasoning about arbitrary later objects (potentially a different
+   color, if opaque enough) covering a travel path, not just whichever
+   object happens to be scheduled right after it.
 2. Contour fill, once a real polygon-offset primitive exists.
 3. A real graph-based router for satin objects specifically, the way
    `auto_satin.py` does — restructuring a satin column into a

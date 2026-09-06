@@ -578,12 +578,55 @@ matching the true optimum for a tour required to start at x=0 (found by
 hand-enumerating the remaining orderings) — see `EMBROIDERY_ALGORITHM_
 REFERENCE.md` for the full worked cost calculation.
 
+## Phase 3 (continued) — hidden travel routing (implemented)
+
+A same-color jump long enough to need a trim now gets routed as buried
+running stitch instead, when it's provably safe to do so:
+`HiddenTravelRouter` checks whether the straight path from the previous
+object's exit to the next object's entry lies entirely inside the *next*
+object's own shape. Since that object is sewn immediately afterward, its
+own stitching (fill scanlines, satin crossings) is guaranteed to cover
+that exact area moments later — no assumption about any other, later
+object is needed, which is what makes this case safe to implement without
+first building general future-coverage reasoning.
+
+- Coverage is checked at several points sampled strictly *between* the
+  two endpoints, not at the endpoints themselves: the endpoints are fixed
+  regardless of this decision (a plain jump travels between the same two
+  points either way), and the entry point in particular sits essentially
+  on the next object's own boundary by construction (every stitch
+  generator starts exactly at the shape's edge) — a numerically ambiguous
+  case for even-odd point-in-polygon testing that has no bearing on the
+  actual decision.
+- `PolygonGeometry` gained `pointInPolygons`, extending the existing
+  single-polygon point-in-polygon test to multiple closed loops at once
+  (the same technique `TatamiFillGenerator.scanlineCrossings` uses for a
+  full scanline), so a shape's hole sub-paths are respected — a point
+  inside the outer boundary but also inside a hole correctly isn't
+  "covered."
+- Only fires above the *actual* trim threshold a given `flatten` call is
+  using: a same-color gap short enough to not need a trim already
+  becomes an untrimmed thread carry that ends up buried the same way once
+  the next object covers it, so bridging it would only add stitches for
+  no benefit.
+- A real gap surfaced while testing this: `ObjectSequencer`'s containment
+  check can classify a degenerate, zero-area shape (an open running-stitch
+  line, say) as "contained" by a much larger object whenever the line's
+  endpoints happen to fall inside that object's polygon — which turned
+  out to be *correct*, not a bug, once examined: if a thin foreground
+  detail's stitch path genuinely sits inside a big background region,
+  sewing the background first really is the right call, exactly matching
+  the containment feature's existing intent. Recorded here because it's
+  worth knowing this behavior exists, not because it needed fixing.
+
+Deliberately scoped to the immediate-next-object case only; the general
+version (any later object, potentially a different color if opaque
+enough) is real, unscoped design work — now the top item in
+`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements."
+
 ## Phase 3 — planned next
 
-Object overlap/inset-outset, hidden travel routing (sewing under later
-stitching instead of jumping — now the top item in
-`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements"),
-corner handling, and contour fill.
+Object overlap/inset-outset, corner handling, and contour fill.
 
 ## Phase 4 — Quality analysis / Embroidery Readiness Score (implemented)
 

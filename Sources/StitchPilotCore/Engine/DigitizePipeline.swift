@@ -41,15 +41,24 @@ public enum DigitizePipeline {
     public static func colorSequence(for document: StitchDocument) throws -> [ThreadColor] {
         var colors: [ThreadColor] = []
         for entry in try sequencedGeneratedObjects(document) {
-            if colors.last?.rgb != entry.color.rgb {
-                colors.append(entry.color)
+            let color = entry.object.threadColor
+            if colors.last?.rgb != color.rgb {
+                colors.append(color)
             }
         }
         return colors
     }
 
     public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
-        let generated = try sequencedGeneratedObjects(document)
+        // Hidden travel routing (spec §25/§26): a same-color gap long
+        // enough to otherwise need a trim gets routed as buried running
+        // stitch instead, when the path is entirely covered by the next
+        // object's own upcoming stitching — see `HiddenTravelRouter`. Uses
+        // the *actual* trim threshold this call is using, since bridging a
+        // gap that wouldn't have been trimmed anyway just adds stitches
+        // for no benefit.
+        let bridged = HiddenTravelRouter.bridgeSameColorGaps(try sequencedGeneratedObjects(document), thresholdMM: maxJumpWithoutTrimMM)
+        let generated = bridged.map { (color: $0.object.threadColor, points: $0.points) }
 
         var commands: [StitchCommand] = []
         var previousColor: ThreadColor?
@@ -108,14 +117,14 @@ public enum DigitizePipeline {
     /// in `flatten` is based on what will actually appear in the output,
     /// not on `document.objects`' raw indices — an empty-output object in
     /// between would otherwise misplace a lock stitch.
-    private static func sequencedGeneratedObjects(_ document: StitchDocument) throws -> [(color: ThreadColor, points: [Point2D])] {
+    private static func sequencedGeneratedObjects(_ document: StitchDocument) throws -> [(object: EmbroideryObject, points: [Point2D])] {
         var perObject: [(object: EmbroideryObject, points: [Point2D])] = []
         for object in document.objects {
             let points = try stitchPoints(for: object)
             guard !points.isEmpty else { continue }
             perObject.append((object, points))
         }
-        return ObjectSequencer.sequenceGenerated(perObject).map { (color: $0.object.threadColor, points: $0.points) }
+        return ObjectSequencer.sequenceGenerated(perObject)
     }
 
     private static func stitchPoints(for object: EmbroideryObject) throws -> [Point2D] {

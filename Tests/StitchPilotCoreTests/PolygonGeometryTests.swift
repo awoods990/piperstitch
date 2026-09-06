@@ -29,4 +29,17 @@ struct PolygonGeometryTests {
         #expect(!PolygonGeometry.pointInPolygon(Point2D(0, 0), polygon: [Point2D(0, 0), Point2D(1, 1)]))
         #expect(!PolygonGeometry.pointInPolygon(Point2D(0, 0), polygon: []))
     }
+
+    @Test func pointInPolygonsHandlesHolesViaEvenOddRule() {
+        let outer = [Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20)]
+        let hole = [Point2D(5, 5), Point2D(15, 5), Point2D(15, 15), Point2D(5, 15)]
+
+        // Inside the outer boundary but also inside the hole -- toggled
+        // twice (even), so outside per the even-odd fill rule.
+        #expect(!PolygonGeometry.pointInPolygons(Point2D(10, 10), polygons: [outer, hole]))
+        // Inside the outer boundary, not inside the hole -- toggled once.
+        #expect(PolygonGeometry.pointInPolygons(Point2D(2, 2), polygons: [outer, hole]))
+        // Outside everything.
+        #expect(!PolygonGeometry.pointInPolygons(Point2D(30, 30), polygons: [outer, hole]))
+    }
 }

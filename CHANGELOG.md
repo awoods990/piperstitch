@@ -4,6 +4,57 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Hidden travel routing (stitch-conversion performance)
+
+### Added
+- `HiddenTravelRouter`: a same-color jump long enough to need a trim now
+  gets routed as buried running stitch instead, when the straight path
+  from the previous object's exit to the next object's entry lies
+  entirely inside the *next* object's own shape. Since that object is
+  sewn immediately afterward, its own stitching is guaranteed to cover
+  the path — provably safe without reasoning about any other, later
+  object, which is real, unscoped design work left for a future round
+  (see "Known limitations" below).
+- Coverage is checked at points sampled strictly between the two
+  endpoints (not at the endpoints themselves, which are fixed regardless
+  of the decision and, for the entry point, sit on the target shape's own
+  boundary by construction — a numerically ambiguous case for even-odd
+  testing that doesn't affect the actual decision).
+- `PolygonGeometry` gained `pointInPolygons`, generalizing the existing
+  single-polygon test to multiple closed loops at once (an even-odd union
+  across all of them), so a shape's holes are respected; the existing
+  `pointInPolygon` is now implemented in terms of it. `DigitizePipeline`
+  threads its actual `maxJumpWithoutTrimMM` through so bridging only
+  fires where a real trim would otherwise happen (a same-color gap short
+  enough not to need one already ends up buried under the next object's
+  stitching just the same as an untrimmed jump).
+- 8 new tests: 3 in `PolygonGeometryTests` (hole handling for
+  `pointInPolygons`) and a new `HiddenTravelRouterTests` suite covering
+  bridging when covered, not bridging when the path leaves the shape,
+  not bridging short gaps even when covered, not bridging across a color
+  change, and two `DigitizePipeline.flatten` integration tests confirming
+  trim count actually drops when coverage holds and doesn't when it
+  doesn't. Building the pipeline-level tests surfaced and required
+  correcting three real test-construction mistakes along the way (a
+  `.tatamiFill` object's automatic angle defaulting to 90° for a
+  perfectly symmetric square, `UnderlayGenerator` prepending points
+  before a `.tatamiFill` object's own entry unless underlay is
+  explicitly disabled, and Swift's `.none` on an `Optional<UnderlayType>`
+  resolving to `nil` rather than the `UnderlayType.none` case) — each
+  caught by the test actually failing rather than a silent false pass.
+
+### Known limitations at this stage
+- Only bridges into the immediate next object, not any later one; a
+  larger background object that would cover the same path but is
+  scheduled further out isn't caught, nor is a different-color object
+  opaque enough to hide it.
+- Surfaced (but didn't need to fix) a real property of `ObjectSequencer`:
+  a degenerate zero-area shape (an open running-stitch line) can be
+  classified as "contained" by a much larger object whenever its
+  endpoints fall inside that object's polygon — correct behavior on
+  inspection (a thin foreground detail genuinely inside a background
+  region should sew after it), not a bug, but worth knowing it exists.
+
 ## 2-opt local-search refinement of object sequencing (stitch-conversion performance)
 
 ### Added
