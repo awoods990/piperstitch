@@ -149,7 +149,9 @@ do {
         }
     }
     for object in objects {
-        print("  - \(object.name): \(object.stitchType.rawValue), color \(object.threadColor.name)")
+        let box = object.shape.boundingBox
+        print(String(format: "  - %@: %@, color %@, bbox=(%.1f,%.1f)-(%.1f,%.1f)",
+                      object.name, object.stitchType.rawValue, object.threadColor.name, box.minX, box.minY, box.maxX, box.maxY))
     }
 
     var renderOptions = StitchRenderer.Options()
