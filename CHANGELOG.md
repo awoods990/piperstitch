@@ -4,6 +4,43 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: small lettering with counters (O, R, P, A...) came out illegible
+
+Following the hole-fill fix below, the user reported the *same* logo's
+small tagline text ("YOUR AI ORCHESTRATOR") still looked wrong — not just
+rough at small size, but structurally garbled, reading as something like
+"YOUR AI OPC IESI PAIOP" at any zoom level.
+
+### Root cause
+
+`StitchTypeClassifier` picked stitch type from a shape's estimated average
+width alone (`area / length` along its principal axis), never checking
+whether the shape actually *has* a hole. Letters with counters (O, P, R, A,
+D, B, Q...) at typical stroke widths classified as `.satin` — but
+`SatinColumnGenerator` only ever looks at `shape.subPaths.first` and has no
+mechanism to represent a hole at all, unlike `TatamiFillGenerator`'s
+even-odd handling across every sub-path. So every counter-bearing glyph
+got its hole silently filled in solid, and — worse — satin's rail-fitting
+(built for a simple, roughly-elongated column shape) produced genuine
+nonsense for a boundary shaped like a ring instead: not a rough
+approximation of the right letter, a structurally different, wrong shape.
+That's why it read as different letters entirely rather than just "blurry"
+ones.
+
+### Fix
+
+A shape with more than one sub-path (i.e. any hole) now always routes to
+`.tatamiFill`, regardless of its estimated width — tatami fill's even-odd
+scanline logic (and the chain-splicing fix above) already handles holes of
+arbitrary shape correctly, so this is a strict improvement, not a
+trade-off. Confirmed by re-rendering the real logo's tagline: "YOUR AI
+ORCHESTRATOR" is now actually legible as that text, up from a garbled
+"YOUR AI OPC IESI PAIOP." Also added `DigitizeCLI`'s `pixelsPerMM` as a
+permanent optional argument (previously a debug-only env var, removed and
+re-added properly) — this and the earlier bugs in this file were both
+found by rendering real artwork at high zoom and reading the actual
+result, not by reasoning about the code in the abstract.
+
 ## Fixed: a hole/counter in a fill shape rendered as solid, not hollow
 
 A user reported a real logo (a wordmark with letters, including two "B"s)

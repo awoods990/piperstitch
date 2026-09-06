@@ -7,7 +7,7 @@ import StitchPilotCore
 // quality report, so digitizing quality can be inspected and regression-
 // tested without driving the SwiftUI app itself.
 //
-// Usage: DigitizeCLI <input file> <output.png> [widthMM] [heightMM] [maxColors]
+// Usage: DigitizeCLI <input file> <output.png> [widthMM] [heightMM] [maxColors] [pixelsPerMM]
 
 setbuf(stdout, nil)
 
@@ -48,7 +48,7 @@ if args.count >= 3, args[1] == "--validate-formats" {
 }
 
 guard args.count >= 3 else {
-    print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8]")
+    print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8] [pixelsPerMM=12]")
     exit(1)
 }
 
@@ -62,6 +62,7 @@ let outputURL = URL(fileURLWithPath: args[2])
 let widthMM = args.count > 3 ? (Double(args[3]) ?? 100) : 100
 let heightMM = args.count > 4 ? (Double(args[4]) ?? 100) : 100
 let maxColors = args.count > 5 ? (Int(args[5]) ?? 8) : 8
+let pixelsPerMM = args.count > 6 ? (Double(args[6]) ?? 12) : 12
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
@@ -146,7 +147,9 @@ do {
         print("  - \(object.name): \(object.stitchType.rawValue), color \(object.threadColor.name)")
     }
 
-    guard let pngData = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: colors) else {
+    var renderOptions = StitchRenderer.Options()
+    renderOptions.pixelsPerMM = pixelsPerMM
+    guard let pngData = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: colors, options: renderOptions) else {
         fail("Rendering failed.")
     }
     try pngData.write(to: outputURL)
