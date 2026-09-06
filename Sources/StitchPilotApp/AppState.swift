@@ -53,7 +53,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var statusMessage: String = "Drag in an image or SVG file to begin."
+    @Published var statusMessage: String = "Drag in an image or SVG file, then click Create Embroidery File."
     @Published var errorMessage: String?
     @Published var isBusy = false
 
@@ -131,7 +131,7 @@ final class AppState: ObservableObject {
             }
 
             rebuildDocument(rawShapes: rawShapes, fillColors: fillColors, combinedBounds: combined, name: url.deletingPathExtension().lastPathComponent)
-            statusMessage = "Imported \(rawShapes.count) shape(s) from \(url.lastPathComponent). Set size and click Auto Digitize."
+            statusMessage = "Imported \(rawShapes.count) shape(s) from \(url.lastPathComponent). Adjust the size if needed, then click Create Embroidery File."
             stitchPlan = nil
             readinessReport = nil
         } catch {
@@ -210,6 +210,47 @@ final class AppState: ObservableObject {
             // seeing the preview, not have to remember to ask for it.
             readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM)
             statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
+    /// The One-Click Stitch action (spec: OneClickStitch's whole promise —
+    /// "turn any image into embroidery," fast/easy/affordable): runs Auto
+    /// Digitize and then immediately prompts to save the result, combining
+    /// what would otherwise be two separate manual steps (Auto Digitize,
+    /// then Export from a menu) into the single button most users actually
+    /// want. The save panel offers both machine formats via its own format
+    /// picker rather than committing to one up front, so this one action
+    /// still covers both Tajima and Brother/Baby Lock machines.
+    func createEmbroideryFile() {
+        guard document != nil else {
+            errorMessage = "Import artwork first, then click Create Embroidery File."
+            return
+        }
+        autoDigitize()
+        guard stitchPlan != nil else { return } // autoDigitize already set errorMessage on failure
+        exportChoosingFormat()
+    }
+
+    private func exportChoosingFormat() {
+        guard let plan = stitchPlan, let document else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = document.name + ".dst"
+        panel.allowedContentTypes = [UTType(filenameExtension: "dst") ?? .data, UTType(filenameExtension: "pes") ?? .data]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data: Data
+            if url.pathExtension.lowercased() == "pes" {
+                let colors = try DigitizePipeline.colorSequence(for: document)
+                data = try PESFormat.write(plan, designName: document.name, threadColors: colors.map { $0.rgb })
+                _ = try PESFormat.read(data) // self-validate before ever handing the file to the user (spec §59)
+            } else {
+                data = try DSTFormat.write(plan, designName: document.name)
+                _ = try DSTFormat.read(data)
+            }
+            try data.write(to: url)
+            statusMessage = "Created \(url.lastPathComponent)."
         } catch {
             errorMessage = friendlyMessage(for: error)
         }

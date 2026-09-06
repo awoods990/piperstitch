@@ -4,6 +4,57 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Rebrand to OneClickStitch, and a real one-click action
+
+### Added
+- Renamed the product from its working name "StitchPilot" to
+  "OneClickStitch" using the real brand assets provided (a wordmark logo
+  and a matching favicon — an embroidered-thread "S" with a cursor-click
+  motif, copied into `Resources/Branding/` for reproducibility). Per
+  `ARCHITECTURE.md`'s "Branding" section (written specifically to make
+  this kind of rename possible without touching core logic): changed
+  `Info.plist` (`CFBundleName`/`CFBundleDisplayName`/`CFBundleIdentifier`/
+  `CFBundleIconFile`), the window title, `Scripts/build_app_bundle.sh`'s
+  output bundle name (now `OneClickStitch.app`), and the app icon
+  (`Resources/OneClickStitch.icns`, generated from the real favicon via
+  `sips`/`iconutil`, replacing the old programmatically-drawn placeholder
+  mark and its now-obsolete generator script). Deliberately left
+  unchanged: `Package.swift`'s package/target/product names and the
+  compiled binary's own filename inside the bundle — internal identifiers
+  with no user-visible surface; `CFBundleDisplayName` is what Finder, the
+  Dock, and the menu bar actually show, independent of the binary's own
+  name, a normal pattern.
+- **One-click embroidery creation**: `AppState.createEmbroideryFile()`
+  runs Auto Digitize and immediately prompts to save, combining what were
+  two separate manual steps (click Auto Digitize, then use the Export
+  menu) into the single action most users actually want — matching the
+  product's own name and promise. The save panel offers both DST and PES
+  via its own format picker rather than committing to one up front, so
+  the single action still covers both Tajima and Brother/Baby Lock
+  machines. The existing manual Auto Digitize/Export menu items stay
+  available for anyone using the Object Inspector to tune parameters
+  between digitizing and exporting.
+- A new toolbar button, "Create Embroidery File," styled with
+  `.borderedProminent` and the brand's blue tint plus the actual favicon
+  image (bundled as an SPM resource for `StitchPilotApp`, loaded via
+  `Bundle.module`) so it's unmistakably *the* button in the toolbar next
+  to the existing plain-icon actions. The same brand mark, larger,
+  appears in the canvas's empty state alongside the product name and
+  tagline ("Turn any image into embroidery").
+- Status messages throughout point at the new one-click action instead of
+  the old two-step manual flow.
+
+### Known limitations at this stage
+- Verified via successful compilation, the full test suite (unaffected —
+  this is a UI/branding-only change), and a direct screenshot of the
+  running app confirming the rebrand and the button's correct
+  disabled-state rendering with no artwork loaded. The button's *enabled*
+  (blue, active) rendering wasn't independently screenshotted — no
+  accessibility permission is available in this environment to script a
+  file import and trigger it — though `.borderedProminent` + `.tint()` on
+  an enabled button is standard, well-understood SwiftUI behavior. Worth
+  a quick manual check.
+
 ## Hidden travel routing (stitch-conversion performance)
 
 ### Added

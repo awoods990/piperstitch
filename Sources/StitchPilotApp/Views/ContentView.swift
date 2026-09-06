@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import StitchPilotCore
 import UniformTypeIdentifiers
 
@@ -29,6 +30,26 @@ struct ContentView: View {
                 .frame(width: 260)
         }
         .toolbar {
+            // The One-Click Stitch action: styled with the app's own mark
+            // and a prominent tint so it's unmistakably *the* button in
+            // this toolbar, not one of an equal-weight row of icons —
+            // everything else here is a secondary/manual path for users
+            // who want to inspect or adjust before exporting.
+            ToolbarItem {
+                Button {
+                    app.createEmbroideryFile()
+                } label: {
+                    HStack(spacing: 6) {
+                        brandMark(size: 18)
+                        Text("Create Embroidery File").fontWeight(.semibold)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.09, green: 0.42, blue: 0.72))
+                .disabled(app.document == nil)
+                .help("One click: digitize this artwork and save it as a machine embroidery file.")
+            }
+
             ToolbarItemGroup {
                 Menu {
                     Button("Open Artwork...") { app.openArtworkWithPanel() }
@@ -60,19 +81,36 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom) {
             statusBar
         }
-        .alert("StitchPilot", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
+        .alert("OneClickStitch", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(app.errorMessage ?? "")
         }
     }
 
+    /// The app's own mark (the stitched "S" + cursor-click glyph), bundled
+    /// as a real image asset rather than an approximated SF Symbol — see
+    /// `Resources/Branding/` for the source files this was generated from.
+    @ViewBuilder
+    private func brandMark(size: CGFloat) -> some View {
+        if let url = Bundle.module.url(forResource: "OneClickStitchIcon", withExtension: "png"),
+           let nsImage = NSImage(contentsOf: url) {
+            Image(nsImage: nsImage)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+        }
+    }
+
     private var dropPrompt: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "square.and.arrow.down.on.square")
-                .font(.system(size: 40))
+        VStack(spacing: 10) {
+            brandMark(size: 64)
+            Text("OneClickStitch").font(.title2).fontWeight(.semibold)
+            Text("Turn any image into embroidery.")
                 .foregroundStyle(.secondary)
-            Text("Drop an image or SVG file here")
+            Text("Drop an image or SVG file here to begin")
+                .font(.callout)
                 .foregroundStyle(.secondary)
         }
     }

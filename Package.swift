@@ -16,7 +16,8 @@ let package = Package(
         .executableTarget(
             name: "StitchPilotApp",
             dependencies: ["StitchPilotCore"],
-            path: "Sources/StitchPilotApp"
+            path: "Sources/StitchPilotApp",
+            resources: [.copy("Resources/OneClickStitchIcon.png")]
         ),
         .testTarget(
             name: "StitchPilotCoreTests",

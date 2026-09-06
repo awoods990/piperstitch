@@ -67,13 +67,34 @@ touching the engine.
 
 ## Branding
 
-The product name "StitchPilot" appears only in:
-- `Package.swift` product/target names (renaming requires a rename, not a rewrite)
-- App display strings (`Info.plist`, SwiftUI view titles)
-- Documentation
+The product was renamed from its original working name "StitchPilot" to
+"OneClickStitch" without touching engine, model, or format code — exactly
+the outcome this section originally described as the point of keeping the
+name out of core logic. Concretely, what did and didn't change:
+
+- **Changed:** `Resources/Info.plist` (`CFBundleName`/`CFBundleDisplayName`/
+  `CFBundleIdentifier`/`CFBundleIconFile`), the SwiftUI `WindowGroup` title,
+  `Scripts/build_app_bundle.sh`'s output bundle name, the app icon
+  (`Resources/OneClickStitch.icns`, generated from the real brand assets in
+  `Resources/Branding/` — see below — replacing the old programmatically-drawn
+  placeholder mark), an in-app brand mark image bundled as an SPM resource
+  for `StitchPilotApp` (`Sources/StitchPilotApp/Resources/`, loaded via
+  `Bundle.module`), and user-facing documentation.
+- **Deliberately left unchanged:** `Package.swift`'s package/target/product
+  names (`StitchPilot`, `StitchPilotCore`, `StitchPilotApp`), Swift type
+  names (`StitchPilotApp` the `App` struct), module import statements, and
+  the actual compiled binary's filename inside the bundle
+  (`Contents/MacOS/StitchPilot`, referenced by `CFBundleExecutable`). These
+  are internal identifiers with zero user-visible surface — nothing outside
+  the source tree and this doc ever sees them — so renaming them would be
+  pure mechanical churn across every source file for no visible benefit.
+  `CFBundleDisplayName` (what Finder, the Dock, and the menu bar actually
+  show) is what carries the product's real name to the user, independent of
+  the binary's own filename — a normal, common pattern.
 
 No engine, model, or format code references the product name. Renaming the
-product later is a find/replace of display strings, not an architecture change.
+product again later is the same find/replace of display strings and
+resources described above, not an architecture change.
 
 ## Units
 
@@ -177,20 +198,18 @@ Package Manager, Terminal, or source code — see spec §3. Opening
 `.xcodeproj` generation step needed, for anyone who wants to develop this in
 the Xcode IDE later.
 
-Verified end to end: `Scripts/build_app_bundle.sh` produces a `.app` that
-launches via `open` (the same path double-clicking in Finder takes) as a
+Verified end to end: `Scripts/build_app_bundle.sh` produces `OneClickStitch.app`
+that launches via `open` (the same path double-clicking in Finder takes) as a
 real, independent process — confirmed via `System Events` recognizing it as
 a running application and the system log showing AppKit actually creating
 and ordering its window to the front, plus a direct screenshot of the
 running window's content. The bundle carries a real icon
-(`Resources/StitchPilot.icns`, generated programmatically by
-`Scripts/generate_icon.swift` — a simple original stitch-motif mark, since
-no external design tools are available here) rather than shipping with a
-generic default.
+(`Resources/OneClickStitch.icns`, generated from the actual brand assets —
+see "Branding" above — rather than shipping with a generic default).
 
 ## Third-party dependencies
 
-**Runtime dependencies of the shipped app: none.** Everything StitchPilot
+**Runtime dependencies of the shipped app: none.** Everything OneClickStitch
 ships with is Swift + Apple system frameworks (Foundation, SwiftUI,
 CoreGraphics, Accelerate).
 

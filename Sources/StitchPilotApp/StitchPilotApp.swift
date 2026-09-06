@@ -5,7 +5,7 @@ struct StitchPilotApp: App {
     @StateObject private var appState = AppState()
 
     var body: some Scene {
-        WindowGroup("StitchPilot") {
+        WindowGroup("OneClickStitch") {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 900, minHeight: 600)
