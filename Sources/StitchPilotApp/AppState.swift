@@ -43,8 +43,7 @@ final class AppState: ObservableObject {
         didSet {
             guard oldValue != matchToThreadLibrary, !lastRawShapes.isEmpty else { return }
             regenerateFromStoredGeometry()
-            stitchPlan = nil
-            readinessReport = nil
+            scheduleLiveRegenerate()
         }
     }
 
@@ -58,9 +57,55 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var statusMessage: String = "Drag in an image or SVG file, then click Create Embroidery File."
+    @Published var statusMessage: String = "Drag in an image or SVG file, then click Click to Create."
     @Published var errorMessage: String?
     @Published var isBusy = false
+
+    // MARK: - Custom thread library (spec §9: "a user's 'My Thread
+    // Inventory' subset" -- the matching engine already accepts any
+    // palette; this is the missing piece letting a user actually build one
+    // instead of always matching against the built-in generic palette).
+
+    private static let customThreadLibraryDefaultsKey = "com.oneclickstitch.customThreadLibrary"
+
+    /// The user's own defined thread colors, persisted across launches.
+    /// When non-empty, matching (`regenerateFromStoredGeometry`) and the
+    /// per-object thread-color picker use *only* this list instead of the
+    /// generic palette -- the whole point of defining your own inventory is
+    /// matching against colors you actually own, not arbitrary ones you
+    /// don't.
+    @Published var customThreadLibrary: [ThreadColor] = [] {
+        didSet {
+            if let data = try? JSONEncoder().encode(customThreadLibrary) {
+                UserDefaults.standard.set(data, forKey: Self.customThreadLibraryDefaultsKey)
+            }
+        }
+    }
+
+    /// The palette actually used for matching and the color picker --
+    /// the user's own library when they've defined one, the built-in
+    /// generic palette otherwise.
+    var effectivePalette: [ThreadColor] {
+        customThreadLibrary.isEmpty ? ThreadLibrary.genericPalette : customThreadLibrary
+    }
+
+    func addCustomThreadColor(name: String, rgb: StitchPilotCore.RGBColor) {
+        customThreadLibrary.append(ThreadColor(name: name, rgb: rgb))
+    }
+
+    func removeCustomThreadColor(id: ThreadColor.ID) {
+        customThreadLibrary.removeAll { $0.id == id }
+    }
+
+    private func loadCustomThreadLibrary() {
+        guard let data = UserDefaults.standard.data(forKey: Self.customThreadLibraryDefaultsKey),
+              let decoded = try? JSONDecoder().decode([ThreadColor].self, from: data) else { return }
+        customThreadLibrary = decoded
+    }
+
+    init() {
+        loadCustomThreadLibrary()
+    }
 
     /// The object list's current selection, for manual per-object parameter
     /// overrides (the Object Inspector). Self-healing rather than reset
@@ -85,22 +130,174 @@ final class AppState: ObservableObject {
     func updateSelectedObject(_ transform: (inout EmbroideryObject) -> Void) {
         guard let id = selectedObjectID, var current = document,
               let index = current.objects.firstIndex(where: { $0.id == id }) else { return }
+        beginUndoableChange()
         transform(&current.objects[index])
         document = current
+        scheduleLiveRegenerate()
     }
 
     /// Removes the selected object entirely (spec: let the user edit the
     /// file, not just tweak per-object parameters) -- e.g. dropping a
     /// mis-detected speck or a background shape the auto-import picked up.
-    /// Like `updateSelectedObject`, only touches the master document; the
-    /// stitch plan (if any) is now stale until the next Auto Digitize, same
-    /// as any other manual edit.
     func deleteSelectedObject() {
         guard let id = selectedObjectID, var current = document,
               let index = current.objects.firstIndex(where: { $0.id == id }) else { return }
+        commitImmediateUndoSnapshot()
         current.objects.remove(at: index)
         document = current
         selectedObjectID = nil
+        scheduleLiveRegenerate()
+    }
+
+    /// Reassigns every object currently using any of `sourceColors` to
+    /// `target` in one action (spec: let the user edit the file -- bulk
+    /// color cleanup across many auto-detected objects, not one at a
+    /// time). Matches by RGB value, not `ThreadColor.id`, since objects
+    /// created independently during import never share an id even when
+    /// they're visually the same color.
+    func mergeColors(from sourceColors: Set<StitchPilotCore.RGBColor>, into target: ThreadColor) {
+        guard var current = document else { return }
+        commitImmediateUndoSnapshot()
+        for i in current.objects.indices where sourceColors.contains(current.objects[i].threadColor.rgb) {
+            current.objects[i].threadColor = target
+        }
+        document = current
+        scheduleLiveRegenerate()
+    }
+
+    // MARK: - Undo
+
+    /// Snapshots only what a user-visible edit can actually change: the
+    /// document's contents, the finished-size fields, and the selection.
+    /// Settings like the color preset, hoop, or thread-library toggle are
+    /// deliberately left out of undo's scope -- they're not edits to the
+    /// design itself, and folding them in would make "undo" revert things
+    /// the user didn't just do.
+    private struct UndoSnapshot {
+        var document: StitchDocument?
+        var physicalWidthMM: Double
+        var physicalHeightMM: Double
+        var selectedObjectID: EmbroideryObject.ID?
+    }
+
+    @Published private(set) var canUndo = false
+    private var undoStack: [UndoSnapshot] = []
+    private let maxUndoDepth = 20
+    private var pendingUndoSnapshot: UndoSnapshot?
+    private var undoCommitTask: Task<Void, Never>?
+
+    private func currentUndoSnapshot() -> UndoSnapshot {
+        UndoSnapshot(document: document, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, selectedObjectID: selectedObjectID)
+    }
+
+    /// For edits that arrive as a rapid burst -- a slider drag firing on
+    /// every intermediate value, or a text field committing on every
+    /// keystroke -- capturing the state *before the drag started* once and
+    /// only pushing it to the stack after things settle, rather than on
+    /// every call, so one drag becomes one undo step instead of dozens.
+    private func beginUndoableChange() {
+        if pendingUndoSnapshot == nil {
+            pendingUndoSnapshot = currentUndoSnapshot()
+        }
+        undoCommitTask?.cancel()
+        undoCommitTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            self?.commitPendingUndoSnapshot()
+        }
+    }
+
+    private func commitPendingUndoSnapshot() {
+        guard let snapshot = pendingUndoSnapshot else { return }
+        undoStack.append(snapshot)
+        if undoStack.count > maxUndoDepth { undoStack.removeFirst(undoStack.count - maxUndoDepth) }
+        canUndo = true
+        pendingUndoSnapshot = nil
+    }
+
+    /// For one-shot actions (delete, merge, resize, import, open, redo) that
+    /// never arrive as a burst -- pushes immediately rather than waiting out
+    /// the debounce a slider drag needs, so e.g. deleting an object is its
+    /// own undo step right away. Flushes any still-pending debounced edit
+    /// first so it isn't silently dropped from the stack.
+    private func commitImmediateUndoSnapshot() {
+        if let pending = pendingUndoSnapshot {
+            undoCommitTask?.cancel()
+            undoStack.append(pending)
+            pendingUndoSnapshot = nil
+        }
+        undoStack.append(currentUndoSnapshot())
+        if undoStack.count > maxUndoDepth { undoStack.removeFirst(undoStack.count - maxUndoDepth) }
+        canUndo = true
+    }
+
+    /// Steps back one edit. If an edit is still mid-burst (the debounce in
+    /// `beginUndoableChange` hasn't committed it yet), undoes straight to
+    /// the state from before that burst began rather than to some
+    /// intermediate value the user never intentionally stopped on.
+    func undo() {
+        undoCommitTask?.cancel()
+        if let pending = pendingUndoSnapshot {
+            pendingUndoSnapshot = nil
+            restore(pending)
+            statusMessage = "Undid last change."
+            return
+        }
+        guard let snapshot = undoStack.popLast() else { return }
+        restore(snapshot)
+        canUndo = !undoStack.isEmpty
+        statusMessage = "Undid last change."
+    }
+
+    private func restore(_ snapshot: UndoSnapshot) {
+        document = snapshot.document
+        physicalWidthMM = snapshot.physicalWidthMM
+        physicalHeightMM = snapshot.physicalHeightMM
+        selectedObjectID = snapshot.selectedObjectID
+        scheduleLiveRegenerate()
+    }
+
+    private var liveRegenerateTask: Task<Void, Never>?
+
+    /// Debounced regeneration so the preview updates on its own after an
+    /// edit -- a density slider drag, a stitch-type change, a color merge
+    /// -- without the user needing a separate manual "regenerate" step
+    /// (spec: the one-click promise extends to editing, not just the
+    /// initial digitize). A short delay means a fast slider drag only runs
+    /// the actual per-object generation pass once it settles, not on every
+    /// intermediate value while dragging.
+    private func scheduleLiveRegenerate() {
+        guard document != nil else { return }
+        liveRegenerateTask?.cancel()
+        liveRegenerateTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            self?.autoDigitize()
+        }
+    }
+
+    /// Discards the current design and returns to a blank slate (spec: let
+    /// the user start a new project without quitting and relaunching).
+    /// StitchPilot has no "unsaved changes" tracking yet, so this doesn't
+    /// prompt to save first -- matching every other full-state reset here
+    /// (a fresh import, opening a different project), which already
+    /// discard in-progress edits the same way.
+    func newProject() {
+        commitImmediateUndoSnapshot()
+        liveRegenerateTask?.cancel()
+        document = nil
+        stitchPlan = nil
+        readinessReport = nil
+        lastColorSequence = []
+        selectedObjectID = nil
+        lastRawShapes = []
+        lastFillColors = []
+        lastCombinedBounds = .empty
+        lastImportedURL = nil
+        physicalWidthMM = 100
+        physicalHeightMM = 100
+        errorMessage = nil
+        statusMessage = "Drag in an image or SVG file, then click Click to Create."
     }
 
     private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
@@ -120,6 +317,7 @@ final class AppState: ObservableObject {
         errorMessage = nil
         isBusy = true
         defer { isBusy = false }
+        commitImmediateUndoSnapshot()
         lastImportedURL = url
 
         do {
@@ -150,9 +348,12 @@ final class AppState: ObservableObject {
             }
 
             rebuildDocument(rawShapes: rawShapes, fillColors: fillColors, combinedBounds: combined, name: url.deletingPathExtension().lastPathComponent)
-            statusMessage = "Imported \(rawShapes.count) shape(s) from \(url.lastPathComponent). Adjust the size if needed, then click Create Embroidery File."
-            stitchPlan = nil
-            readinessReport = nil
+            statusMessage = "Imported \(rawShapes.count) shape(s) from \(url.lastPathComponent)."
+            // Digitize right away rather than waiting for a separate manual
+            // step -- the preview should reflect what's on screen without
+            // the user needing to know to ask for it (spec: the one-click
+            // promise starts at import, not just at export).
+            autoDigitize()
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -186,6 +387,7 @@ final class AppState: ObservableObject {
         guard let current = document else { return }
         let currentBounds = current.boundingBox
         guard !currentBounds.isEmpty else { return }
+        commitImmediateUndoSnapshot()
 
         let resizedObjects = current.objects.map { object -> EmbroideryObject in
             var resized = object
@@ -193,8 +395,59 @@ final class AppState: ObservableObject {
             return resized
         }
         document = StitchDocument(name: current.name, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: resizedObjects)
-        stitchPlan = nil
-        readinessReport = nil
+        scheduleLiveRegenerate()
+    }
+
+    /// A standard placement size (left chest, cap front, sleeve, etc.) sets
+    /// *both* dimensions explicitly, unlike a manual width edit which
+    /// respects "lock aspect ratio" and derives the other side -- a preset
+    /// already encodes a deliberate width/height pair, so it should apply
+    /// exactly as specified rather than being reshaped by that toggle.
+    func applyGarmentSizePreset(_ preset: GarmentSizePreset) {
+        physicalWidthMM = preset.widthMM
+        physicalHeightMM = preset.heightMM
+        applyPhysicalSizeChange()
+    }
+
+    // MARK: - Project-wide density
+
+    /// A standalone "set every matching object to this value" control, not
+    /// a live readout of the document's actual (possibly varied) per-object
+    /// densities -- the point is a fast way to push one density across the
+    /// whole project at once, which per-object editing in the Object
+    /// Inspector doesn't give you. Individual objects can still be tuned
+    /// afterward without this drifting or fighting them.
+    @Published var globalSatinDensityMM: Double = 0.4 {
+        didSet {
+            guard oldValue != globalSatinDensityMM else { return }
+            applyGlobalSatinDensity()
+        }
+    }
+    @Published var globalFillSpacingMM: Double = 0.4 {
+        didSet {
+            guard oldValue != globalFillSpacingMM else { return }
+            applyGlobalFillSpacing()
+        }
+    }
+
+    private func applyGlobalSatinDensity() {
+        guard var current = document, current.objects.contains(where: { $0.stitchType == .satin }) else { return }
+        beginUndoableChange()
+        for i in current.objects.indices where current.objects[i].stitchType == .satin {
+            current.objects[i].parameters.satinDensityMM = globalSatinDensityMM
+        }
+        document = current
+        scheduleLiveRegenerate()
+    }
+
+    private func applyGlobalFillSpacing() {
+        guard var current = document, current.objects.contains(where: { $0.stitchType == .tatamiFill }) else { return }
+        beginUndoableChange()
+        for i in current.objects.indices where current.objects[i].stitchType == .tatamiFill {
+            current.objects[i].parameters.fillSpacingMM = globalFillSpacingMM
+        }
+        document = current
+        scheduleLiveRegenerate()
     }
 
     private func regenerateFromStoredGeometry() {
@@ -203,7 +456,7 @@ final class AppState: ObservableObject {
             let fitted = shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: lastCombinedBounds)
             let detectedRGB = (i < lastFillColors.count ? lastFillColors[i] : nil) ?? StitchPilotCore.RGBColor(hex: 0x000000)
             let threadColor: StitchPilotCore.ThreadColor
-            if matchToThreadLibrary, let matched = ThreadLibrary.nearestMatch(to: detectedRGB) {
+            if matchToThreadLibrary, let matched = ThreadLibrary.nearestMatch(to: detectedRGB, in: effectivePalette) {
                 threadColor = matched
             } else {
                 threadColor = .generic(detectedRGB, name: "Imported Color \(i + 1)")
@@ -215,6 +468,33 @@ final class AppState: ObservableObject {
             objects.append(object)
         }
         document = StitchDocument(name: lastName, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: objects)
+    }
+
+    /// Whether there's an originally-imported source to redo from. A
+    /// project opened from a `.stitchpilot` file has no raw import behind
+    /// it (its objects already carry final geometry), so `false` there.
+    var hasOriginalArtwork: Bool { !lastRawShapes.isEmpty }
+
+    /// Discards every edit made since the original file was imported --
+    /// per-object overrides, color merges, deletions, thread-library
+    /// rematches -- and rebuilds the document fresh from the *originally
+    /// imported* artwork at the current physical size, rather than from
+    /// whatever the document happens to look like now. This is "redo" in
+    /// the sense of re-running the one-click creation process again from
+    /// scratch, not a generic redo of the last undone edit (see `undo()`
+    /// for that); the emphasis on the *original* file matters because
+    /// naively re-digitizing the current (possibly hand-edited) document
+    /// would just reproduce the same edits, not actually start over.
+    func redoEmbroideryFileCreation() {
+        guard hasOriginalArtwork else {
+            errorMessage = "No original artwork to redo from — import a file first."
+            return
+        }
+        commitImmediateUndoSnapshot()
+        selectedObjectID = nil
+        regenerateFromStoredGeometry()
+        autoDigitize()
+        statusMessage = "Redone from the original artwork — edits made since import were discarded."
     }
 
     func autoDigitize() {
@@ -253,7 +533,7 @@ final class AppState: ObservableObject {
     /// still covers both Tajima and Brother/Baby Lock machines.
     func createEmbroideryFile() {
         guard document != nil else {
-            errorMessage = "Import artwork first, then click Create Embroidery File."
+            errorMessage = "Import artwork first, then click Click to Create."
             return
         }
         autoDigitize()
@@ -285,7 +565,7 @@ final class AppState: ObservableObject {
 
     func exportDST() {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Click Auto Digitize before exporting."
+            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
             return
         }
         do {
@@ -300,7 +580,7 @@ final class AppState: ObservableObject {
 
     func exportPES() {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Click Auto Digitize before exporting."
+            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
             return
         }
         do {
@@ -308,6 +588,48 @@ final class AppState: ObservableObject {
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try PESFormat.read(data)
             saveExportedFile(data, suggestedName: document.name + ".pes", extension: "pes")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
+    // MARK: - Sharing (spec: let the user send the file, not just save it
+    // locally -- AirDrop, Mail, Messages, etc. via the system share sheet).
+
+    enum ShareFormat { case dst, pes }
+
+    /// Presents Apple's native share sheet for the current design's
+    /// embroidery file. The share sheet needs a real file on disk (not
+    /// in-memory data), so this writes to a temporary location first --
+    /// same self-validating write-then-read-back as the Save panel exports,
+    /// since a file about to be handed to someone else deserves the same
+    /// spec §59 guarantee as one saved locally.
+    func shareCurrentFile(format: ShareFormat) {
+        guard let plan = stitchPlan, let document else {
+            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            return
+        }
+        do {
+            let data: Data
+            let ext: String
+            switch format {
+            case .dst:
+                data = try DSTFormat.write(plan, designName: document.name)
+                _ = try DSTFormat.read(data)
+                ext = "dst"
+            case .pes:
+                data = try PESFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+                _ = try PESFormat.read(data)
+                ext = "pes"
+            }
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(document.name)
+                .appendingPathExtension(ext)
+            try data.write(to: tempURL, options: .atomic)
+
+            guard let contentView = NSApp.keyWindow?.contentView else { return }
+            let picker = NSSharingServicePicker(items: [tempURL])
+            picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -344,6 +666,7 @@ final class AppState: ObservableObject {
         errorMessage = nil
         isBusy = true
         defer { isBusy = false }
+        commitImmediateUndoSnapshot()
         do {
             let loaded = try ProjectFileFormat.read(try Data(contentsOf: url))
             document = loaded
@@ -357,9 +680,8 @@ final class AppState: ObservableObject {
             lastFillColors = []
             lastCombinedBounds = .empty
             lastImportedURL = nil
-            stitchPlan = nil
-            readinessReport = nil
             statusMessage = "Opened \(url.lastPathComponent)."
+            autoDigitize()
         } catch {
             errorMessage = friendlyMessage(for: error)
         }

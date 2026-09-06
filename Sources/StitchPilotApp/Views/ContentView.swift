@@ -3,9 +3,30 @@ import AppKit
 import StitchPilotCore
 import UniformTypeIdentifiers
 
+/// All measurements in the UI are shown and edited in centimeters, but the
+/// underlying model (`StitchPilotCore`, DST/PES export, every generator and
+/// test) stays in millimeters -- that's the format embroidery machines and
+/// files actually work in, and it's threaded through the whole engine.
+/// Converting only at this display boundary keeps the tested core
+/// untouched while still satisfying "show me cm" everywhere in the UI.
+private func cmBinding(_ mmBinding: Binding<Double>) -> Binding<Double> {
+    Binding(get: { mmBinding.wrappedValue / 10 }, set: { mmBinding.wrappedValue = $0 * 10 })
+}
+
+private func cmBinding(_ mmBinding: Binding<Double?>, defaultManualValueMM: Double) -> Binding<Double> {
+    Binding(
+        get: { (mmBinding.wrappedValue ?? defaultManualValueMM) / 10 },
+        set: { mmBinding.wrappedValue = $0 * 10 }
+    )
+}
+
 struct ContentView: View {
     @EnvironmentObject var app: AppState
     @State private var isTargeted = false
+    @State private var showingNewProjectConfirm = false
+    @State private var showingRedoConfirm = false
+    @State private var showingMergeColors = false
+    @State private var showingThreadLibrary = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -15,7 +36,8 @@ struct ContentView: View {
 
             ZStack {
                 StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, colors: app.lastColorSequence,
-                                  hoop: app.selectedHoop, selectedObjectID: app.selectedObjectID)
+                                  hoop: app.selectedHoop, selectedObjectID: app.selectedObjectID,
+                                  onSelectObject: { app.selectedObjectID = $0 })
                 if app.document == nil {
                     dropPrompt
                 }
@@ -35,23 +57,58 @@ struct ContentView: View {
             // and a prominent tint so it's unmistakably *the* button in
             // this toolbar, not one of an equal-weight row of icons —
             // everything else here is a secondary/manual path for users
-            // who want to inspect or adjust before exporting.
-            ToolbarItem {
+            // who want to inspect or adjust before exporting. There's no
+            // separate "Auto Digitize" action any more: every edit
+            // (import, resize, per-object parameter change, color merge)
+            // regenerates the preview on its own a moment later, so this
+            // button's only remaining job is the export step itself.
+            ToolbarItemGroup {
                 Button {
                     app.createEmbroideryFile()
                 } label: {
                     HStack(spacing: 6) {
                         brandMark(size: 18)
-                        Text("Create Embroidery File").fontWeight(.semibold)
+                        Text("Click to Create").fontWeight(.semibold)
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(red: 0.09, green: 0.42, blue: 0.72))
                 .disabled(app.document == nil)
                 .help("One click: digitize this artwork and save it as a machine embroidery file.")
+
+                // Kept directly beside the primary action -- "redo the
+                // whole thing from scratch" is the natural undo-adjacent
+                // counterpart to "create," not a filing/editing action like
+                // the New/Open/Save group below.
+                Button {
+                    showingRedoConfirm = true
+                } label: {
+                    Label("Redo from Original", systemImage: "arrow.clockwise")
+                }
+                .disabled(!app.hasOriginalArtwork)
+                .help("Discard edits made since import and regenerate fresh from the original artwork.")
+                .confirmationDialog("Redo from the original artwork? Edits made since import (color merges, per-object overrides, deletions) will be discarded.",
+                                     isPresented: $showingRedoConfirm, titleVisibility: .visible) {
+                    Button("Redo from Original", role: .destructive) { app.redoEmbroideryFileCreation() }
+                    Button("Cancel", role: .cancel) {}
+                }
             }
 
             ToolbarItemGroup {
+                Button {
+                    if app.document == nil {
+                        app.newProject()
+                    } else {
+                        showingNewProjectConfirm = true
+                    }
+                } label: {
+                    Label("New Project", systemImage: "doc.badge.plus")
+                }
+                .confirmationDialog("Start a new project? The current design will be closed without saving.",
+                                     isPresented: $showingNewProjectConfirm, titleVisibility: .visible) {
+                    Button("Start New Project", role: .destructive) { app.newProject() }
+                    Button("Cancel", role: .cancel) {}
+                }
                 Menu {
                     Button("Open Artwork...") { app.openArtworkWithPanel() }
                     Button("Open Project...") { app.openProjectWithPanel() }
@@ -64,21 +121,57 @@ struct ContentView: View {
                     Label("Save Project", systemImage: "square.and.arrow.down")
                 }
                 .disabled(app.document == nil)
+
                 Button {
-                    app.autoDigitize()
+                    app.undo()
                 } label: {
-                    Label("Auto Digitize", systemImage: "wand.and.stars")
+                    Label("Undo", systemImage: "arrow.uturn.backward")
                 }
-                .disabled(app.document == nil)
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!app.canUndo)
+                .help("Undo the last edit.")
+            }
+
+            ToolbarItemGroup {
+                Button {
+                    showingMergeColors = true
+                } label: {
+                    Label("Merge Colors", systemImage: "arrow.triangle.merge")
+                }
+                .disabled((app.document?.objects.count ?? 0) < 2)
+                .help("Reassign several objects to the same thread color at once.")
+                Button {
+                    showingThreadLibrary = true
+                } label: {
+                    Label("Thread Library", systemImage: "paintpalette")
+                }
+                .help("Define your own thread colors to match against.")
+            }
+
+            ToolbarItemGroup {
+                // "Export" saves a file to disk -- a download, not an
+                // upload, hence the down-arrow icon (an earlier version of
+                // this button used an up-arrow, which reads as "send," the
+                // job Share below actually does).
                 Menu {
                     Button("Tajima (.dst)") { app.exportDST() }
                     Button("Brother/Baby Lock (.pes)") { app.exportPES() }
                 } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
+                    Label("Export", systemImage: "square.and.arrow.down")
                 }
                 .disabled(app.stitchPlan == nil)
+                Menu {
+                    Button("Tajima (.dst)") { app.shareCurrentFile(format: .dst) }
+                    Button("Brother/Baby Lock (.pes)") { app.shareCurrentFile(format: .pes) }
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .disabled(app.stitchPlan == nil)
+                .help("Send the embroidery file via AirDrop, Mail, Messages, and more.")
             }
         }
+        .sheet(isPresented: $showingMergeColors) { MergeColorsSheet() }
+        .sheet(isPresented: $showingThreadLibrary) { ThreadLibrarySheet() }
         .safeAreaInset(edge: .bottom) {
             statusBar
         }
@@ -183,6 +276,12 @@ private struct ObjectListView: View {
 
 private struct InspectorView: View {
     @EnvironmentObject var app: AppState
+    /// Purely a picker convenience -- not synced back from the actual
+    /// width/height fields, so it doesn't fight manual edits or claim a
+    /// preset is still active once the user has nudged the numbers away
+    /// from it. Selecting "Custom" is a no-op; it only exists so the list
+    /// has an explicit "I'm not using a preset" option to land on.
+    @State private var selectedSizePreset: GarmentSizePreset?
 
     var body: some View {
         Form {
@@ -191,11 +290,21 @@ private struct InspectorView: View {
             }
 
             Section("Finished Size") {
+                Picker("Standard Size", selection: $selectedSizePreset) {
+                    Text("Custom").tag(GarmentSizePreset?.none)
+                    ForEach(GarmentSizePreset.standardPresets) { preset in
+                        Text("\(preset.name) (\(cmString(preset.widthMM))×\(cmString(preset.heightMM))cm)").tag(GarmentSizePreset?.some(preset))
+                    }
+                }
+                .onChange(of: selectedSizePreset) { newValue in
+                    guard let newValue else { return }
+                    app.applyGarmentSizePreset(newValue)
+                }
                 HStack {
-                    TextField("Width (mm)", value: $app.physicalWidthMM, format: .number)
+                    TextField("Width (cm)", value: cmBinding($app.physicalWidthMM), format: .number)
                         .onSubmit { app.applyPhysicalSizeChange() }
                     Text("×")
-                    TextField("Height (mm)", value: $app.physicalHeightMM, format: .number)
+                    TextField("Height (cm)", value: cmBinding($app.physicalHeightMM), format: .number)
                         .disabled(app.lockAspectRatio)
                         .onSubmit { app.applyPhysicalSizeChange() }
                 }
@@ -203,11 +312,19 @@ private struct InspectorView: View {
                 Button("Apply Size") { app.applyPhysicalSizeChange() }
             }
 
+            Section("Density (Entire Project)") {
+                globalDensitySlider("Satin Density", value: $app.globalSatinDensityMM)
+                globalDensitySlider("Fill Row Spacing", value: $app.globalFillSpacingMM)
+                Text("Applies to every satin or fill object in the project at once. Select an individual object above to fine-tune just that one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Hoop") {
                 Picker("Hoop", selection: $app.selectedHoop) {
                     Text("None").tag(HoopProfile?.none)
                     ForEach(HoopProfile.commonHoops) { hoop in
-                        Text("\(hoop.name) (\(Int(hoop.widthMM))×\(Int(hoop.heightMM))mm)").tag(HoopProfile?.some(hoop))
+                        Text("\(hoop.name) (\(cmString(hoop.widthMM))×\(cmString(hoop.heightMM))cm)").tag(HoopProfile?.some(hoop))
                     }
                 }
             }
@@ -236,7 +353,7 @@ private struct InspectorView: View {
                     LabeledContent("Colors", value: "\(app.document?.objects.count ?? 0)")
                     LabeledContent("Color changes", value: "\(plan.colorChangeCount)")
                     LabeledContent("Trims", value: "\(plan.trimCount)")
-                    LabeledContent("Max stitch", value: String(format: "%.2f mm", plan.maxStitchLength()))
+                    LabeledContent("Max stitch", value: String(format: "%.3f cm", plan.maxStitchLength() / 10))
                 }
             }
 
@@ -293,6 +410,27 @@ private struct InspectorView: View {
         case .minimalColors: return "Minimal Colors"
         }
     }
+
+    private func cmString(_ mm: Double) -> String {
+        let cm = mm / 10
+        return cm.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", cm) : String(format: "%.1f", cm)
+    }
+
+    /// Same range/step as the per-object density slider in
+    /// `ObjectInspectorSection` (0.2-1.0mm, shown as 0.02-0.10cm) -- this
+    /// one just writes to the project-wide value instead of one object's.
+    @ViewBuilder
+    private func globalDensitySlider(_ label: String, value: Binding<Double>) -> some View {
+        let cmValue = cmBinding(value)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("\(label) (cm)")
+                Spacer()
+                Text(String(format: "%.3f", cmValue.wrappedValue)).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Slider(value: cmValue, in: 0.02...0.10, step: 0.005)
+        }
+    }
 }
 
 /// Manual per-object overrides before the embroidery file is created: pick
@@ -301,9 +439,11 @@ private struct InspectorView: View {
 /// `StitchGenerationParameters` supports many more knobs than shown here
 /// (underlay inset, fill row stagger, filter thresholds); this exposes the
 /// ones a digitizer actually reaches for regularly, not every field.
-/// Edits update the master document immediately but don't re-flatten the
-/// stitch plan on every keystroke — click Auto Digitize to see the result,
-/// the same "edit, then explicitly regenerate" flow resizing already uses.
+/// Edits update the master document immediately; `AppState.
+/// scheduleLiveRegenerate()` (triggered inside `updateSelectedObject`)
+/// debounces an automatic re-digitize a moment later, so the density
+/// sliders below show their effect in the canvas without a separate
+/// manual "regenerate" step.
 private struct ObjectInspectorSection: View {
     @EnvironmentObject var app: AppState
 
@@ -323,7 +463,7 @@ private struct ObjectInspectorSection: View {
                 }
 
                 Picker("Thread Color", selection: binding(object, \.threadColor)) {
-                    ForEach(ThreadLibrary.genericPalette) { color in
+                    ForEach(app.effectivePalette) { color in
                         Label {
                             Text(color.name)
                         } icon: {
@@ -343,14 +483,14 @@ private struct ObjectInspectorSection: View {
 
                 switch object.stitchType {
                 case .runningStitch, .tripleRun:
-                    TextField("Stitch Length (mm)", value: binding(object, \.parameters.stitchLengthMM), format: .number)
+                    TextField("Stitch Length (cm)", value: cmBinding(binding(object, \.parameters.stitchLengthMM)), format: .number)
                 case .satin:
-                    TextField("Density (mm)", value: binding(object, \.parameters.satinDensityMM), format: .number)
-                    TextField("Max Width (mm)", value: binding(object, \.parameters.maxSatinWidthMM), format: .number)
-                    TextField("Min Width (mm)", value: binding(object, \.parameters.minSatinWidthMM), format: .number)
+                    densitySlider("Density", keyPath: \.parameters.satinDensityMM, object: object)
+                    TextField("Max Width (cm)", value: cmBinding(binding(object, \.parameters.maxSatinWidthMM)), format: .number)
+                    TextField("Min Width (cm)", value: cmBinding(binding(object, \.parameters.minSatinWidthMM)), format: .number)
                 case .tatamiFill:
-                    TextField("Row Spacing (mm)", value: binding(object, \.parameters.fillSpacingMM), format: .number)
-                    optionalDoubleField(object, label: "Fill Angle (°)", keyPath: \.parameters.fillAngleDegrees, defaultManualValue: 0)
+                    densitySlider("Row Spacing", keyPath: \.parameters.fillSpacingMM, object: object)
+                    optionalDoubleField(object, label: "Fill Angle (°)", keyPath: \.parameters.fillAngleDegrees, defaultManualValue: 0, isAngle: true)
                 }
 
                 if object.stitchType == .satin || object.stitchType == .tatamiFill {
@@ -360,11 +500,11 @@ private struct ObjectInspectorSection: View {
                             Text(label(for: type)).tag(UnderlayType?.some(type))
                         }
                     }
-                    optionalDoubleField(object, label: "Pull Compensation (mm)", keyPath: \.parameters.pullCompensationMM, defaultManualValue: 0.2)
-                    optionalDoubleField(object, label: "Push Compensation (mm)", keyPath: \.parameters.pushCompensationMM, defaultManualValue: 0.2)
+                    optionalDoubleField(object, label: "Pull Compensation (cm)", keyPath: \.parameters.pullCompensationMM, defaultManualValue: 0.2)
+                    optionalDoubleField(object, label: "Push Compensation (cm)", keyPath: \.parameters.pushCompensationMM, defaultManualValue: 0.2)
                 }
 
-                Text("Applies the next time you click Auto Digitize.")
+                Text("Updates the preview automatically a moment after each change.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -382,18 +522,46 @@ private struct ObjectInspectorSection: View {
         )
     }
 
+    /// A density slider (satin crossing spacing or tatami row spacing) that
+    /// shows its own current value and drags smoothly -- denser (smaller
+    /// spacing) to the left, sparser to the right, `0.02...0.10cm` covering
+    /// the practical range real embroidery software exposes for either
+    /// stitch type (0.2-1.0mm). Bound through the same `binding(_:_:)`
+    /// helper every other field here uses, so dragging it already goes
+    /// through `AppState.updateSelectedObject` -> `scheduleLiveRegenerate()`
+    /// and the canvas updates a moment after the drag settles, with no
+    /// separate wiring needed for "live" here.
     @ViewBuilder
-    private func optionalDoubleField(_ object: EmbroideryObject, label: String, keyPath: WritableKeyPath<EmbroideryObject, Double?>, defaultManualValue: Double) -> some View {
+    private func densitySlider(_ label: String, keyPath: WritableKeyPath<EmbroideryObject, Double>, object: EmbroideryObject) -> some View {
+        let value = cmBinding(binding(object, keyPath))
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("\(label) (cm)")
+                Spacer()
+                Text(String(format: "%.3f", value.wrappedValue)).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Slider(value: value, in: 0.02...0.10, step: 0.005)
+        }
+    }
+
+    /// `isAngle` skips the mm<->cm conversion for the one caller (Fill
+    /// Angle) that isn't a length at all -- everything else this is used
+    /// for (pull/push compensation) is.
+    @ViewBuilder
+    private func optionalDoubleField(_ object: EmbroideryObject, label: String, keyPath: WritableKeyPath<EmbroideryObject, Double?>, defaultManualValue: Double, isAngle: Bool = false) -> some View {
         let isAutomatic = Binding<Bool>(
             get: { (app.selectedObject?[keyPath: keyPath] ?? object[keyPath: keyPath]) == nil },
             set: { auto in app.updateSelectedObject { $0[keyPath: keyPath] = auto ? nil : defaultManualValue } }
         )
         Toggle("\(label): Automatic", isOn: isAutomatic)
         if !isAutomatic.wrappedValue {
-            TextField(label, value: Binding(
+            let mmBinding = Binding<Double?>(
                 get: { app.selectedObject?[keyPath: keyPath] ?? object[keyPath: keyPath] ?? defaultManualValue },
                 set: { newValue in app.updateSelectedObject { $0[keyPath: keyPath] = newValue } }
-            ), format: .number)
+            )
+            TextField(label, value: isAngle ? Binding(get: { mmBinding.wrappedValue ?? defaultManualValue }, set: { mmBinding.wrappedValue = $0 })
+                                             : cmBinding(mmBinding, defaultManualValueMM: defaultManualValue),
+                      format: .number)
         }
     }
 
@@ -413,5 +581,173 @@ private struct ObjectInspectorSection: View {
         case .edgeRun: return "Edge Run"
         case .zigzag: return "Zigzag"
         }
+    }
+}
+
+/// Reassigns several auto-detected objects to one thread color in a single
+/// action -- a raster import especially can split what's visually one
+/// color into many separate near-duplicate objects (anti-aliasing,
+/// gradient banding), and fixing that one object at a time in the Object
+/// Inspector doesn't scale. Groups the document's current objects by their
+/// exact RGB value (not `ThreadColor.id`, which is unique per object even
+/// for visually identical colors), lets the user check off which of those
+/// groups to fold together, and picks the surviving color from the same
+/// effective palette the per-object picker uses.
+private struct MergeColorsSheet: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    private struct ColorGroup: Identifiable {
+        var id: StitchPilotCore.RGBColor { rgb }
+        var rgb: StitchPilotCore.RGBColor
+        var name: String
+        var count: Int
+    }
+
+    @State private var selectedRGBs: Set<StitchPilotCore.RGBColor> = []
+    @State private var targetColor: ThreadColor?
+
+    private var groups: [ColorGroup] {
+        guard let objects = app.document?.objects else { return [] }
+        var counts: [StitchPilotCore.RGBColor: (name: String, count: Int)] = [:]
+        for object in objects {
+            counts[object.threadColor.rgb, default: (object.threadColor.name, 0)].count += 1
+        }
+        return counts.map { ColorGroup(rgb: $0.key, name: $0.value.name, count: $0.value.count) }
+            .sorted { $0.count > $1.count }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Merge Colors").font(.title3).fontWeight(.semibold).padding()
+            Divider()
+
+            Text("Select the colors to combine, then choose the color they should all become.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+            List(groups) { group in
+                Toggle(isOn: Binding(
+                    get: { selectedRGBs.contains(group.rgb) },
+                    set: { isOn in
+                        if isOn { selectedRGBs.insert(group.rgb) } else { selectedRGBs.remove(group.rgb) }
+                    }
+                )) {
+                    HStack {
+                        swatch(group.rgb)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(group.name)
+                            Text("\(group.count) object\(group.count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 220)
+
+            Divider()
+            HStack {
+                Text("Merge into:")
+                Picker("", selection: $targetColor) {
+                    Text("Choose a color").tag(ThreadColor?.none)
+                    ForEach(app.effectivePalette) { color in
+                        Label { Text(color.name) } icon: { swatch(color.rgb) }.tag(ThreadColor?.some(color))
+                    }
+                }
+                .labelsHidden()
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Merge") {
+                    guard let targetColor else { return }
+                    app.mergeColors(from: selectedRGBs, into: targetColor)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedRGBs.count < 2 || targetColor == nil)
+            }
+            .padding()
+        }
+        .frame(width: 420, height: 420)
+    }
+
+    private func swatch(_ rgb: StitchPilotCore.RGBColor) -> some View {
+        Circle()
+            .fill(Color(red: Double(rgb.r) / 255, green: Double(rgb.g) / 255, blue: Double(rgb.b) / 255))
+            .frame(width: 12, height: 12)
+    }
+}
+
+/// Lets the user build their own thread inventory to match artwork colors
+/// against (spec §9's "My Thread Inventory") instead of always matching
+/// the built-in generic palette -- useful once you actually know which
+/// spools you own and want detected colors snapped to *those*, not an
+/// arbitrary nearby generic swatch you don't have.
+private struct ThreadLibrarySheet: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var newName: String = ""
+    @State private var newColor: Color = .blue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("My Thread Library").font(.title3).fontWeight(.semibold).padding()
+            Divider()
+
+            Text(app.customThreadLibrary.isEmpty
+                 ? "No colors defined yet — matching uses the built-in generic palette."
+                 : "Detected colors are matched only against these while your library isn't empty.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+            List {
+                ForEach(app.customThreadLibrary) { color in
+                    HStack {
+                        Circle()
+                            .fill(Color(red: Double(color.rgb.r) / 255, green: Double(color.rgb.g) / 255, blue: Double(color.rgb.b) / 255))
+                            .frame(width: 12, height: 12)
+                        Text(color.name)
+                    }
+                }
+                .onDelete { indexSet in
+                    for index in indexSet { app.removeCustomThreadColor(id: app.customThreadLibrary[index].id) }
+                }
+            }
+            .frame(minHeight: 200)
+
+            Divider()
+            HStack {
+                ColorPicker("", selection: $newColor, supportsOpacity: false).labelsHidden()
+                TextField("Color name", text: $newName)
+                Button("Add") {
+                    app.addCustomThreadColor(name: newName.isEmpty ? "Custom Color" : newName, rgb: rgbColor(from: newColor))
+                    newName = ""
+                }
+            }
+            .padding()
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+        .frame(width: 380, height: 420)
+    }
+
+    /// `NSColor.getRed(_:green:blue:alpha:)` can throw for colors outside
+    /// the RGB-convertible color spaces (some system picker selections use
+    /// catalog/pattern colors) -- converting to a known RGB space first
+    /// avoids that rather than crashing on an unlucky pick from the swatch grid.
+    private func rgbColor(from color: Color) -> StitchPilotCore.RGBColor {
+        let nsColor = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        nsColor.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return StitchPilotCore.RGBColor(r: UInt8(max(0, min(255, r * 255))), g: UInt8(max(0, min(255, g * 255))), b: UInt8(max(0, min(255, b * 255))))
     }
 }

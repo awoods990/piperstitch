@@ -4,6 +4,103 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: project-wide density, click-to-select on the canvas, standard garment sizes, and a toolbar refresh
+
+- **Project-wide density.** A new "Density (Entire Project)" section sets
+  satin density and fill row spacing across every matching object in one
+  move -- a fast pass for the whole design -- while the existing per-object
+  sliders in the Object Inspector still fine-tune one shape at a time.
+  It's a "set all to this" control, not a live readout of the document's
+  actual (possibly varied) per-object values, so it won't fight an
+  individual override made afterward.
+- **Click-to-select on the canvas.** Clicking directly on a shape in the
+  preview selects it (even-odd hit-testing across each object's subpaths,
+  so clicking inside a letter's counter correctly misses it), the same
+  selection the object list's own rows already produced. Clicking empty
+  canvas deselects, matching how other design tools handle it.
+- **Standard garment sizes.** A "Standard Size" picker in Finished Size
+  offers common placement sizes (cap front, left chest, polo left chest,
+  youth left chest, sleeve, full back) as a starting point alongside fully
+  custom width/height -- picking one fills in both fields exactly as
+  specified (bypassing "lock aspect ratio," since a preset already
+  encodes a deliberate pair, not one dimension to derive the other from),
+  and the fields stay editable afterward for the specific garment at hand.
+- **Toolbar refresh.** "Create Embroidery File" is renamed "Click to
+  Create," and "Redo from Original" now sits directly beside it (it's the
+  natural undo-adjacent counterpart to the primary action, not a filing
+  action like New/Open/Save/Undo below it).
+
+## Added: centimeters throughout, a size grid and zoom on the preview, undo, and redo from original artwork
+
+- **Centimeters everywhere in the UI.** Finished Size, hoop dimensions, max
+  stitch length, and every per-object parameter (stitch length, satin
+  width, pull/push compensation, density/row-spacing sliders) now display
+  and accept centimeters instead of millimeters. The underlying model
+  (`StitchPilotCore`, DST/PES export, every generator and test) is
+  untouched and still works in millimeters -- that's the unit the engine
+  and the file formats actually need, and converting only at the UI
+  boundary means the tested core stays exactly as it was.
+- **Size grid on the preview.** A new grid toggle (bottom-right of the
+  canvas) overlays the design's own bounds with centimeter-labeled
+  reference lines. The line spacing adapts to the current zoom level so
+  it stays legible whether you're looking at the whole design or one
+  zoomed-in corner of it.
+- **Zoom and pan on the preview.** Pinch-to-zoom (trackpad) or the new
+  +/-/reset buttons zoom into any part of the design; once zoomed in,
+  click-and-drag pans around. Zoom resets automatically when a different
+  design is loaded.
+- **Undo.** Steps back through document edits (per-object parameter
+  changes, deletions, color merges, resizes, imports, opening a project,
+  starting a new project, redoing from original artwork). A slider drag
+  or a burst of typing coalesces into a single undo step rather than one
+  step per intermediate value, the same way live-regenerate already
+  debounces so a drag doesn't re-digitize on every pixel of movement.
+- **Redo from Original.** A new toolbar action that discards every edit
+  made since the file was imported (per-object overrides, color merges,
+  deletions, thread-library rematches) and rebuilds fresh from the
+  *originally imported* artwork at the current size -- deliberately
+  tracing back to the real source file rather than re-digitizing whatever
+  the document currently looks like, so it's a genuine "start over," not
+  a no-op that just reproduces the same edits. Undoable like everything
+  else, so an accidental Redo isn't a dead end.
+
+## Added: live density sliders, color merging, custom thread library, new project, and native sharing
+
+The toolbar had two buttons that did the same thing ("Create Embroidery
+File" and an "Auto Digitize" wand), no way to start over without quitting
+and relaunching, no way to fold several detected colors into one thread
+change, no way to teach the app which specific thread colors are actually
+on hand, and the Export button used the send/share arrow glyph (▲) rather
+than the download glyph (▼) despite writing a file to disk, not sending
+one anywhere.
+
+### What changed
+
+- **Live density sliders.** The satin/tatami density fields in the object
+  inspector are now `Slider`s instead of number fields, and every object
+  edit (density, deletion, thread match toggle, physical size change) now
+  triggers a debounced (150ms) regeneration of the stitch plan, so the
+  preview updates continuously while dragging instead of waiting for a
+  manual re-digitize.
+- **Removed "Auto Digitize."** Since every edit now regenerates the plan
+  automatically, its only remaining purpose (refreshing the preview after
+  a parameter tweak) no longer exists — it was doing the same job as
+  "Create Embroidery File" from the user's perspective, so it's gone.
+- **Merge Colors.** Groups the current document's objects by exact RGB
+  value, lets the user check off which groups to fold together, and
+  reassigns them all to one chosen thread color in a single pass.
+- **My Thread Library.** A user-defined subset of thread colors (persisted
+  in `UserDefaults`) that color detection matches against instead of the
+  full generic palette, once it's non-empty — the "My Thread Inventory"
+  concept `ThreadLibrary.nearestMatch(to:in:)` already supported but
+  nothing in the UI exposed yet.
+- **New Project.** Resets all document state; asks for confirmation first
+  only when there's an open document to lose.
+- **Icon correction.** Export now uses the download glyph (`square.and.
+  arrow.down`); a new Share menu uses the send glyph (`square.and.arrow.
+  up`) and hands the current DST/PES file to `NSSharingServicePicker`
+  (AirDrop, Mail, Messages, etc.) instead of only ever writing to disk.
+
 ## Fixed: part of a "B" (or any two-hole letterform) went completely unstitched
 
 The user selected a "B" object in the app and noticed the technical preview
