@@ -4,6 +4,24 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: fine satin detail looked jagged/illegible in the canvas preview even though the actual digitized data was correct
+
+After the Finished Size and stitch-reclassification fixes below, a design
+with fine satin text still looked like an illegible scribble in the app's
+own "Realistic" canvas preview — but exporting the *exact same* stitch
+plan through `StitchRenderer` directly (bypassing the canvas) produced
+clean, legible output, and re-running the same document through two
+different resize paths produced identical stitch data. That ruled out the
+digitize pipeline itself: the bug was in how the canvas *displays* an
+already-correct render. `StitchCanvasView` draws `StitchRenderer`'s output
+bitmap via `GraphicsContext.draw(_:in:)`, which -- unlike a plain SwiftUI
+`Image` view -- isn't guaranteed smooth interpolation by default; without
+it, fine repeating detail (the renderer's thin per-stitch highlight lines,
+alternating shading) can resample as visible aliasing at most on-screen
+sizes, which persists at any zoom level short of exact 1:1 pixel mapping —
+matching the report that zooming in didn't help. Fixed by explicitly
+requesting `.interpolation(.high)` on the image before drawing it.
+
 ## Added: initial Finished Size is now recommended from the artwork's own detail, not a fixed default
 
 Every import previously started at a fixed 100mm width regardless of what

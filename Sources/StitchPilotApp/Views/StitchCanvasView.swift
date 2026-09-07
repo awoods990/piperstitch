@@ -126,7 +126,7 @@ struct StitchCanvasView: View {
                 }
 
                 if mode == .realistic, let realisticImage {
-                    context.draw(Image(decorative: realisticImage, scale: 1, orientation: .up), in: boundsRect)
+                    drawRealisticLayer(realisticImage, into: &context, rect: boundsRect)
                     drawOverlays()
                     return
                 }
@@ -384,6 +384,28 @@ struct StitchCanvasView: View {
     private var planSignature: Int? {
         guard let stitchPlan else { return nil }
         return stitchPlan.commands.hashValue
+    }
+
+    /// `StitchRenderer` deliberately renders fine detail -- thin per-stitch
+    /// highlight lines, alternating shading every other stitch -- at a
+    /// fixed source resolution (12px/mm) independent of the canvas's
+    /// current on-screen size or zoom level. An `Image` handed to
+    /// `GraphicsContext.draw` without an explicit `.interpolation(_:)`
+    /// modifier is not guaranteed the same smooth default a plain SwiftUI
+    /// `Image` view gets, so that fine detail can come out visibly
+    /// aliased/jagged on screen even though the source bitmap itself (and
+    /// any exported render of the same plan) is clean -- found directly
+    /// against a real design whose fine satin text read as an illegible
+    /// scribble on this canvas despite rendering correctly everywhere
+    /// else. Requesting `.high` interpolation explicitly fixes the
+    /// on-screen preview to match. Pulled into its own function (rather
+    /// than inlined in the `Canvas` closure) because that closure is
+    /// already near Swift's type-checker complexity limit -- adding even
+    /// one more statement directly inside it fails to compile ("unable to
+    /// type-check this expression in reasonable time").
+    private func drawRealisticLayer(_ image: CGImage, into context: inout GraphicsContext, rect: CGRect) {
+        let highQualityImage = Image(decorative: image, scale: 1, orientation: .up).interpolation(.high)
+        context.draw(highQualityImage, in: rect)
     }
 
     private func regenerateRealisticImageIfNeeded() {
