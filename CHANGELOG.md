@@ -4,6 +4,51 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: Melco EXP export
+
+A new machine format, alongside DST and PES, in the Export and Share
+menus. Unlike the fixes below, this writes a file a physical machine
+reads directly, so the byte layout was verified against pyembroidery's
+actual `ExpWriter.py`/`ExpReader.py` source (MIT license) rather than
+from memory, and cross-validated by round-tripping a real `.exp` file
+through pyembroidery's own independent reader — not just checking this
+project's own writer and reader agree with each other. See `FORMATS.md`
+for the full layout writeup.
+
+## Fixed: a circular badge (Red Sox logo) lost its background disc, then looked jagged once that was fixed
+
+Two compounding issues found against a real circular team-logo import, in
+the order they surfaced:
+
+**1. The background disc was excluded as if it were a background fill.**
+The prior fix for a text logo's background *card* (see below) excluded
+the single dominant opaque color whenever it touched the canvas border at
+all — but a circular badge's own background disc touches the border too,
+at its tangent points, and is the main content, not a fill to discard.
+Measured directly against both cases: the Red Sox navy disc covers ~15%
+of any single edge; the earlier text logo's actual background card covers
+40%+ of the edge it's on. `excludeDominantOpaqueBackground` now requires
+that broader coverage, not just any contact, before excluding a color —
+narrow tangent-point contact no longer qualifies.
+
+**2. Once kept, the disc's outline looked jagged when stitched.** Any
+circle traced pixel-by-pixel from a raster image at typical resolution
+comes out as a staircase; Douglas-Peucker simplification thins the point
+count but doesn't smooth the shape, so the result still visibly wobbles.
+`ImageImporter.regularizeIfCircular` now checks, for every traced shape,
+whether its boundary points are all nearly the same distance from the
+shape's own center — the geometric signature of a real circle, not just
+a square-ish bounding box (a diamond has the same bounding box as an
+inscribed circle but very different corner-to-center distances, and is
+correctly left alone). A shape that passes gets its jagged boundary
+replaced with a smooth 72-sided regular polygon at the same center and
+radius.
+
+Both verified against the actual Red Sox logo (rendered output confirmed
+visually) plus new unit tests for each (a circular badge whose background
+touches the border only at a tangent point is kept; a synthetic circle
+gets smoothed; a synthetic diamond with the same bounding box doesn't).
+
 ## Changed: stitch-type thresholds aligned to standard digitizing guidance
 
 `StitchTypeClassifier` already bucketed shapes by width (spec §11), but two

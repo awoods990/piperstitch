@@ -11,8 +11,8 @@ what's implemented, how each was validated, and known losses/limitations.
 |---|---|---|---|---|
 | DST | Tajima / commercial | ✅ | ✅ | Implemented, Phase 1 |
 | PES | Brother/Baby Lock | ✅ | ✅ | Implemented, Phase 3 (moved up from Phase 6) |
-| JEF | Janome | — | — | Planned, Phase 6 |
-| EXP | Melco/Bernina-compatible | — | — | Planned, Phase 6 |
+| JEF | Janome | — | — | Planned, Phase 6 -- meaningfully more work than EXP (a multi-field binary header, hoop-size bucketing, and its own thread-color table are all needed) |
+| EXP | Melco/Bernina-compatible | ✅ | ✅ | Implemented, Phase 6 (moved up) |
 | VP3 | Husqvarna Viking/Pfaff | — | — | Planned, Phase 6 |
 | XXX | Singer/Compucon | — | — | Planned, Phase 6 |
 | PEC | (Brother, embedded in PES) | ✅ | ✅ | Implemented as part of PES (see below); not offered as a standalone .pec export yet |
@@ -128,6 +128,42 @@ for exactly this reason (see `TESTING.md`).
 64 fixed palette entries by Delta-E (reusing the same `RGBColor.deltaE`
 infrastructure as `ThreadLibrary`), since PES/PEC references colors by
 index into that table rather than storing arbitrary RGB directly.
+
+## EXP (Melco, Bernina-compatible)
+
+**Implemented in:** `EXPFormat.swift`. Both writer and reader.
+
+**Layout:** no file header at all — EXP is a flat stream of records in
+the same 0.1mm units DST uses. A stitch is 2 bytes (`[dx & 0xFF, dy &
+0xFF]`, each a signed byte, so a single record's delta is limited to
+±12.7mm — split into multiple jump records the same way DST's writer
+splits an over-limit delta into multiple max-sized jumps). A jump is the
+same 2-byte delta prefixed with `0x80 0x04`. Trim, color change, and stop
+are all fixed 4-byte sequences that carry no real coordinate (`0x80 0x80
+0x07 0x00`, `0x80 0x01 0x00 0x00`, and — since EXP has no separate stop
+code — the same bytes as color change). There's no end-of-file marker; a
+reader just reads until EOF.
+
+**Correctness approach:** the exact record layout and escape-byte values
+were read directly from `ExpWriter.py` / `ExpReader.py` (pyembroidery, MIT
+license) rather than reconstructed from memory, the same approach
+DST/PES's byte layouts used. `StitchPilotCoreTests`' cross-validation test
+round-trips a real `.exp` file through pyembroidery's own independent
+reader when it's available locally, confirming stitch count and bounding
+box agree exactly — not just that this project's own writer and reader
+agree with each other.
+
+**Coordinate convention:** same as DST — StitchPilot's internal `Point2D`
+(Y-down) already matches EXP's on-disk Y-down convention, so no sign flip
+is needed converting between them (see `EXPFormat.swift`'s "Coordinate
+convention" note for how this was confirmed from the reference writer,
+which negates Y going the other way from its own Y-up internal model).
+
+**Known limitation:** EXP carries no design name, thread color, or hoop
+metadata anywhere in its layout — `write(_:designName:)` accepts a name
+for the same call signature every format writer shares, but silently
+discards it, matching the format's actual capabilities rather than
+inventing a place to put it.
 
 ## Adding a new format
 

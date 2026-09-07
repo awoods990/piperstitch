@@ -125,6 +125,93 @@ struct ImageImportTests {
         #expect(result.shapes.count == 1, "the opaque white card should be excluded as background, leaving only the navy square")
     }
 
+    /// A circular badge (a team/club logo, say) whose background disc is
+    /// the *main content*, not a background fill -- it just happens to
+    /// touch each canvas edge at its tangent point, the same border
+    /// contact a genuine background card has. Excluding it purely on
+    /// border contact would drop most of the design (a real regression
+    /// found against an actual circular logo, which came back missing its
+    /// entire background disc, only the inner emblem surviving). What
+    /// distinguishes it from `opaqueBackgroundFillWithinAPartiallyTransparentCanvasIsExcluded`
+    /// above is *how much* of an edge it covers: a tangent point is a
+    /// sliver of the edge, a real background card spans most of one.
+    @Test func circularBadgeBackgroundIsNotExcludedDespiteTouchingTheBorder() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 96
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        // A navy disc inscribed in the canvas (touches each edge only at
+        // its tangent point), with a small red emblem on top.
+        context.setFillColor(deviceColor(13.0 / 255, 43.0 / 255, 86.0 / 255, in: colorSpace))
+        context.fillEllipse(in: CGRect(x: 0, y: 0, width: size, height: size))
+        context.setFillColor(deviceColor(0.8, 0.1, 0.1, in: colorSpace))
+        context.fill(CGRect(x: 36, y: 36, width: 24, height: 24))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!))
+        let totalArea = result.shapes.reduce(0.0) { $0 + $1.boundingBox.width * $1.boundingBox.height }
+        #expect(totalArea > 2000, "the navy disc should still be present, not excluded as background -- got total shape area \(totalArea)")
+    }
+
+    /// A circular badge traced from a low-resolution raster inevitably
+    /// picks up a jagged pixel staircase; the navy disc's boundary should
+    /// come back smooth (every point almost exactly one radius from the
+    /// shape's own center), not still visibly wobbling the way a raw
+    /// pixel trace does -- a real report against an actual sports-team
+    /// logo, whose stitched-out circle looked jagged despite otherwise
+    /// importing correctly.
+    @Test func circularBadgeBoundaryIsSmoothedNotJagged() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 96
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(13.0 / 255, 43.0 / 255, 86.0 / 255, in: colorSpace))
+        context.fillEllipse(in: CGRect(x: 0, y: 0, width: size, height: size))
+        context.setFillColor(deviceColor(0.8, 0.1, 0.1, in: colorSpace))
+        context.fill(CGRect(x: 36, y: 36, width: 24, height: 24))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!))
+        let disc = try #require(result.shapes.max(by: { $0.boundingBox.width < $1.boundingBox.width }))
+        let points = disc.subPaths[0].points
+        let box = disc.boundingBox
+        let center = box.center
+        let radii = points.map { $0.distance(to: center) }
+        let meanRadius = radii.reduce(0, +) / Double(radii.count)
+        let maxDeviation = radii.map { abs($0 - meanRadius) }.max() ?? 0
+        #expect(maxDeviation / meanRadius < 0.03,
+                "every point on a regularized circle should sit almost exactly one radius from center, got a deviation of \(maxDeviation / meanRadius)")
+    }
+
+    /// A shape that merely has a square-ish bounding box (a diamond, say)
+    /// must not be mistaken for a circle just because width ≈ height --
+    /// its boundary points are *not* all equidistant from the center, so
+    /// the circularity check should leave it untouched.
+    @Test func squareBoundingBoxShapeIsNotMistakenForACircle() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 96
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(0, 0, 0.6, in: colorSpace))
+        // A diamond: same bounding box as a circle would have, but corner
+        // points sit ~40% farther from center than edge-midpoints do.
+        context.move(to: CGPoint(x: 48, y: 4))
+        context.addLine(to: CGPoint(x: 92, y: 48))
+        context.addLine(to: CGPoint(x: 48, y: 92))
+        context.addLine(to: CGPoint(x: 4, y: 48))
+        context.closePath()
+        context.fillPath()
+
+        // Compares the largest traced shape, not `shapes.count == 1`: a
+        // solid color anti-aliased against a fully transparent background
+        // (no second real color for `ColorQuantizer`'s cluster-merging to
+        // fold it into) can still produce a thin secondary rim shape --
+        // an orthogonal, pre-existing characteristic of raster import this
+        // test isn't about.
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!))
+        let diamond = try #require(result.shapes.max(by: { $0.boundingBox.width < $1.boundingBox.width }))
+        let points = diamond.subPaths[0].points
+        #expect(points.count < 72, "a diamond should keep its own simplified vertex count, not be replaced by a 72-point circle")
+    }
+
     /// Three separate, distinctly-colored squares on a white background:
     /// the multi-color segmentation path (spec §8) should recover all three
     /// regions with their correct colors, not merge them into one region

@@ -104,12 +104,46 @@ public enum ImageImporter {
                 guard let boundary = RasterTracing.traceBoundary(mask: clusterMask, width: width, height: height, start: component.topLeftMost) else { continue }
                 let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
                 guard simplified.count > 2 else { continue }
-                shapes.append(VectorShape(subPaths: [SubPath(points: simplified, closed: true)]))
+                shapes.append(VectorShape(subPaths: [SubPath(points: regularizeIfCircular(simplified), closed: true)]))
                 fillColors.append(cluster.rgb)
             }
         }
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
         return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height)
+    }
+
+    /// If a traced boundary is very close to a circle (common for round
+    /// badges, buttons, and sports-team logos), replaces the noisy
+    /// pixel-traced polygon with a smooth, mathematically regular polygon
+    /// at the same center and radius. A source image's circle inevitably
+    /// traces as a jagged pixel staircase at typical raster resolutions --
+    /// Douglas-Peucker simplification thins the point count but doesn't
+    /// smooth the wobble, so it's still visibly rough once stitched, in a
+    /// way a real circular badge never is. Detected by how consistent the
+    /// boundary's distance from its own centroid is: a real circle's
+    /// points are all almost exactly one radius out; an arbitrary shape's
+    /// (a letter, an irregular blob) vary far more, so this only fires for
+    /// genuinely round shapes, not by coincidentally having a square
+    /// bounding box.
+    private static func regularizeIfCircular(_ points: [Point2D]) -> [Point2D] {
+        guard points.count >= 8 else { return points }
+        let box = BoundingBox(points: points)
+        guard box.width > 0, box.height > 0 else { return points }
+        guard box.width / box.height > 0.9, box.width / box.height < 1.1 else { return points }
+
+        let center = box.center
+        let radii = points.map { $0.distance(to: center) }
+        let meanRadius = radii.reduce(0, +) / Double(radii.count)
+        guard meanRadius > 0 else { return points }
+        let variance = radii.reduce(0) { $0 + ($1 - meanRadius) * ($1 - meanRadius) } / Double(radii.count)
+        let relativeStdDev = variance.squareRoot() / meanRadius
+        guard relativeStdDev < 0.06 else { return points }
+
+        let sides = 72
+        return (0..<sides).map { i in
+            let angle = 2 * Double.pi * Double(i) / Double(sides)
+            return Point2D(center.x + meanRadius * cos(angle), center.y + meanRadius * sin(angle))
+        }
     }
 
     // MARK: - Pixel access
@@ -227,14 +261,23 @@ public enum ImageImporter {
 
     /// Finds the single most common exact RGB among currently-foreground
     /// (opaque) pixels; if it covers enough of the image to plausibly be a
-    /// fill rather than a stroke, *and* actually reaches the canvas edge
-    /// (a real background fill always does; a large solid interior shape
-    /// generally doesn't touch every side), excludes it -- and near
-    /// matches, to also catch its anti-aliased edge against the real
-    /// artwork -- from the mask. Requiring border contact, not just being
-    /// the most common color, matters because a design's own dominant
-    /// color (thick solid letter strokes, say) can otherwise be nearly as
-    /// common as a genuine background fill.
+    /// fill rather than a stroke, *and* spans a substantial share of at
+    /// least one full canvas edge, excludes it -- and near matches, to
+    /// also catch its anti-aliased edge against the real artwork -- from
+    /// the mask.
+    ///
+    /// Substantial edge *coverage*, not just border *contact*, matters: a
+    /// circular badge's background disc inscribed in a square canvas (a
+    /// team logo, say) touches each edge too, at its tangent point, but
+    /// only across a small fraction of that edge's length -- it's the
+    /// main content, not a background fill, and excluding it would drop
+    /// most of the design. A genuine background fill (an opaque card
+    /// behind text, its own real-world source of this rule) spans most or
+    /// all of at least one edge. Measured directly against both cases: a
+    /// circular logo's background disc covered ~15% of any single edge,
+    /// while a text logo's actual background card covered 41-46% of the
+    /// edge it appeared on -- the 25% threshold below sits comfortably
+    /// between the two with margin on both sides.
     ///
     /// A wider, connectivity-bounded flood fill was tried here to also
     /// catch a soft multi-pixel anti-aliasing ramp between background and
@@ -263,16 +306,23 @@ public enum ImageImporter {
             return abs(r - Double(bg.r)) + abs(g - Double(bg.g)) + abs(b - Double(bg.b)) <= colorDistanceThreshold
         }
 
-        var touchesBorder = false
-        for x in 0..<width where !touchesBorder {
+        var topCount = 0, bottomCount = 0, leftCount = 0, rightCount = 0
+        for x in 0..<width {
             let top = x, bottom = (height - 1) * width + x
-            if (mask[top] && matchesBackground(top)) || (mask[bottom] && matchesBackground(bottom)) { touchesBorder = true }
+            if mask[top] && matchesBackground(top) { topCount += 1 }
+            if mask[bottom] && matchesBackground(bottom) { bottomCount += 1 }
         }
-        for y in 0..<height where !touchesBorder {
+        for y in 0..<height {
             let left = y * width, right = y * width + (width - 1)
-            if (mask[left] && matchesBackground(left)) || (mask[right] && matchesBackground(right)) { touchesBorder = true }
+            if mask[left] && matchesBackground(left) { leftCount += 1 }
+            if mask[right] && matchesBackground(right) { rightCount += 1 }
         }
-        guard touchesBorder else { return }
+        let edgeCoverageThreshold = 0.25
+        let coversSubstantialEdge = Double(topCount) / Double(width) > edgeCoverageThreshold
+            || Double(bottomCount) / Double(width) > edgeCoverageThreshold
+            || Double(leftCount) / Double(height) > edgeCoverageThreshold
+            || Double(rightCount) / Double(height) > edgeCoverageThreshold
+        guard coversSubstantialEdge else { return }
 
         for i in 0..<(width * height) where mask[i] && matchesBackground(i) {
             mask[i] = false

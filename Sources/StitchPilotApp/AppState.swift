@@ -655,14 +655,19 @@ final class AppState: ObservableObject {
         guard let plan = stitchPlan, let document else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = document.name + ".dst"
-        panel.allowedContentTypes = [UTType(filenameExtension: "dst") ?? .data, UTType(filenameExtension: "pes") ?? .data]
+        panel.allowedContentTypes = [UTType(filenameExtension: "dst") ?? .data, UTType(filenameExtension: "pes") ?? .data,
+                                      UTType(filenameExtension: "exp") ?? .data]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let data: Data
-            if url.pathExtension.lowercased() == "pes" {
+            switch url.pathExtension.lowercased() {
+            case "pes":
                 data = try PESFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
                 _ = try PESFormat.read(data) // self-validate before ever handing the file to the user (spec §59)
-            } else {
+            case "exp":
+                data = try EXPFormat.write(plan, designName: document.name)
+                _ = try EXPFormat.read(data)
+            default:
                 data = try DSTFormat.write(plan, designName: document.name)
                 _ = try DSTFormat.read(data)
             }
@@ -703,10 +708,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    func exportEXP() {
+        guard let plan = stitchPlan, let document else {
+            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            return
+        }
+        do {
+            let data = try EXPFormat.write(plan, designName: document.name)
+            // Self-validate before ever handing the file to the user (spec §59).
+            _ = try EXPFormat.read(data)
+            saveExportedFile(data, suggestedName: document.name + ".exp", extension: "exp")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
     // MARK: - Sharing (spec: let the user send the file, not just save it
     // locally -- AirDrop, Mail, Messages, etc. via the system share sheet).
 
-    enum ShareFormat { case dst, pes }
+    enum ShareFormat { case dst, pes, exp }
 
     /// Presents Apple's native share sheet for the current design's
     /// embroidery file. The share sheet needs a real file on disk (not
@@ -731,6 +751,10 @@ final class AppState: ObservableObject {
                 data = try PESFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
                 _ = try PESFormat.read(data)
                 ext = "pes"
+            case .exp:
+                data = try EXPFormat.write(plan, designName: document.name)
+                _ = try EXPFormat.read(data)
+                ext = "exp"
             }
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(document.name)
