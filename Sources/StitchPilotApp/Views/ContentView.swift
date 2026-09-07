@@ -200,6 +200,7 @@ struct ContentView: View {
                     Button("Tajima (.dst)") { app.exportDST() }
                     Button("Brother/Baby Lock (.pes)") { app.exportPES() }
                     Button("Melco (.exp)") { app.exportEXP() }
+                    Button("Janome (.jef)") { app.exportJEF() }
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.down")
                 }
@@ -208,6 +209,7 @@ struct ContentView: View {
                     Button("Tajima (.dst)") { app.shareCurrentFile(format: .dst) }
                     Button("Brother/Baby Lock (.pes)") { app.shareCurrentFile(format: .pes) }
                     Button("Melco (.exp)") { app.shareCurrentFile(format: .exp) }
+                    Button("Janome (.jef)") { app.shareCurrentFile(format: .jef) }
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }

@@ -29,6 +29,8 @@ struct StitchPilotApp: App {
                     .disabled(appState.stitchPlan == nil)
                 Button("Export EXP...") { appState.exportEXP() }
                     .disabled(appState.stitchPlan == nil)
+                Button("Export JEF...") { appState.exportJEF() }
+                    .disabled(appState.stitchPlan == nil)
             }
         }
     }

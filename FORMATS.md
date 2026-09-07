@@ -11,7 +11,7 @@ what's implemented, how each was validated, and known losses/limitations.
 |---|---|---|---|---|
 | DST | Tajima / commercial | ✅ | ✅ | Implemented, Phase 1 |
 | PES | Brother/Baby Lock | ✅ | ✅ | Implemented, Phase 3 (moved up from Phase 6) |
-| JEF | Janome | — | — | Planned, Phase 6 -- meaningfully more work than EXP (a multi-field binary header, hoop-size bucketing, and its own thread-color table are all needed) |
+| JEF | Janome | ✅ | ✅ | Implemented, Phase 6 (moved up) |
 | EXP | Melco/Bernina-compatible | ✅ | ✅ | Implemented, Phase 6 (moved up) |
 | VP3 | Husqvarna Viking/Pfaff | — | — | Planned, Phase 6 |
 | XXX | Singer/Compucon | — | — | Planned, Phase 6 |
@@ -164,6 +164,53 @@ metadata anywhere in its layout — `write(_:designName:)` accepts a name
 for the same call signature every format writer shares, but silently
 discards it, matching the format's actual capabilities rather than
 inventing a place to put it.
+
+## JEF (Janome)
+
+**Implemented in:** `JEFFormat.swift` (writer + reader) and
+`JanomeThreadPalette.swift` (the format's fixed 78-entry thread-color
+table).
+
+**Layout:** a 116-byte header (a fixed offset/constant pair, an unpadded
+14-character date string, a color count, a stitch-point count, a hoop-size
+code, half-width/half-height in 0.1mm units repeated for two hoop-fit
+checks, then four 16-byte blocks recording the design's distance from each
+hoop edge), followed by a palette section (one little-endian `Int32` Janome
+thread-table index per color, each immediately followed by a single `0x0D`
+byte), followed by the stitch stream in 0.1mm units. A plain stitch is 2
+signed bytes (`dx`, `dy`); jump, color-change, and end are all `0x80`-led
+escape records (`0x80 0x02 dx dy` for jump, `0x80 0x01 dx dy` for
+color-change, `0x80 0x10` with no delta for end). JEF has no dedicated trim
+byte — a trim is three consecutive zero-delta jump records
+(`0x80 0x02 0x00 0x00`) in a row, a convention this writer/reader mirrors
+rather than invents (see "Known limitation" below).
+
+**Correctness approach:** the header layout, escape-byte values, and
+palette-index convention were read directly from pyembroidery's
+`JefWriter.py` / `JefReader.py` / `EmbThreadJef.py` (MIT license), the same
+approach used for DST/PES/EXP. `JEFFormatTests.crossValidationAgainstPyembroidery`
+round-trips a real `.jef` file through pyembroidery's own independent
+reader when it's available locally, confirming stitch count and bounding
+box agree exactly.
+
+**Known limitation (and the bug it caused during development):** because a
+trim is three consecutive zero-delta jump records, a *genuine* zero-distance
+jump (physically a no-op — the needle doesn't move) is byte-identical to
+one-third of that same trim marker. The very first `.jump` in a plan that
+starts at the origin is exactly this case. The writer now skips emitting any
+record at all for a zero-distance jump rather than encoding it, which is
+both correct (nothing needs to be communicated to the machine) and avoids
+the reader misinterpreting a design's opening jump as a spurious trim — a
+bug that was caught by `JEFFormatTests.trimRoundTripsAsOneCommand` before
+this fix (see `CHANGELOG.md`).
+
+**Known limitation:** thread colors are matched to the nearest of Janome's
+78 fixed palette entries by Delta-E, the same approach as PES/PEC's Brother
+table. When two distinct requested colors would both map to the same
+nearest index, `buildPalette` excludes that index from the second color's
+search so it falls to its own second-nearest match instead — otherwise two
+colors the design actually distinguishes would trigger the same "insert
+thread #NN" prompt on the machine, silently losing the distinction.
 
 ## Adding a new format
 

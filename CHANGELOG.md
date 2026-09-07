@@ -4,6 +4,41 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: raster-imported shapes with holes rendered completely solid
+
+A donut, or any letterform with a counter (O, P, R, A, D, B, Q), imported
+from a PNG/JPEG lost its hole entirely — `ImageImporter` traced only each
+cluster's outer boundary, so the enclosed background never became a second,
+even-odd subpath the way SVG import (and the engine's own multi-subpath
+model) already expects. This is the raster-import counterpart to an
+earlier, already-fixed SVG bug ("small lettering with counters... came out
+illegible") and was found by proactively testing a synthetic donut PNG
+through `DigitizeCLI`, not from a user report. Fixed by a new
+`findHoleBoundaries`: flood-fill every background pixel reachable from the
+image border, then any background pixel the flood-fill never reaches is
+part of an enclosed hole; those hole regions are traced the same way outer
+boundaries are and matched to their enclosing shape by point-in-polygon,
+then appended as an additional `SubPath`. See
+`ImageImportTests.ringShapeImportsWithItsHoleAsASecondSubpath`.
+
+## Added: Janome JEF export/import
+
+A fourth machine format, alongside DST/PES/EXP, in the Export and Share
+menus, plus its own 78-entry thread-color table
+(`JanomeThreadPalette.swift`). Same verification bar as the other three:
+byte layout read from pyembroidery's `JefWriter.py`/`JefReader.py`/
+`EmbThreadJef.py` (MIT license), cross-validated against pyembroidery's own
+independent reader, not just against this project's own round trip. See
+`FORMATS.md` for the full layout writeup.
+
+**Bug found and fixed during development:** JEF encodes a trim as three
+consecutive zero-delta jump records, which is byte-identical to one-third
+of that pattern — a genuine zero-distance jump, such as the very first
+`.jump` in a plan starting at the origin. This caused a real design's
+opening jump to be misread as a spurious trim. Fixed by having the writer
+skip encoding any record at all for a zero-distance jump (it's a physical
+no-op anyway), caught by `JEFFormatTests.trimRoundTripsAsOneCommand`.
+
 ## Added: Melco EXP export
 
 A new machine format, alongside DST and PES, in the Export and Share

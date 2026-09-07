@@ -212,6 +212,39 @@ struct ImageImportTests {
         #expect(points.count < 72, "a diamond should keep its own simplified vertex count, not be replaced by a 72-point circle")
     }
 
+    /// A ring (a donut, or any letterform counter -- the enclosed hole
+    /// inside O, P, R, A, D, B, Q...) must import as a shape with *two*
+    /// subpaths -- an outer boundary and an inner hole -- not a solid
+    /// disc. Left unhandled, raster import silently filled every such
+    /// hole in solid: exactly the "small lettering reads as the wrong
+    /// letter" failure already fixed for SVG import (see CHANGELOG.md),
+    /// found here for the raster path, which never had it.
+    @Test func ringShapeImportsWithItsHoleAsASecondSubpath() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 100
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(13.0 / 255, 43.0 / 255, 86.0 / 255, in: colorSpace))
+        context.fillEllipse(in: CGRect(x: 5, y: 5, width: 90, height: 90))
+        context.setBlendMode(.clear)
+        context.fillEllipse(in: CGRect(x: 30, y: 30, width: 40, height: 40))
+        context.setBlendMode(.normal)
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!))
+        let ring = try #require(result.shapes.max(by: { $0.boundingBox.width < $1.boundingBox.width }))
+        #expect(ring.subPaths.count == 2, "a ring should have an outer boundary and one hole subpath, got \(ring.subPaths.count)")
+
+        // The hole's own center must read as *outside* the shape under the
+        // even-odd rule every other multi-subpath shape in this engine
+        // uses -- otherwise the "hole" is just cosmetically present as a
+        // second subpath without actually being hollow.
+        let outerBox = BoundingBox(points: ring.subPaths[0].points)
+        let center = outerBox.center
+        let polygons = ring.subPaths.map { $0.points }
+        #expect(!PolygonGeometry.pointInPolygons(center, polygons: polygons),
+                "the ring's own center should be outside the shape (inside the hole), not solid fill")
+    }
+
     /// Three separate, distinctly-colored squares on a white background:
     /// the multi-color segmentation path (spec §8) should recover all three
     /// regions with their correct colors, not merge them into one region

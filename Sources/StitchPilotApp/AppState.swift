@@ -656,7 +656,7 @@ final class AppState: ObservableObject {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = document.name + ".dst"
         panel.allowedContentTypes = [UTType(filenameExtension: "dst") ?? .data, UTType(filenameExtension: "pes") ?? .data,
-                                      UTType(filenameExtension: "exp") ?? .data]
+                                      UTType(filenameExtension: "exp") ?? .data, UTType(filenameExtension: "jef") ?? .data]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let data: Data
@@ -667,6 +667,9 @@ final class AppState: ObservableObject {
             case "exp":
                 data = try EXPFormat.write(plan, designName: document.name)
                 _ = try EXPFormat.read(data)
+            case "jef":
+                data = try JEFFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+                _ = try JEFFormat.read(data)
             default:
                 data = try DSTFormat.write(plan, designName: document.name)
                 _ = try DSTFormat.read(data)
@@ -723,10 +726,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    func exportJEF() {
+        guard let plan = stitchPlan, let document else {
+            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            return
+        }
+        do {
+            let data = try JEFFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+            // Self-validate before ever handing the file to the user (spec §59).
+            _ = try JEFFormat.read(data)
+            saveExportedFile(data, suggestedName: document.name + ".jef", extension: "jef")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
     // MARK: - Sharing (spec: let the user send the file, not just save it
     // locally -- AirDrop, Mail, Messages, etc. via the system share sheet).
 
-    enum ShareFormat { case dst, pes, exp }
+    enum ShareFormat { case dst, pes, exp, jef }
 
     /// Presents Apple's native share sheet for the current design's
     /// embroidery file. The share sheet needs a real file on disk (not
@@ -755,6 +773,10 @@ final class AppState: ObservableObject {
                 data = try EXPFormat.write(plan, designName: document.name)
                 _ = try EXPFormat.read(data)
                 ext = "exp"
+            case .jef:
+                data = try JEFFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+                _ = try JEFFormat.read(data)
+                ext = "jef"
             }
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(document.name)
