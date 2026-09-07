@@ -2,6 +2,30 @@ import Testing
 @testable import StitchPilotCore
 
 struct SatinColumnGeneratorTests {
+    /// `DigitizePipeline`-level fallback, not `SatinColumnGenerator` itself:
+    /// `StitchTypeClassifier` picks `.satin` purely from a shape's average
+    /// width, which doesn't guarantee the outline is well-formed enough for
+    /// satin's own rail-fitting (an outline with fewer than 4 distinct
+    /// points, here) -- a real case once a design gets resized larger and a
+    /// degenerate sliver's *average* width crosses the satin threshold even
+    /// though its actual geometry never could support a satin column.
+    /// Before this fallback existed, that single object's
+    /// `SatinGenerationError.shapeNotSuitable` propagated all the way up
+    /// and aborted the *entire* document's digitize -- found against a real
+    /// multi-object design, not synthetically. See CHANGELOG.md.
+    @Test func pipelineFallsBackToRunningStitchWhenASatinShapeIsGeometricallyDegenerate() throws {
+        let degenerate = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(5, 0), Point2D(2.5, 1),
+        ], closed: true)])
+        let object = EmbroideryObject(name: "Degenerate", shape: degenerate, stitchType: .satin,
+                                       threadColor: .generic(RGBColor(hex: 0x000000)))
+        let doc = StitchDocument(name: "DegenerateSatin", physicalWidthMM: 10, physicalHeightMM: 10, objects: [object])
+
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 0, "should fall back to a real (running-stitch) result, not silently produce nothing")
+    }
+
+
     /// Pull and push compensation default to off here so these tests check
     /// pure satin geometry against exact bounds; `pullCompensationWidensColumn`
     /// and `pushCompensationShortensColumn` below test compensation itself.

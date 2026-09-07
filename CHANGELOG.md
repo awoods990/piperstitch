@@ -4,6 +4,68 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: initial Finished Size is now recommended from the artwork's own detail, not a fixed default
+
+Every import previously started at a fixed 100mm width regardless of what
+was actually in the file. That's fine for a plain bold logo, but real
+embroidery thread (~0.3-0.4mm) puts a hard physical floor on how small a
+detail can be and still sew as a recognizable shape — a badge with a ring
+of curved text, small stars, and thin serifs digitized at 100mm total
+width forces those details well under that floor, and no amount of
+digitizing sophistication can rescue a detail that's physically too small
+to stitch. Found against a real team-crest PNG: sewn at the size the fixed
+default produced, its ring text and tagline were completely illegible; the
+exact same file at 3-4x that size came out clearly legible.
+
+New `SizeRecommender` estimates each raw imported shape's average width
+(the same `area / length-along-principal-axis` measurement
+`StitchTypeClassifier` already uses to judge a shape's own stitch width),
+takes a robust low percentile across all shapes (not the single thinnest
+one, which a lone noise speck could otherwise dominate), and scales the
+recommended width up only as far as needed to keep that percentile's
+width at a sewable minimum — capped at a sane ceiling so genuinely
+unsuitable artwork doesn't get recommended an absurd size instead of
+being simplified. A plain bold design with no fine detail stays at the
+familiar 100mm default. The Finished Size panel still lets the user
+change it immediately after — this only changes where the size starts.
+
+## Fixed: resizing an already-digitized design didn't reconsider stitch type, so scaling up didn't actually fix small text
+
+A shape's stitch *width in mm* changes with the document's physical size
+even though nothing about the shape's own geometry changed — a stroke
+too thin for satin at a small size can clear that bar once scaled up.
+`regenerateFromStoredGeometry` (used on a fresh import) already re-ran
+`StitchTypeClassifier` after fitting to the new size, but the Finished
+Size panel's "Apply Size" button called a separate code path,
+`applyPhysicalSizeChange`, that only rescaled each object's existing
+geometry and left its *stitch type* exactly as originally classified.
+Found directly from testing the size-recommendation fix above: scaling a
+design up from a too-small original size kept its text stuck as the
+illegible running-stitch scribble that size had originally produced,
+instead of the same shapes reclassifying to clean satin the way a fresh
+import at that same larger size would have. `applyPhysicalSizeChange` now
+re-classifies each object's stitch type after resizing, exactly like a
+fresh import already does.
+
+## Fixed: one geometrically degenerate shape being classified as satin could abort an entire document's digitize
+
+`StitchTypeClassifier` picks satin from a shape's average width alone,
+which doesn't guarantee the outline is well-formed enough for satin's
+own rail-fitting algorithm (an outline with fewer than 4 distinct points,
+or no two identifiable ends). `SatinColumnGenerator.generatePartial`
+throwing `shapeNotSuitable` for such a shape previously propagated,
+uncaught, all the way up through `DigitizePipeline.flatten` — a single
+bad object aborted the *whole design's* digitize with an error, rather
+than just that one object degrading gracefully. Found directly while
+verifying the fixes above: a design resized larger pushed a degenerate
+noise sliver's *average* width across the satin threshold even though its
+actual geometry could never support a real satin column. `DigitizePipeline`
+now catches exactly `shapeNotSuitable` (the only error `generatePartial`
+itself can throw — the two width-limit errors belong to `generate`'s
+stricter, non-partial path) and falls back to running stitch for that one
+object, the same fallback `StitchTypeClassifier` already uses when a
+shape's *width* alone is too thin for satin.
+
 ## Fixed: a wide fill hole (a ring, a large cutout) got a long thread bridged straight across it
 
 `TatamiFillGenerator` already avoided *systematically* stitching across a

@@ -234,7 +234,29 @@ public enum DigitizePipeline {
             // any part of it is too wide — see SatinColumnGenerator's doc
             // comment and EMBROIDERY_ALGORITHM_REFERENCE.md.
             let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
-            return [underlay + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
+            do {
+                return [underlay + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
+            } catch SatinGenerationError.shapeNotSuitable {
+                // `StitchTypeClassifier` picks satin from a shape's average
+                // width alone, which is a real width measurement but no
+                // guarantee the outline is well-formed enough for satin's
+                // rail-fitting (an outline with too few distinct points, or
+                // no two identifiable ends -- typically a degenerate sliver
+                // that only crossed the satin-width threshold because a
+                // design got sized up, not something wrong with the sizing
+                // itself). Without this fallback, one such object aborts
+                // the *entire* document's digitize with an uncaught error,
+                // exactly the kind of single-object fragility spec §19
+                // means to avoid. Running stitch is the same fallback
+                // `StitchTypeClassifier` already uses for a shape whose
+                // *width* alone is too thin for satin -- reusing it here
+                // for "too geometrically degenerate for satin" is the same
+                // reasoning, just triggered by a different signal.
+                return [object.shape.subPaths.flatMap {
+                    RunningStitchGenerator.generate(for: $0, stitchLengthMM: object.parameters.stitchLengthMM,
+                                                     minStitchLengthMM: object.parameters.minStitchLengthMM)
+                }]
+            }
         }
     }
 

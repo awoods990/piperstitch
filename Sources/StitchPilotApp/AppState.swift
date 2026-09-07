@@ -19,6 +19,10 @@ final class AppState: ObservableObject {
     /// this, and recomputing it independently (as they each used to) means
     /// redoing the whole per-object generation pass again just for colors.
     @Published private(set) var lastColorSequence: [ThreadColor] = []
+    /// The normal starting width for a design with no fine detail to react
+    /// to -- `SizeRecommender` only ever scales *up* from this, never down,
+    /// so a plain bold logo keeps this familiar, comfortable default.
+    private let defaultPhysicalWidthMM: Double = 100
     @Published var physicalWidthMM: Double = 100
     @Published var physicalHeightMM: Double = 100
     @Published var lockAspectRatio: Bool = true
@@ -453,6 +457,16 @@ final class AppState: ObservableObject {
             var combined = BoundingBox.empty
             for s in rawShapes { combined = combined.union(s.boundingBox) }
             sourceAspectRatio = combined.height > 0 ? combined.width / combined.height : 1
+            // Size the design from its own detail, not a fixed default --
+            // a plain bold logo stays at the normal default size, but
+            // artwork with fine detail (small text, a ring of curved
+            // lettering) gets scaled up enough that its thinnest real
+            // stroke has a chance of surviving as an actual stitch rather
+            // of running stitch collapsing into an illegible squiggle at a
+            // size no digitizer, automatic or human, could sew cleanly.
+            // The Finished Size panel still lets the user override this
+            // immediately after -- this only sets where they start from.
+            physicalWidthMM = SizeRecommender.recommendedWidthMM(for: rawShapes, currentWidthMM: defaultPhysicalWidthMM)
             if lockAspectRatio {
                 physicalHeightMM = sourceAspectRatio > 0 ? physicalWidthMM / sourceAspectRatio : physicalWidthMM
             }
@@ -502,6 +516,19 @@ final class AppState: ObservableObject {
         let resizedObjects = current.objects.map { object -> EmbroideryObject in
             var resized = object
             resized.shape = object.shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: currentBounds)
+            // A shape's stitch width in mm changes with the document's
+            // physical size even though nothing about the shape itself
+            // changed -- a stroke that was too thin for satin at a small
+            // size can clear that bar once scaled up (or the reverse,
+            // scaling down). Re-classifying here, exactly like a fresh
+            // import already does in `regenerateFromStoredGeometry`, is
+            // what actually fixes small text/detail on resize -- without
+            // it, an object stayed stuck with whatever stitch type its
+            // *original* size happened to produce, so scaling up a design
+            // that was digitized too small kept its illegible running-
+            // stitch text illegible even at a size that could have sewn it
+            // as clean satin.
+            resized.stitchType = StitchTypeClassifier.classify(shape: resized.shape, parameters: resized.parameters)
             return resized
         }
         document = StitchDocument(name: current.name, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: resizedObjects)

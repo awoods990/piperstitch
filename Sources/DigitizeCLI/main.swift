@@ -47,8 +47,24 @@ if args.count >= 3, args[1] == "--validate-formats" {
     exit(failed == 0 ? 0 : 1)
 }
 
+if args.count >= 3, args[1] == "--recommend-size" {
+    // Diagnostic: what SizeRecommender would set as the initial Finished
+    // Size for this file, matching AppState.importFile's own logic --
+    // useful for checking real artwork without driving the GUI.
+    let inputURL = URL(fileURLWithPath: args[2])
+    let data = try Data(contentsOf: inputURL)
+    let isSVG = inputURL.pathExtension.lowercased() == "svg"
+    let rawShapes: [VectorShape] = isSVG
+        ? try SVGImporter.importShapes(from: data).shapes
+        : try ImageImporter.importShapes(from: data, maxColors: 8).shapes
+    let recommended = SizeRecommender.recommendedWidthMM(for: rawShapes, currentWidthMM: 100)
+    print("Recommended width for \(inputURL.lastPathComponent): \(recommended)mm")
+    exit(0)
+}
+
 guard args.count >= 3 else {
     print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8] [pixelsPerMM=12]")
+    print("       DigitizeCLI --recommend-size <input>")
     exit(1)
 }
 
