@@ -4,6 +4,38 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: a wide fill hole (a ring, a large cutout) got a long thread bridged straight across it
+
+`TatamiFillGenerator` already avoided *systematically* stitching across a
+hole (one bug, fixed earlier, that filled narrow letterform counters back
+in via one dense connector per row) by grouping same-side runs into
+independent "chains" and splicing a chain back in as a single short
+connector where it splits off. For a narrow letterform counter that
+connector is short enough to be invisible in practice. But the generator
+had no way to mark an actual jump within a single object's own point
+stream, only a plain stitch — so for a genuinely *wide* hole (a ring, a
+large intentional cutout), that same connector became a long, structurally
+weak thread bridged straight across open fabric, clearly visible once
+sewn. This was only found now because raster-import hole preservation
+(above) started producing real holes for raster-imported shapes for the
+first time — a synthetic donut PNG run through `DigitizeCLI` rendered with
+a visible diagonal line straight through its hollow center.
+
+Fixed by giving `TatamiFillGenerator` a new `generateRuns`, which keeps a
+chain-to-chain connector as a *separate* output run instead of always
+merging it in, whenever that connector is longer than a threshold (the
+same `maxJumpWithoutTrimMM` the rest of the pipeline already uses).
+`DigitizePipeline` threads runs through the whole flatten pipeline
+(`ObjectSequencer.sequenceGenerated`, `HiddenTravelRouter.
+bridgeSameColorGaps`) and turns a run boundary into a real trim+jump,
+exactly like it already does for a same-color gap between two separate
+objects — the thread is cut and re-anchored rather than dragged across the
+gap. A short connector (the common narrow-counter case) stays merged into
+one run, completely unchanged from before. See
+`TatamiFillGeneratorTests.swift`'s
+`wideHoleConnectorBecomesASeparateRunAboveTheBreakThreshold` and
+`pipelineInsertsTrimAndJumpAcrossAWideHoleInsteadOfBridgingIt`.
+
 ## Fixed: raster-imported shapes with holes rendered completely solid
 
 A donut, or any letterform with a counter (O, P, R, A, D, B, Q), imported

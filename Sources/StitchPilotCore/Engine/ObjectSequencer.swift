@@ -88,17 +88,23 @@ public enum ObjectSequencer {
     /// from its end is the closer approach — the machine sews the same
     /// shape either way, so there's no reason not to pick whichever
     /// direction shortens the jump into it.
-    public static func sequenceGenerated(_ items: [(object: EmbroideryObject, points: [Point2D])]) -> [(object: EmbroideryObject, points: [Point2D])] {
+    ///
+    /// Each item's stitching is one or more disjoint `runs` (almost always
+    /// exactly one — see `DigitizePipeline.stitchRuns`); reversing an item
+    /// reverses both the order of its runs and each run's own points, so
+    /// the whole object is approached from its true other end while every
+    /// run's own internal content stays intact.
+    public static func sequenceGenerated(_ items: [(object: EmbroideryObject, runs: [[Point2D]])]) -> [(object: EmbroideryObject, runs: [[Point2D]])] {
         guard items.count > 1 else { return items }
         let order = computeOrder(
             shapes: items.map { $0.object.shape },
             colors: items.map { $0.object.threadColor.rgb },
-            entryPoints: items.map { $0.points.first! },
-            exitPoints: items.map { $0.points.last! }
+            entryPoints: items.map { $0.runs.first!.first! },
+            exitPoints: items.map { $0.runs.last!.last! }
         )
         return order.map { entry in
             var item = items[entry.index]
-            if entry.reversed { item.points.reverse() }
+            if entry.reversed { item.runs = item.runs.reversed().map { $0.reversed() } }
             return item
         }
     }

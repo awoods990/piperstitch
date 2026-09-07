@@ -220,6 +220,97 @@ struct TatamiFillGeneratorTests {
         return count
     }
 
+    /// `stitchSegmentsCrossingAHoleAreBoundedNotOnePerRow` above accepts a
+    /// small, bounded connector crossing a *narrow* hole (a letterform
+    /// counter) as a reasonable trade-off, since this generator had no way
+    /// to mark an actual jump within its own point stream. `generateRuns`
+    /// closes that gap: a hole wide enough that its own connector exceeds
+    /// `breakThresholdMM` becomes a separate output run instead of staying
+    /// silently merged in — `DigitizePipeline` turns that run boundary into
+    /// a real trim+jump rather than a long thread bridged across open
+    /// fabric. Found against a real ring/donut shape (a raster-imported
+    /// badge's own circular cutout, once hole preservation on raster import
+    /// started working) — see CHANGELOG.md.
+    @Test func wideHoleConnectorBecomesASeparateRunAboveTheBreakThreshold() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(40, 0), Point2D(40, 40), Point2D(0, 40)], closed: true)
+        let hole = SubPath(points: [Point2D(10, 10), Point2D(30, 10), Point2D(30, 30), Point2D(10, 30)], closed: true)
+        let shape = VectorShape(subPaths: [outer, hole])
+        let params = squareParams(spacing: 0.5)
+
+        // An unlimited threshold keeps everything merged into one run --
+        // identical to `generate`'s own (unchanged) behavior.
+        let unlimited = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: .infinity)
+        #expect(unlimited.count == 1)
+
+        // The hole is 20mm wide -- well above a 5mm break threshold, so its
+        // connector must become its own run boundary.
+        let split = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: 5.0)
+        #expect(split.count > 1, "a wide hole's connector should force a separate run once it exceeds the break threshold")
+
+        // Within any single run, every consecutive pair must still respect
+        // the threshold -- a caller only ever needs to insert a real jump
+        // *between* runs, never hidden inside one.
+        for run in split {
+            guard run.count > 1 else { continue }
+            for i in 1..<run.count {
+                #expect(run[i - 1].distance(to: run[i]) <= 5.01, "no stitch within a single run should exceed the break threshold")
+            }
+        }
+
+        // Splitting changes structure, not content: flattening the split
+        // runs back together must reproduce `generate`'s own output exactly.
+        #expect(split.flatMap { $0 } == TatamiFillGenerator.generate(for: shape, parameters: params))
+    }
+
+    /// End-to-end confirmation that a wide hole's connector actually
+    /// becomes a trim+jump in the flattened plan, not just a separate run
+    /// at the generator level — the property that actually avoids a
+    /// visible thread bridged across the hole once sewn.
+    @Test func pipelineInsertsTrimAndJumpAcrossAWideHoleInsteadOfBridgingIt() throws {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(40, 0), Point2D(40, 40), Point2D(0, 40)], closed: true)
+        let hole = SubPath(points: [Point2D(10, 10), Point2D(30, 10), Point2D(30, 30), Point2D(10, 30)], closed: true)
+        let shape = VectorShape(subPaths: [outer, hole])
+        var params = squareParams(spacing: 0.5)
+        params.fillAngleDegrees = 0
+        let object = EmbroideryObject(name: "Ring", shape: shape, stitchType: .tatamiFill,
+                                       threadColor: .generic(RGBColor(hex: 0x000080)), parameters: params)
+        let doc = StitchDocument(name: "RingTest", physicalWidthMM: 40, physicalHeightMM: 40, objects: [object])
+
+        let plan = try DigitizePipeline.flatten(doc, maxJumpWithoutTrimMM: 5.0)
+        // At least one internal trim for the hole crossing, plus the final
+        // trim at the very end of the design -- exactly how many internal
+        // breaks a given hole produces depends on `chainRuns`/
+        // `sequenceChains`'s own tie-breaking (a perfectly square hole can
+        // split at both its opening and closing row), which is pre-existing
+        // behavior this fix doesn't change; what matters here is that at
+        // least one real break happened instead of none.
+        #expect(plan.trimCount >= 2)
+
+        // No real *stitch* segment should cross the hole at all -- confirms
+        // the long connector became a jump (invisible thread, no needle
+        // penetration across the gap), not a stitch that StitchFilter's
+        // max-length splitting would otherwise merely chop into several
+        // still hole-crossing shorter pieces (each individually under the
+        // length cap, but collectively still bridging the open fabric).
+        var lastStitch: Point2D?
+        var crossings = 0
+        for command in plan.commands {
+            switch command {
+            case .stitch(let p):
+                if let last = lastStitch {
+                    let mid = Point2D((last.x + p.x) / 2, (last.y + p.y) / 2)
+                    if mid.x > 10, mid.x < 30, mid.y > 10, mid.y < 30 { crossings += 1 }
+                }
+                lastStitch = p
+            case .jump, .trim, .colorChange, .stop:
+                lastStitch = nil // a jump/trim breaks thread continuity; the next stitch starts a new segment
+            case .end:
+                break
+            }
+        }
+        #expect(crossings == 0, "no real stitch segment should cross the hole")
+    }
+
     @Test func emptyShapeProducesNoStitches() {
         let tiny = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(0.01, 0), Point2D(0.01, 0.01)], closed: true)])
         let points = TatamiFillGenerator.generate(for: tiny, parameters: squareParams())

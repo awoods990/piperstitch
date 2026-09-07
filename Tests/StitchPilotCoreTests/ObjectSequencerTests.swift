@@ -120,12 +120,12 @@ struct ObjectSequencerTests {
         // from its far end (0,5) is an 11.18mm reach, but entering from its
         // near end (10,5) is only 5mm -- sewing it end-first is closer.
         let items = [
-            (object: first, points: [Point2D(0, 0), Point2D(10, 0)]),
-            (object: second, points: [Point2D(0, 5), Point2D(10, 5)]),
+            (object: first, runs: [[Point2D(0, 0), Point2D(10, 0)]]),
+            (object: second, runs: [[Point2D(0, 5), Point2D(10, 5)]]),
         ]
         let sequenced = ObjectSequencer.sequenceGenerated(items)
         #expect(sequenced.map { $0.object.name } == ["first", "second"])
-        #expect(sequenced[1].points == [Point2D(10, 5), Point2D(0, 5)])
+        #expect(sequenced[1].runs == [[Point2D(10, 5), Point2D(0, 5)]])
     }
 
     @Test func sequenceGeneratedDoesNotReverseWhenAlreadyCloser() {
@@ -136,11 +136,11 @@ struct ObjectSequencerTests {
         // Same shapes as above, but "second"'s points are pre-flipped so its
         // near end (10,5) is already first -- no reversal should happen.
         let items = [
-            (object: first, points: [Point2D(0, 0), Point2D(10, 0)]),
-            (object: second, points: [Point2D(10, 5), Point2D(0, 5)]),
+            (object: first, runs: [[Point2D(0, 0), Point2D(10, 0)]]),
+            (object: second, runs: [[Point2D(10, 5), Point2D(0, 5)]]),
         ]
         let sequenced = ObjectSequencer.sequenceGenerated(items)
-        #expect(sequenced[1].points == [Point2D(10, 5), Point2D(0, 5)])
+        #expect(sequenced[1].runs == [[Point2D(10, 5), Point2D(0, 5)]])
     }
 
     @Test func twoOptFixesGreedyNearestNeighborZigzag() {

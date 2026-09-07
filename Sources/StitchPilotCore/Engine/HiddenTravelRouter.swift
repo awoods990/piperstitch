@@ -38,7 +38,7 @@ public enum HiddenTravelRouter {
     /// interior samples (not just a midpoint) are checked.
     private static let interiorSampleCount = 6
 
-    public static func bridgeSameColorGaps(_ items: [(object: EmbroideryObject, points: [Point2D])], thresholdMM: Double) -> [(object: EmbroideryObject, points: [Point2D])] {
+    public static func bridgeSameColorGaps(_ items: [(object: EmbroideryObject, runs: [[Point2D]])], thresholdMM: Double) -> [(object: EmbroideryObject, runs: [[Point2D]])] {
         guard items.count > 1 else { return items }
         var result = items
 
@@ -46,7 +46,7 @@ public enum HiddenTravelRouter {
             let previous = result[i - 1]
             let next = result[i]
             guard previous.object.threadColor.rgb == next.object.threadColor.rgb,
-                  let exit = previous.points.last, let entry = next.points.first,
+                  let exit = previous.runs.last?.last, let entry = next.runs.first?.first,
                   exit.distance(to: entry) > thresholdMM else { continue }
 
             guard pathIsCoveredByShape(from: exit, to: entry, shape: next.object.shape) else { continue }
@@ -59,12 +59,12 @@ public enum HiddenTravelRouter {
             )
             // Drop both endpoints: `exit` already duplicates the previous
             // object's own last point, and `entry` already duplicates
-            // `next.points.first` — keep only the genuinely new
+            // `next.runs.first.first` — keep only the genuinely new
             // in-between stitches.
             let bridgePoints = Array(bridge.dropFirst().dropLast())
             guard !bridgePoints.isEmpty else { continue }
 
-            result[i].points = bridgePoints + next.points
+            result[i].runs[0] = bridgePoints + next.runs[0]
         }
         return result
     }

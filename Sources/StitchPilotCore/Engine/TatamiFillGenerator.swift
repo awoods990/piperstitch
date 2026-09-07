@@ -23,7 +23,28 @@ import Foundation
 /// grid), `sequenceChains` orders the chains for minimal travel between
 /// them, and the concatenated result is rotated back.
 public enum TatamiFillGenerator {
+    /// Flat convenience wrapper for callers that don't care about internal
+    /// hole-crossing connectors (satin's tatami-converted sub-regions,
+    /// existing geometry-only tests) — identical output to always merging
+    /// every chain into one continuous run, exactly as this generator did
+    /// before `generateRuns` existed.
     public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
+        generateRuns(for: shape, parameters: parameters, breakThresholdMM: .infinity).flatMap { $0 }
+    }
+
+    /// Like `generate`, but keeps a hole-crossing connector between two
+    /// chains as a *separate* output run instead of silently merging it in,
+    /// whenever that connector is longer than `breakThresholdMM` — the
+    /// caller (`DigitizePipeline`) turns a run boundary into a real
+    /// trim+jump, avoiding a long, structurally weak thread bridged
+    /// straight across open fabric where a hole is wide (a ring, a large
+    /// cutout) rather than the narrow letterform counters this generator
+    /// was originally tuned against. A connector shorter than the
+    /// threshold stays merged into the same run, unchanged from before —
+    /// see `stitchSegmentsCrossingAHoleAreBoundedNotOnePerRow`'s doc
+    /// comment in `TatamiFillGeneratorTests.swift` for why a small residual
+    /// crossing is fine and expected for that common case.
+    public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double) -> [[Point2D]] {
         guard !shape.subPaths.isEmpty else { return [] }
         let angleDegrees = parameters.fillAngleDegrees ?? FillAngleSelector.selectAngle(for: shape)
         let angleRad = angleDegrees * .pi / 180
@@ -103,8 +124,9 @@ public enum TatamiFillGenerator {
         let chains = chainRuns(rowRuns)
         let orderedChains = sequenceChains(chains)
 
-        var rotatedResult: [Point2D] = []
+        var rotatedChainPoints: [[Point2D]] = []
         for chain in orderedChains {
+            var chainPoints: [Point2D] = []
             for run in chain {
                 let phase = (Double(run.rowIndex) * stagger).truncatingRemainder(dividingBy: stitchLength)
                 var points = resampleRun(y: run.y, xStart: run.start, xEnd: run.end, stitchLength: stitchLength, phase: phase)
@@ -115,11 +137,29 @@ public enum TatamiFillGenerator {
                 // regardless of how `sequenceChains` split a chain into
                 // pieces to splice side-strips in between them.
                 if run.rowIndex % 2 == 1 { points.reverse() }
-                rotatedResult.append(contentsOf: points)
+                chainPoints.append(contentsOf: points)
+            }
+            if !chainPoints.isEmpty { rotatedChainPoints.append(chainPoints) }
+        }
+
+        // Merge consecutive chains back into one continuous output run
+        // whenever the connector between them is short enough to sew as a
+        // plain stitch (unchanged from this generator's original,
+        // always-flattened behavior) — only a connector longer than
+        // `breakThresholdMM` becomes a genuine run boundary the caller can
+        // turn into a trim+jump. Distance is measured in this rotated space,
+        // which rotation preserves exactly.
+        var mergedRuns: [[Point2D]] = []
+        for chainPoints in rotatedChainPoints {
+            if let lastPoint = mergedRuns.last?.last, let firstPoint = chainPoints.first,
+               lastPoint.distance(to: firstPoint) <= breakThresholdMM {
+                mergedRuns[mergedRuns.count - 1].append(contentsOf: chainPoints)
+            } else {
+                mergedRuns.append(chainPoints)
             }
         }
 
-        return rotatedResult.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) }
+        return mergedRuns.map { run in run.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) } }
     }
 
     /// One scanline row's crossing interval, in rotated space, before
