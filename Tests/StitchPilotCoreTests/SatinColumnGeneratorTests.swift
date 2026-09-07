@@ -147,7 +147,7 @@ struct SatinColumnGeneratorTests {
     }
 
     @Test func tooNarrowInteriorThrowsFromStrictGenerate() throws {
-        // A 30mm x 0.5mm column -- below the default 1.0mm practical satin
+        // A 30mm x 0.5mm column -- below the default 1.5mm practical satin
         // minimum throughout its interior (the jog at each end is smaller
         // than the resampling spacing here, so even crossings just past the
         // margin already measure the full-body 0.5mm width).

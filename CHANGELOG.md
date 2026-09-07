@@ -4,6 +4,116 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: stitch-type thresholds aligned to standard digitizing guidance
+
+`StitchTypeClassifier` already bucketed shapes by width (spec §11), but two
+gaps against common commercial digitizing practice:
+
+- The "too thin for satin" floor (`minSatinWidthMM`) defaulted to 1.0mm;
+  standard guidance treats sub-1.5mm strokes as unreliable for satin
+  (thread coverage/pull compensation issues at that scale). Raised to 1.5mm.
+- The whole 1-12mm range routed to satin uniformly. Standard guidance
+  treats ~8-12mm as "satin or tatami depending on the shape," not
+  automatically satin -- a real column still sews fine as satin near the
+  wider end of that range, but a blob-shaped region whose *average* width
+  happens to land there doesn't. Added a width-uniformity check for this
+  band: samples the shape's actual local width at several points along its
+  length (a perpendicular ray cast through the boundary, independent of
+  `SatinColumnGenerator`'s own compensated per-crossing measurement) and
+  only keeps satin if that varies by no more than ~35% of the widest
+  point; otherwise routes to tatami.
+
+Below 8mm and above 12mm are unchanged (already satin and already tatami
+respectively, matching the guidance exactly). Holes still always route to
+tatami regardless of width, as before.
+
+## Added: select multiple objects on the canvas, merge them into one, and paint in missing coverage
+
+Two tools aimed at the last stretch of cleanup a digitized file often
+needs, built so neither requires knowing *why* something needs fixing --
+just seeing it and acting on it directly:
+
+- **Rubber-band / shift-click multi-select.** Drag a box around several
+  objects on the canvas, or shift-click them (canvas or object list), to
+  select more than one at a time. Plain click still selects one and clears
+  the rest; the object list's own selection and the canvas's now share the
+  same underlying set (`AppState.selectedObjectIDs`) instead of the
+  single-id state from before, so either one drives the other.
+- **Merge Shapes.** Joins every selected object's geometry into one --
+  the fix for a letter or logo detail that digitized as several
+  disconnected fragments (most often anti-aliasing noise breaking up what
+  should be one solid shape, as seen firsthand in the background-detection
+  investigation above). Implemented as `ShapeMerger`: rasterizes the
+  selected shapes' union at a fine resolution and re-traces the connected
+  outline(s), reusing the same boundary-tracing code raster import uses
+  (pulled out into a shared `RasterTracing` utility) rather than
+  implementing true polygon boolean union, which this engine doesn't
+  otherwise have. Good enough for joining a handful of nearby fragments,
+  not a general vector-boolean tool.
+- **Paint.** A brush tool for manually adding coverage: with one object
+  selected, painting over or near it extends its shape (same
+  rasterize-and-retrace merge, with the stroke rendered as a chain of
+  overlapping discs); with nothing selected, painting creates a new
+  object in the chosen color. This is the answer to "let the user shade in
+  the rest of an area if the app only captures part of the shape," raised
+  earlier and deferred until a real gap actually showed up.
+- Bulk delete: removing the selection now removes everything selected, not
+  just one object at a time.
+
+## Fixed: a real customer logo imported as ~300 spurious slivers instead of 2 colors
+
+The user hit "Redo from Original" (right next to "Click to Create" — an
+accidental click was a real, if separate, usability lesson learned from
+this) on a design they'd already cleaned up, expecting to just discard
+their edits and get back the reasonably clean original import. Instead the
+"original" it rebuilt was a mess: hundreds of tiny gray objects and a
+giant white rectangle behind an otherwise-correct navy/orange logo.
+
+### Root cause
+
+Two compounding issues in raster import, both invisible on simple test
+images but real on an actual customer PNG (`LIBBi Logo.png`):
+
+1. **`computeForegroundMask`** treats *any* opaque pixel as foreground the
+   moment the canvas has *any* transparency at all. This file's canvas was
+   mostly transparent at the very corners but had a large **opaque white**
+   background fill behind the actual artwork — so that whole fill, plus
+   every anti-aliased pixel between it and the letters, got included as
+   "foreground."
+2. **`ColorQuantizer`** doesn't merge k-means clusters after fitting them,
+   so the anti-aliasing ramp between navy and that white fill — a
+   continuous gradient through several gray tones, wide because this PNG
+   had been scaled down (softening every edge across multiple pixels) —
+   got its own distinct clusters instead of being folded into navy or
+   background. Each of those clusters then produced its own swarm of tiny
+   traced objects around every letter, and the ramp pixels sitting
+   *between* adjacent letters fragmented what should have been single
+   connected letter shapes into many disconnected pieces.
+
+Together: 420 raw shapes and 7 "colors" (only 2 of which were real) from
+a logo with two actual colors.
+
+### Fix
+
+- `ImageImporter.excludeDominantOpaqueBackground`: when the canvas has
+  transparency, additionally excludes the single most common opaque color
+  if it's a large enough share of the image *and* actually touches the
+  canvas edge (a real background fill always does; a large solid interior
+  shape generally doesn't touch every side).
+- `ColorQuantizer.mergeAntiAliasingClusters`: after quantizing, folds any
+  small cluster sitting almost exactly on the line between two much larger
+  clusters (a geometric anti-aliasing signature) into whichever it's
+  closer to — while leaving a genuinely distinct small color (an accent
+  shade, say) alone, since that doesn't sit on the line.
+
+Result on the real file: 420 objects / 7 colors down to 124 objects / 3
+colors (navy, orange, and one residual "silver" cluster from the widest
+part of the ramp that this pass doesn't fully absorb — a more aggressive
+connectivity-based flood fill was tried to close that gap but leaked
+through the thin gaps between adjacent letters and made fragmentation
+*worse* on the same file, so it was reverted in favor of this smaller,
+measurably-safe improvement).
+
 ## Added: project-wide density, click-to-select on the canvas, standard garment sizes, and a toolbar refresh
 
 - **Project-wide density.** A new "Density (Entire Project)" section sets

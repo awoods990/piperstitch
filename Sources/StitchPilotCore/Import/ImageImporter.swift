@@ -99,9 +99,9 @@ public enum ImageImporter {
             var clusterMask = [Bool](repeating: false, count: width * height)
             for i in 0..<(width * height) { clusterMask[i] = labels[i] == clusterIndex }
 
-            let components = connectedComponents(mask: clusterMask, width: width, height: height)
+            let components = RasterTracing.connectedComponents(mask: clusterMask, width: width, height: height, minAreaPixels: minComponentAreaPixels)
             for component in components {
-                guard let boundary = traceBoundary(mask: clusterMask, width: width, height: height, start: component.topLeftMost) else { continue }
+                guard let boundary = RasterTracing.traceBoundary(mask: clusterMask, width: width, height: height, start: component.topLeftMost) else { continue }
                 let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
                 guard simplified.count > 2 else { continue }
                 shapes.append(VectorShape(subPaths: [SubPath(points: simplified, closed: true)]))
@@ -175,6 +175,17 @@ public enum ImageImporter {
             for i in 0..<(width * height) {
                 mask[i] = pixels[i * 4 + 3] > 127
             }
+            // A "transparent" canvas can still contain a solid opaque
+            // background fill alongside the actually-transparent margin
+            // (e.g. a logo exported with a transparent border around an
+            // opaque white card) -- left in, that whole fill region, plus
+            // every anti-aliased edge pixel between it and the real
+            // artwork, reads as "foreground": color quantization then
+            // splits those into a swarm of spurious near-background
+            // shades, each becoming its own tiny traced object (found via
+            // a real customer logo that came back as ~300 stray gray
+            // slivers around otherwise-correct navy letters).
+            excludeDominantOpaqueBackground(&mask, pixels: pixels, width: width, height: height)
             return mask
         }
 
@@ -214,6 +225,60 @@ public enum ImageImporter {
         return mask
     }
 
+    /// Finds the single most common exact RGB among currently-foreground
+    /// (opaque) pixels; if it covers enough of the image to plausibly be a
+    /// fill rather than a stroke, *and* actually reaches the canvas edge
+    /// (a real background fill always does; a large solid interior shape
+    /// generally doesn't touch every side), excludes it -- and near
+    /// matches, to also catch its anti-aliased edge against the real
+    /// artwork -- from the mask. Requiring border contact, not just being
+    /// the most common color, matters because a design's own dominant
+    /// color (thick solid letter strokes, say) can otherwise be nearly as
+    /// common as a genuine background fill.
+    ///
+    /// A wider, connectivity-bounded flood fill was tried here to also
+    /// catch a soft multi-pixel anti-aliasing ramp between background and
+    /// artwork, but a wide enough tolerance to matter reliably leaked
+    /// through the thin near-background gaps between adjacent letters,
+    /// eating into real strokes and fragmenting them worse than before
+    /// (measured directly against a real customer logo: object count went
+    /// *up*, not down). The flat exact-ish match below is more
+    /// conservative -- it won't fully absorb a very soft ramp -- but it's
+    /// the version that actually reduced a real multi-hundred-object mess
+    /// down to a small handful; `ColorQuantizer`'s cluster-merging picks up
+    /// most of what this alone misses.
+    private static func excludeDominantOpaqueBackground(_ mask: inout [Bool], pixels: [UInt8], width: Int, height: Int) {
+        var counts: [RGBColor: Int] = [:]
+        var total = 0
+        for i in 0..<(width * height) where mask[i] {
+            let color = RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2])
+            counts[color, default: 0] += 1
+            total += 1
+        }
+        guard total > 0, let (bg, bgCount) = counts.max(by: { $0.value < $1.value }) else { return }
+        guard Double(bgCount) / Double(total) > 0.15 else { return }
+
+        func matchesBackground(_ i: Int) -> Bool {
+            let r = Double(pixels[i * 4]), g = Double(pixels[i * 4 + 1]), b = Double(pixels[i * 4 + 2])
+            return abs(r - Double(bg.r)) + abs(g - Double(bg.g)) + abs(b - Double(bg.b)) <= colorDistanceThreshold
+        }
+
+        var touchesBorder = false
+        for x in 0..<width where !touchesBorder {
+            let top = x, bottom = (height - 1) * width + x
+            if (mask[top] && matchesBackground(top)) || (mask[bottom] && matchesBackground(bottom)) { touchesBorder = true }
+        }
+        for y in 0..<height where !touchesBorder {
+            let left = y * width, right = y * width + (width - 1)
+            if (mask[left] && matchesBackground(left)) || (mask[right] && matchesBackground(right)) { touchesBorder = true }
+        }
+        guard touchesBorder else { return }
+
+        for i in 0..<(width * height) where mask[i] && matchesBackground(i) {
+            mask[i] = false
+        }
+    }
+
     private static func otsuThreshold(histogram: [Int], totalPixels: Int) -> UInt8 {
         var sum = 0.0
         for t in 0..<256 { sum += Double(t) * Double(histogram[t]) }
@@ -231,132 +296,4 @@ public enum ImageImporter {
         }
         return UInt8(threshold)
     }
-
-    // MARK: - Connected components (8-connectivity, BFS)
-
-    private struct Component { var topLeftMost: (x: Int, y: Int); var area: Int }
-
-    private static func connectedComponents(mask: [Bool], width: Int, height: Int) -> [Component] {
-        var visited = [Bool](repeating: false, count: width * height)
-        var components: [Component] = []
-        let neighborOffsets = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
-
-        for y in 0..<height {
-            for x in 0..<width {
-                let idx = y * width + x
-                guard mask[idx], !visited[idx] else { continue }
-
-                var queue = [(x, y)]
-                visited[idx] = true
-                var area = 0
-                var topLeftMost = (x: x, y: y)
-
-                var head = 0
-                while head < queue.count {
-                    let (cx, cy) = queue[head]; head += 1
-                    area += 1
-                    if cy < topLeftMost.y || (cy == topLeftMost.y && cx < topLeftMost.x) {
-                        topLeftMost = (cx, cy)
-                    }
-                    for (dx, dy) in neighborOffsets {
-                        let nx = cx + dx, ny = cy + dy
-                        guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
-                        let nIdx = ny * width + nx
-                        if mask[nIdx], !visited[nIdx] {
-                            visited[nIdx] = true
-                            queue.append((nx, ny))
-                        }
-                    }
-                }
-
-                if area >= minComponentAreaPixels {
-                    components.append(Component(topLeftMost: topLeftMost, area: area))
-                }
-            }
-        }
-        return components
-    }
-
-    // MARK: - Moore-neighbor boundary tracing
-
-    /// Compass directions in cyclic order (each adjacent to the next); the
-    /// specific starting point / rotation sense doesn't matter as long as
-    /// it's a consistent cyclic order — see DIGITIZING_ENGINE.md.
-    private static let compass: [(Int, Int)] = [(-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
-
-    private static func traceBoundary(mask: [Bool], width: Int, height: Int, start: (x: Int, y: Int)) -> [Point2D]? {
-        func isForeground(_ x: Int, _ y: Int) -> Bool {
-            guard x >= 0, x < width, y >= 0, y < height else { return false }
-            return mask[y * width + x]
-        }
-
-        let first = start
-        // `first` is the topmost-then-leftmost pixel of its component, so
-        // its West neighbor is guaranteed background -- a safe direction to
-        // bootstrap the very first neighbor search from. It is *only* a
-        // bootstrapping choice, though: it doesn't predict which direction
-        // the walk will eventually re-enter `first` from once it comes back
-        // around (that depends on the shape), so it must not be reused as
-        // the closing test below -- see that comment for why an earlier
-        // version of this code got that wrong.
-        var backtrack = (x: first.x - 1, y: first.y)
-        var current = first
-        var boundary: [Point2D] = [Point2D(Double(current.x), Double(current.y))]
-
-        // Single isolated pixel (no foreground neighbors at all) — too small
-        // to form a boundary; the caller's minComponentAreaPixels filter
-        // already excludes most of these upstream.
-        if compass.allSatisfy({ !isForeground(current.x + $0.0, current.y + $0.1) }) {
-            return nil
-        }
-
-        // Jacob's stopping criterion: the walk is a deterministic function
-        // of (current, backtrack), so it closes exactly when that pair
-        // repeats -- but the *first* pair it's ever in is (first, an
-        // arbitrary bootstrapping backtrack that isn't actually part of the
-        // real cycle), not a state the walk will revisit. The first state
-        // that genuinely recurs is the one right after the first real step:
-        // (secondPoint, first). A previous version of this code compared
-        // against (first, west-of-first) instead, which for a plain 40x40
-        // test square never once matched -- the trace closes correctly
-        // after 156 steps, just re-entering `first` from the *east*, not
-        // the assumed west -- so it always ran to `maxSteps` and returned
-        // whatever partial, garbled walk it had accumulated as if it were a
-        // real boundary. For a well-formed shape that's wastefully
-        // redundant (the same correct loop retraced dozens of times over);
-        // for a thin or pinch-pointed shape that never actually recurs at
-        // all, it's a 126,017-point degenerate "boundary" for a single
-        // 39-pixel fragment of `SMA Logo.webp`, which then sent an O(n²)
-        // polyline-simplification pass into a multi-minute hang — found via
-        // `DigitizeCLI` while investigating a report of a small image
-        // producing over a million stitches (see CHANGELOG.md).
-        let maxSteps = width * height * 2 + 64
-        var steps = 0
-        var closed = false
-        var secondPoint: (x: Int, y: Int)?
-        repeat {
-            guard let bIdx = compass.firstIndex(where: { $0.0 == backtrack.x - current.x && $0.1 == backtrack.y - current.y }) else { break }
-            var found: (Int, Int)?
-            var idx = (bIdx + 1) % 8
-            for _ in 0..<8 {
-                let nx = current.x + compass[idx].0, ny = current.y + compass[idx].1
-                if isForeground(nx, ny) { found = (nx, ny); break }
-                idx = (idx + 1) % 8
-            }
-            guard let next = found else { break }
-            backtrack = current
-            current = next
-            steps += 1
-            if let secondPoint, current == secondPoint, backtrack == first {
-                closed = true
-                break // don't append -- `current` duplicates `secondPoint`, already in `boundary`
-            }
-            if secondPoint == nil { secondPoint = current }
-            boundary.append(Point2D(Double(current.x), Double(current.y)))
-        } while steps < maxSteps
-
-        return (closed && boundary.count > 2) ? boundary : nil
-    }
 }
-
-private func == (a: (x: Int, y: Int), b: (x: Int, y: Int)) -> Bool { a.x == b.x && a.y == b.y }

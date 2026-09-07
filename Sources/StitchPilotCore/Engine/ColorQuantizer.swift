@@ -55,12 +55,76 @@ public enum ColorQuantizer {
         let entries = buildHistogram(pixels)
         guard !entries.isEmpty else { return [] }
 
+        let clusters: [ColorCluster]
         if entries.count <= maxColors {
-            return entries.map { ColorCluster(rgb: $0.rgb, pixelCount: Int($0.weight)) }
+            clusters = entries.map { ColorCluster(rgb: $0.rgb, pixelCount: Int($0.weight)) }
                 .sorted { $0.pixelCount > $1.pixelCount }
+        } else {
+            clusters = kMeans(entries: entries, k: maxColors)
         }
+        return mergeAntiAliasingClusters(clusters)
+    }
 
-        return kMeans(entries: entries, k: maxColors)
+    /// A smoothly anti-aliased edge between two solid colors (a scaled-down
+    /// raster logo especially, where the source image never had a hard
+    /// pixel boundary to begin with) produces a whole ramp of intermediate
+    /// shades between them -- e.g. navy fading through several grays into
+    /// white. With enough colors allowed, `kMeans` happily gives each ramp
+    /// step its own cluster (they're genuinely far apart in LAB space from
+    /// each solid color), and each one then becomes its own tiny traced
+    /// object in `ImageImporter` -- found via a real customer logo that
+    /// came back as a swarm of small gray slivers ringing every letter,
+    /// on top of the two colors actually intended.
+    ///
+    /// Distinguishes a blend from a genuine third color geometrically: a
+    /// small cluster lying almost exactly *on the line segment* between two
+    /// much larger clusters (its distances to both sum to nearly their
+    /// distance to each other) is a blend of those two and gets folded into
+    /// whichever it's closer to; a small cluster of its own distinct hue
+    /// (an accent color, say) doesn't sit on that line and is left alone.
+    private static func mergeAntiAliasingClusters(_ clusters: [ColorCluster]) -> [ColorCluster] {
+        guard clusters.count > 2 else { return clusters }
+        let total = clusters.reduce(0) { $0 + $1.pixelCount }
+        guard total > 0 else { return clusters }
+
+        let smallFraction = 0.08
+        let large = clusters.filter { Double($0.pixelCount) / Double(total) >= smallFraction }
+        let small = clusters.filter { Double($0.pixelCount) / Double(total) < smallFraction }
+        guard large.count >= 2, !small.isEmpty else { return clusters }
+
+        var mergeTarget: [RGBColor: RGBColor] = [:]
+        for cluster in small {
+            let lab = cluster.rgb.lab
+            var bestTarget: RGBColor?
+            var bestRelSlack = Double.infinity
+            for i in 0..<large.count {
+                for j in (i + 1)..<large.count {
+                    let labA = large[i].rgb.lab, labB = large[j].rgb.lab
+                    let dAB = sqrt(distanceSquared(labA, labB))
+                    guard dAB > 1 else { continue }
+                    let dA = sqrt(distanceSquared(lab, labA)), dB = sqrt(distanceSquared(lab, labB))
+                    let relSlack = ((dA + dB) - dAB) / dAB
+                    if relSlack < bestRelSlack {
+                        bestRelSlack = relSlack
+                        bestTarget = dA < dB ? large[i].rgb : large[j].rgb
+                    }
+                }
+            }
+            // A generous but bounded tolerance -- real blends land almost
+            // exactly on the line; this still excludes a color that's only
+            // vaguely "between" two others in a loose perceptual sense.
+            if let target = bestTarget, bestRelSlack <= 0.15 {
+                mergeTarget[cluster.rgb] = target
+            }
+        }
+        guard !mergeTarget.isEmpty else { return clusters }
+
+        var merged: [RGBColor: Int] = [:]
+        for cluster in clusters {
+            let target = mergeTarget[cluster.rgb] ?? cluster.rgb
+            merged[target, default: 0] += cluster.pixelCount
+        }
+        return merged.map { ColorCluster(rgb: $0.key, pixelCount: $0.value) }.sorted { $0.pixelCount > $1.pixelCount }
     }
 
     private struct HistogramEntry { var rgb: RGBColor; var lab: LABColor; var weight: Double }

@@ -100,6 +100,31 @@ struct ImageImportTests {
         #expect(abs(result.shapes[0].boundingBox.width - 20) <= 2.0)
     }
 
+    /// A logo exported with a transparent margin around an *opaque* white
+    /// card behind the actual artwork -- a real customer file that came
+    /// back with ~300 spurious slivers before this was fixed, because
+    /// "the canvas has transparency" made every opaque pixel (including
+    /// that whole white card) count as foreground. The white card touches
+    /// the left/right edges (only the very top/bottom strip is left
+    /// transparent), so it should still be recognized and excluded as
+    /// background despite the canvas not being *fully* opaque.
+    @Test func opaqueBackgroundFillWithinAPartiallyTransparentCanvasIsExcluded() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 100
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        // Leave a transparent margin at the very top/bottom (so the image
+        // as a whole reads as "has transparency"), but let the white card
+        // span the full width, touching the left and right edges.
+        context.setFillColor(deviceColor(1, 1, 1, in: colorSpace))
+        context.fill(CGRect(x: 0, y: 5, width: size, height: size - 10))
+        context.setFillColor(deviceColor(0, 0, 0.5, in: colorSpace))
+        context.fill(CGRect(x: 30, y: 30, width: 40, height: 40))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!))
+        #expect(result.shapes.count == 1, "the opaque white card should be excluded as background, leaving only the navy square")
+    }
+
     /// Three separate, distinctly-colored squares on a white background:
     /// the multi-color segmentation path (spec §8) should recover all three
     /// regions with their correct colors, not merge them into one region

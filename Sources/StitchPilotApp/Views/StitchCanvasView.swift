@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import StitchPilotCore
 
 /// Two preview modes, switchable at any time once a stitch plan exists:
@@ -25,13 +26,25 @@ struct StitchCanvasView: View {
     /// user-visible latency for a design with many objects.
     var colors: [ThreadColor] = []
     var hoop: HoopProfile?
-    /// The object currently selected in the object list, highlighted in the
-    /// canvas so the user can see which shape they're working on.
-    var selectedObjectID: EmbroideryObject.ID?
-    /// Called with the tapped object's id, or nil when the tap missed every
-    /// object -- lets the user click directly on a shape to select it, the
-    /// same selection the object list's own row-tap already produces.
-    var onSelectObject: (EmbroideryObject.ID?) -> Void = { _ in }
+    /// Every object currently selected in the object list, highlighted in
+    /// the canvas so the user can see which shapes they're working on --
+    /// more than one when the user has rubber-band- or shift-selected
+    /// several, e.g. to merge them.
+    var selectedObjectIDs: Set<EmbroideryObject.ID> = []
+    /// Called with the tapped object's id (added to or replacing the
+    /// selection depending on shift), or an empty set when a plain tap
+    /// missed every object -- lets the user click directly on a shape to
+    /// select it, the same selection the object list's own row-tap already
+    /// produces. Rubber-band drags go through this too.
+    var onSelectionChange: (Set<EmbroideryObject.ID>) -> Void = { _ in }
+    /// Whether the paint tool is active -- while true, click/drag draws a
+    /// brush stroke (`onPaintStroke`) instead of selecting or panning.
+    var isPaintMode: Bool = false
+    var paintColor: Color = .black
+    var paintBrushRadiusMM: Double = 1.5
+    /// Called with a completed stroke's points, in document space (mm),
+    /// once the user releases after painting.
+    var onPaintStroke: ([Point2D]) -> Void = { _ in }
 
     @State private var mode: StitchPreviewMode = .realistic
     @State private var realisticImage: CGImage?
@@ -47,6 +60,15 @@ struct StitchCanvasView: View {
     @State private var panOffset: CGSize = .zero
     @State private var lastPanOffset: CGSize = .zero
     @State private var showGrid = false
+
+    /// Rubber-band selection box, in view (canvas) coordinates, while a
+    /// selection drag is in progress -- nil the rest of the time.
+    @State private var rubberBandRect: CGRect?
+    /// The in-progress paint stroke's points, in document space (mm), so
+    /// the live preview and the final `onPaintStroke` callback both use
+    /// the same coordinates the merge engine expects.
+    @State private var currentStrokePoints: [Point2D] = []
+    @State private var isDragActive = false
 
     var body: some View {
         GeometryReader { geo in
@@ -79,19 +101,33 @@ struct StitchCanvasView: View {
                                     style: StrokeStyle(lineWidth: 1.5))
                 }
 
+                func drawOverlays() {
+                    if showGrid { drawSizeGrid(document, context: context, toView: toView, effectiveScale: effectiveScale) }
+                    drawSelectionHighlight(document, context: context, toView: toView)
+                    if isPaintMode, currentStrokePoints.count > 1 {
+                        var path = Path()
+                        path.move(to: toView(currentStrokePoints[0]))
+                        for p in currentStrokePoints.dropFirst() { path.addLine(to: toView(p)) }
+                        context.stroke(path, with: .color(paintColor.opacity(0.55)),
+                                       style: StrokeStyle(lineWidth: max(2, CGFloat(paintBrushRadiusMM * 2) * effectiveScale), lineCap: .round, lineJoin: .round))
+                    }
+                    if let rubberBandRect {
+                        context.fill(Path(rubberBandRect), with: .color(.accentColor.opacity(0.12)))
+                        context.stroke(Path(rubberBandRect), with: .color(.accentColor), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    }
+                }
+
                 guard let stitchPlan else {
                     // No plan yet -- nothing to preview realistically, so
                     // always show the artwork reference fill regardless of mode.
                     drawArtworkFill(document, context: context, toView: toView, opacity: 0.85)
-                    if showGrid { drawSizeGrid(document, context: context, toView: toView, effectiveScale: effectiveScale) }
-                    drawSelectionHighlight(document, context: context, toView: toView)
+                    drawOverlays()
                     return
                 }
 
                 if mode == .realistic, let realisticImage {
                     context.draw(Image(decorative: realisticImage, scale: 1, orientation: .up), in: boundsRect)
-                    if showGrid { drawSizeGrid(document, context: context, toView: toView, effectiveScale: effectiveScale) }
-                    drawSelectionHighlight(document, context: context, toView: toView)
+                    drawOverlays()
                     return
                 }
 
@@ -139,12 +175,16 @@ struct StitchCanvasView: View {
                 }
                 flushStitchPath()
                 context.stroke(jumpPath, with: .color(.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 2]))
-                if showGrid { drawSizeGrid(document, context: context, toView: toView, effectiveScale: effectiveScale) }
-                drawSelectionHighlight(document, context: context, toView: toView)
+                drawOverlays()
             }
             .simultaneousGesture(
                 SpatialTapGesture()
-                    .onEnded { value in selectObject(at: value.location, in: geo.size) }
+                    .onEnded { value in handleTap(at: value.location, in: geo.size) }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in handleDragChanged(value, size: geo.size) }
+                    .onEnded { value in handleDragEnded(value, size: geo.size) }
             )
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -155,15 +195,6 @@ struct StitchCanvasView: View {
                     lastZoomScale = zoomScale
                     if zoomScale <= 1.0 { panOffset = .zero; lastPanOffset = .zero }
                 }
-        )
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 2)
-                .onChanged { value in
-                    guard zoomScale > 1.01 else { return }
-                    panOffset = CGSize(width: lastPanOffset.width + value.translation.width,
-                                        height: lastPanOffset.height + value.translation.height)
-                }
-                .onEnded { _ in lastPanOffset = panOffset }
         )
         .overlay(alignment: .top) {
             if stitchPlan != nil {
@@ -204,6 +235,15 @@ struct StitchCanvasView: View {
                 .padding(12)
             }
         }
+        .overlay(alignment: .top) {
+            if isPaintMode {
+                Text(selectedObjectIDs.count == 1 ? "Painting extends the selected object" : "Painting creates a new shape")
+                    .font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.top, 44)
+            }
+        }
         .onAppear { regenerateRealisticImageIfNeeded() }
         .onChange(of: mode) { _ in regenerateRealisticImageIfNeeded() }
         .onChange(of: planSignature) { _ in regenerateRealisticImageIfNeeded() }
@@ -217,10 +257,10 @@ struct StitchCanvasView: View {
     }
 
     /// The same fit-to-view + zoom/pan math the `Canvas` draw pass uses,
-    /// pulled out so hit-testing (`selectObject`) can convert a click back
-    /// to document-space coordinates with the exact same transform that put
-    /// the shapes on screen -- computing this twice, slightly differently,
-    /// would make clicks land on the wrong object right at the edges.
+    /// pulled out so hit-testing can convert a click back to document-space
+    /// coordinates with the exact same transform that put the shapes on
+    /// screen -- computing this twice, slightly differently, would make
+    /// clicks land on the wrong object right at the edges.
     private func computeTransform(document: StitchDocument, size: CGSize) -> CanvasTransform? {
         guard document.physicalWidthMM > 0, document.physicalHeightMM > 0 else { return nil }
         let margin: CGFloat = 24
@@ -238,23 +278,89 @@ struct StitchCanvasView: View {
                                 centerY: margin + availableH / 2 + panOffset.height)
     }
 
-    /// Hit-tests a click against every object's shape (even-odd across its
-    /// subpaths, so a click inside a hole -- a letter's counter -- correctly
-    /// misses), topmost-drawn object first since later objects are drawn
-    /// over earlier ones. A click that misses everything deselects, the
-    /// same as clicking empty canvas does in other design tools.
-    private func selectObject(at location: CGPoint, in size: CGSize) {
-        guard let document, let transform = computeTransform(document: document, size: size) else { return }
-        let docPoint = Point2D((location.x - transform.centerX) / transform.scale + document.physicalWidthMM / 2,
-                                (location.y - transform.centerY) / transform.scale + document.physicalHeightMM / 2)
+    private func docPoint(from location: CGPoint, document: StitchDocument, transform: CanvasTransform) -> Point2D {
+        Point2D((location.x - transform.centerX) / transform.scale + document.physicalWidthMM / 2,
+                 (location.y - transform.centerY) / transform.scale + document.physicalHeightMM / 2)
+    }
+
+    private func objectID(at docPoint: Point2D, in document: StitchDocument) -> EmbroideryObject.ID? {
         for object in document.objects.reversed() {
             let polygons = object.shape.subPaths.map { $0.points }
-            if PolygonGeometry.pointInPolygons(docPoint, polygons: polygons) {
-                onSelectObject(object.id)
-                return
-            }
+            if PolygonGeometry.pointInPolygons(docPoint, polygons: polygons) { return object.id }
         }
-        onSelectObject(nil)
+        return nil
+    }
+
+    /// A plain tap selects just the tapped object (or clears the selection
+    /// if it missed); a shift-tap toggles that one object in/out of
+    /// whatever's already selected, the standard multi-select convention.
+    /// In paint mode a tap instead paints a single dab at that point --
+    /// the zero-length case of a stroke, using the same code path a drag
+    /// does.
+    private func handleTap(at location: CGPoint, in size: CGSize) {
+        guard let document, let transform = computeTransform(document: document, size: size) else { return }
+        let point = docPoint(from: location, document: document, transform: transform)
+        if isPaintMode {
+            onPaintStroke([point])
+            return
+        }
+        let hit = objectID(at: point, in: document)
+        if NSEvent.modifierFlags.contains(.shift) {
+            guard let hit else { return }
+            var updated = selectedObjectIDs
+            if updated.contains(hit) { updated.remove(hit) } else { updated.insert(hit) }
+            onSelectionChange(updated)
+        } else {
+            onSelectionChange(hit.map { [$0] } ?? [])
+        }
+    }
+
+    private func handleDragChanged(_ value: DragGesture.Value, size: CGSize) {
+        if isPaintMode {
+            guard let document, let transform = computeTransform(document: document, size: size) else { return }
+            if !isDragActive { isDragActive = true; currentStrokePoints = [] }
+            currentStrokePoints.append(docPoint(from: value.location, document: document, transform: transform))
+            return
+        }
+        if zoomScale > 1.01 {
+            panOffset = CGSize(width: lastPanOffset.width + value.translation.width,
+                                height: lastPanOffset.height + value.translation.height)
+        } else {
+            rubberBandRect = CGRect(x: min(value.startLocation.x, value.location.x), y: min(value.startLocation.y, value.location.y),
+                                     width: abs(value.location.x - value.startLocation.x), height: abs(value.location.y - value.startLocation.y))
+        }
+    }
+
+    private func handleDragEnded(_ value: DragGesture.Value, size: CGSize) {
+        if isPaintMode {
+            isDragActive = false
+            onPaintStroke(currentStrokePoints)
+            currentStrokePoints = []
+            return
+        }
+        if zoomScale > 1.01 {
+            lastPanOffset = panOffset
+            return
+        }
+        defer { rubberBandRect = nil }
+        guard let rect = rubberBandRect, let document, let transform = computeTransform(document: document, size: size) else { return }
+        let corner1 = docPoint(from: CGPoint(x: rect.minX, y: rect.minY), document: document, transform: transform)
+        let corner2 = docPoint(from: CGPoint(x: rect.maxX, y: rect.maxY), document: document, transform: transform)
+        let selectionBox = BoundingBox(minX: min(corner1.x, corner2.x), minY: min(corner1.y, corner2.y),
+                                        maxX: max(corner1.x, corner2.x), maxY: max(corner1.y, corner2.y))
+        var hits: Set<EmbroideryObject.ID> = []
+        for object in document.objects where boxesIntersect(object.shape.boundingBox, selectionBox) {
+            hits.insert(object.id)
+        }
+        // A drag too small to plausibly be an intentional rubber band (a
+        // near-click that happened to trip the 1pt drag threshold) selects
+        // nothing rather than everything under a 1x1 box at the pointer.
+        guard rect.width > 2 || rect.height > 2 else { return }
+        onSelectionChange(NSEvent.modifierFlags.contains(.shift) ? selectedObjectIDs.union(hits) : hits)
+    }
+
+    private func boxesIntersect(_ a: BoundingBox, _ b: BoundingBox) -> Bool {
+        a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
     }
 
     private func clampZoom(_ value: CGFloat) -> CGFloat { min(max(value, 1.0), 8.0) }
@@ -302,22 +408,23 @@ struct StitchCanvasView: View {
         }
     }
 
-    /// Outlines the selected object's shape in an accent color so the user
-    /// can see which object the Object Inspector is currently editing,
-    /// regardless of preview mode -- drawn last, on top of everything else,
-    /// with a white halo underneath so it stays visible against any thread
-    /// or background color.
+    /// Outlines every selected object's shape in an accent color so the
+    /// user can see what's selected regardless of preview mode -- drawn
+    /// last, on top of everything else, with a white halo underneath so it
+    /// stays visible against any thread or background color.
     private func drawSelectionHighlight(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint) {
-        guard let selectedObjectID, let object = document.objects.first(where: { $0.id == selectedObjectID }) else { return }
-        var path = Path()
-        for subPath in object.shape.subPaths {
-            guard let first = subPath.points.first else { continue }
-            path.move(to: toView(first))
-            for pt in subPath.points.dropFirst() { path.addLine(to: toView(pt)) }
-            if subPath.closed { path.closeSubpath() }
+        guard !selectedObjectIDs.isEmpty else { return }
+        for object in document.objects where selectedObjectIDs.contains(object.id) {
+            var path = Path()
+            for subPath in object.shape.subPaths {
+                guard let first = subPath.points.first else { continue }
+                path.move(to: toView(first))
+                for pt in subPath.points.dropFirst() { path.addLine(to: toView(pt)) }
+                if subPath.closed { path.closeSubpath() }
+            }
+            context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: 4.5, lineJoin: .round))
+            context.stroke(path, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round, dash: [6, 4]))
         }
-        context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: 4.5, lineJoin: .round))
-        context.stroke(path, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round, dash: [6, 4]))
     }
 
     /// Overlays a size-reference grid across the design's own bounds (not

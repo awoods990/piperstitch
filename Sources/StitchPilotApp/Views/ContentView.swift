@@ -20,6 +20,17 @@ private func cmBinding(_ mmBinding: Binding<Double?>, defaultManualValueMM: Doub
     )
 }
 
+/// `NSColor.getRed(_:green:blue:alpha:)` can throw for colors outside the
+/// RGB-convertible color spaces (some system picker selections use
+/// catalog/pattern colors) -- converting to a known RGB space first avoids
+/// that rather than crashing on an unlucky pick from a color swatch.
+private func rgbColor(from color: Color) -> StitchPilotCore.RGBColor {
+    let nsColor = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    nsColor.getRed(&r, green: &g, blue: &b, alpha: &a)
+    return StitchPilotCore.RGBColor(r: UInt8(max(0, min(255, r * 255))), g: UInt8(max(0, min(255, g * 255))), b: UInt8(max(0, min(255, b * 255))))
+}
+
 struct ContentView: View {
     @EnvironmentObject var app: AppState
     @State private var isTargeted = false
@@ -36,8 +47,12 @@ struct ContentView: View {
 
             ZStack {
                 StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, colors: app.lastColorSequence,
-                                  hoop: app.selectedHoop, selectedObjectID: app.selectedObjectID,
-                                  onSelectObject: { app.selectedObjectID = $0 })
+                                  hoop: app.selectedHoop, selectedObjectIDs: app.selectedObjectIDs,
+                                  onSelectionChange: { app.selectedObjectIDs = $0 },
+                                  isPaintMode: app.isPaintMode,
+                                  paintColor: Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255),
+                                  paintBrushRadiusMM: app.paintBrushRadiusMM,
+                                  onPaintStroke: { app.paintStroke(points: $0, radiusMM: app.paintBrushRadiusMM) })
                 if app.document == nil {
                     dropPrompt
                 }
@@ -149,6 +164,34 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup {
+                Button {
+                    app.mergeSelectedShapesIntoOneObject()
+                } label: {
+                    Label("Merge Shapes", systemImage: "puzzlepiece")
+                }
+                .disabled(!app.canMergeSelectedShapes)
+                .help("Join the selected objects' outlines into one shape -- fixes a letter or detail that came in as several disconnected fragments. Rubber-band or shift-click several objects first.")
+
+                Button {
+                    app.isPaintMode.toggle()
+                } label: {
+                    Label("Paint", systemImage: "paintbrush.pointed")
+                }
+                .tint(app.isPaintMode ? Color.accentColor : nil)
+                .help("Draw in missing coverage by hand -- extends the selected object, or draws a new shape if nothing's selected.")
+                if app.isPaintMode {
+                    Slider(value: cmBinding($app.paintBrushRadiusMM), in: 0.05...1.0)
+                        .frame(width: 90)
+                        .help("Brush size")
+                    ColorPicker("", selection: Binding(
+                        get: { Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255) },
+                        set: { app.paintColorRGB = rgbColor(from: $0) }
+                    ), supportsOpacity: false)
+                    .labelsHidden()
+                }
+            }
+
+            ToolbarItemGroup {
                 // "Export" saves a file to disk -- a download, not an
                 // upload, hence the down-arrow icon (an earlier version of
                 // this button used an up-arrow, which reads as "send," the
@@ -242,7 +285,7 @@ private struct ObjectListView: View {
             Text("Objects").font(.headline).padding(12)
             Divider()
             if let document = app.document, !document.objects.isEmpty {
-                List(document.objects, selection: $app.selectedObjectID) { object in
+                List(document.objects, selection: $app.selectedObjectIDs) { object in
                     HStack {
                         Circle()
                             .fill(Color(red: Double(object.threadColor.rgb.r) / 255,
@@ -259,7 +302,7 @@ private struct ObjectListView: View {
                     .tag(object.id)
                     .contextMenu {
                         Button("Delete Object", role: .destructive) {
-                            app.selectedObjectID = object.id
+                            app.selectedObjectIDs = [object.id]
                             app.deleteSelectedObject()
                         }
                     }
@@ -287,6 +330,8 @@ private struct InspectorView: View {
         Form {
             if app.selectedObject != nil {
                 ObjectInspectorSection()
+            } else if app.selectedObjectIDs.count > 1 {
+                MultiSelectionSection()
             }
 
             Section("Finished Size") {
@@ -429,6 +474,36 @@ private struct InspectorView: View {
                 Text(String(format: "%.3f", cmValue.wrappedValue)).foregroundStyle(.secondary).monospacedDigit()
             }
             Slider(value: cmValue, in: 0.02...0.10, step: 0.005)
+        }
+    }
+}
+
+/// Shown instead of the single-object editor once the user has rubber-band-
+/// or shift-selected more than one object -- editing individual stitch
+/// parameters doesn't make sense for several objects at once, but merging
+/// or deleting them together does (spec: fix a letter/logo detail that
+/// digitized as several disconnected fragments without needing to
+/// understand why it fragmented -- select the pieces, merge them).
+private struct MultiSelectionSection: View {
+    @EnvironmentObject var app: AppState
+
+    var body: some View {
+        Section("Selected Objects") {
+            Text("\(app.selectedObjectIDs.count) objects selected")
+                .font(.headline)
+            Button {
+                app.mergeSelectedShapesIntoOneObject()
+            } label: {
+                Label("Merge into One Shape", systemImage: "arrow.triangle.merge")
+            }
+            Button(role: .destructive) {
+                app.deleteSelectedObject()
+            } label: {
+                Label("Delete Selected", systemImage: "trash")
+            }
+            Text("Drag a box around several broken pieces on the canvas (or shift-click them) to select them, then merge.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -740,14 +815,4 @@ private struct ThreadLibrarySheet: View {
         .frame(width: 380, height: 420)
     }
 
-    /// `NSColor.getRed(_:green:blue:alpha:)` can throw for colors outside
-    /// the RGB-convertible color spaces (some system picker selections use
-    /// catalog/pattern colors) -- converting to a known RGB space first
-    /// avoids that rather than crashing on an unlucky pick from the swatch grid.
-    private func rgbColor(from color: Color) -> StitchPilotCore.RGBColor {
-        let nsColor = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        nsColor.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return StitchPilotCore.RGBColor(r: UInt8(max(0, min(255, r * 255))), g: UInt8(max(0, min(255, g * 255))), b: UInt8(max(0, min(255, b * 255))))
-    }
 }

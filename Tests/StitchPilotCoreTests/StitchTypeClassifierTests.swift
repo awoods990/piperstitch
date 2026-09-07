@@ -20,6 +20,40 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: column, parameters: defaultParams) == .satin)
     }
 
+    /// 1.2mm is below the current 1.5mm minimum satin width but was above
+    /// the old 1.0mm default -- guards the raised default itself, not just
+    /// the classifier logic around it.
+    @Test func widthJustBelowTheRaisedMinimumBecomesRunningStitch() {
+        let almostThinEnough = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 1.2), Point2D(0, 1.2),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: almostThinEnough, parameters: defaultParams) == .runningStitch)
+    }
+
+    /// A uniform 10mm-wide column sits in the "medium, shape-dependent"
+    /// 8-12mm band but is exactly the kind of shape that band is meant to
+    /// keep as satin -- a real column, not a blob that happens to average
+    /// out to a medium width.
+    @Test func uniformColumnInTheMediumBandStaysSatin() {
+        let uniformColumn = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(40, 0), Point2D(40, 10), Point2D(0, 10),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: uniformColumn, parameters: defaultParams) == .satin)
+    }
+
+    /// A trapezoid tapering from 2mm to 18mm wide averages out to the same
+    /// 10mm as the uniform column above (matching `area / length` exactly),
+    /// but its actual width varies enormously along its length -- this is
+    /// the "depends on the shape" case the medium band is supposed to catch
+    /// and route to tatami instead, since satin doesn't sew a real 18mm-
+    /// wide region well just because the *average* looked medium.
+    @Test func wildlyTaperingShapeInTheMediumBandBecomesTatami() {
+        let taperingBlob = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, -1), Point2D(40, -9), Point2D(40, 9), Point2D(0, 1),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: taperingBlob, parameters: defaultParams) == .tatamiFill)
+    }
+
     @Test func wideBlobBecomesTatamiFill() {
         // 40mm x 40mm square -- far too wide for satin.
         let blob = VectorShape(subPaths: [SubPath(points: [
@@ -29,7 +63,7 @@ struct StitchTypeClassifierTests {
     }
 
     @Test func customMinSatinWidthIsRespected() {
-        // Same 4mm column that classifies as satin under the default 1.0mm
+        // Same 4mm column that classifies as satin under the default 1.5mm
         // minimum -- raising the per-object minimum should push it below
         // the threshold instead.
         var params = defaultParams

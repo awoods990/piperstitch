@@ -107,18 +107,38 @@ final class AppState: ObservableObject {
         loadCustomThreadLibrary()
     }
 
-    /// The object list's current selection, for manual per-object parameter
-    /// overrides (the Object Inspector). Self-healing rather than reset
-    /// everywhere a new object set replaces the old one (import, resize,
-    /// project load all mint fresh `EmbroideryObject` ids): `selectedObject`
-    /// below simply returns nil once the id no longer matches anything in
-    /// the current document, which naturally clears the inspector.
-    @Published var selectedObjectID: EmbroideryObject.ID?
+    /// The object list's current selection -- a set so the canvas's
+    /// rubber-band select and shift-click can select several objects at
+    /// once (needed for "Merge Shapes"), not just one. Self-healing rather
+    /// than reset everywhere a new object set replaces the old one (import,
+    /// resize, project load all mint fresh `EmbroideryObject` ids):
+    /// `selectedObjects` below simply drops any id that no longer matches
+    /// anything in the current document, which naturally clears the
+    /// inspector/selection highlight.
+    @Published var selectedObjectIDs: Set<EmbroideryObject.ID> = []
+
+    /// The single selected object, for the Object Inspector's per-object
+    /// editor -- nil both when nothing is selected and when several things
+    /// are (multi-selection has its own, reduced UI; editing individual
+    /// stitch parameters only makes sense for exactly one object at a time).
+    var selectedObjectID: EmbroideryObject.ID? {
+        selectedObjectIDs.count == 1 ? selectedObjectIDs.first : nil
+    }
 
     var selectedObject: EmbroideryObject? {
         guard let id = selectedObjectID, let document else { return nil }
         return document.objects.first { $0.id == id }
     }
+
+    /// Every currently-selected object, in document order -- for bulk
+    /// actions (Merge Shapes, bulk delete) that operate on however many
+    /// are selected, one or many.
+    var selectedObjects: [EmbroideryObject] {
+        guard let document else { return [] }
+        return document.objects.filter { selectedObjectIDs.contains($0.id) }
+    }
+
+    var canMergeSelectedShapes: Bool { selectedObjectIDs.count >= 2 }
 
     /// Applies `transform` to the selected object's stored copy in the
     /// document (spec: manual per-object overrides before export). This
@@ -136,16 +156,18 @@ final class AppState: ObservableObject {
         scheduleLiveRegenerate()
     }
 
-    /// Removes the selected object entirely (spec: let the user edit the
-    /// file, not just tweak per-object parameters) -- e.g. dropping a
-    /// mis-detected speck or a background shape the auto-import picked up.
+    /// Removes every currently-selected object (spec: let the user edit
+    /// the file, not just tweak per-object parameters) -- e.g. dropping a
+    /// mis-detected speck or a background shape the auto-import picked up,
+    /// one at a time or several at once via multi-select.
     func deleteSelectedObject() {
-        guard let id = selectedObjectID, var current = document,
-              let index = current.objects.firstIndex(where: { $0.id == id }) else { return }
+        guard var current = document, !selectedObjectIDs.isEmpty else { return }
+        let ids = selectedObjectIDs
+        guard current.objects.contains(where: { ids.contains($0.id) }) else { return }
         commitImmediateUndoSnapshot()
-        current.objects.remove(at: index)
+        current.objects.removeAll { ids.contains($0.id) }
         document = current
-        selectedObjectID = nil
+        selectedObjectIDs = []
         scheduleLiveRegenerate()
     }
 
@@ -165,6 +187,94 @@ final class AppState: ObservableObject {
         scheduleLiveRegenerate()
     }
 
+    /// Joins every currently-selected object's geometry into a single
+    /// object -- the fix for the "last 10%" of a digitize where a letter
+    /// or logo detail came in as several disconnected fragments (most
+    /// often anti-aliasing noise breaking up what should be one solid
+    /// shape). Select the pieces (rubber-band or shift-click on the
+    /// canvas, or in the object list) and merge them back into one clean
+    /// piece without needing to know *why* it fragmented. Uses
+    /// `ShapeMerger`'s rasterize-and-retrace approach rather than true
+    /// polygon union, which this engine doesn't otherwise implement --
+    /// fine for joining a handful of nearby fragments, not a general
+    /// vector-boolean tool.
+    func mergeSelectedShapesIntoOneObject() {
+        guard var current = document else { return }
+        let ids = selectedObjectIDs
+        let selected = current.objects.filter { ids.contains($0.id) }
+        guard selected.count >= 2 else { return }
+        guard let mergedShape = ShapeMerger.merge(selected.map { $0.shape }) else {
+            errorMessage = "Couldn't merge the selected shapes."
+            return
+        }
+        commitImmediateUndoSnapshot()
+
+        let firstIndex = current.objects.firstIndex(where: { ids.contains($0.id) }) ?? current.objects.count
+        let representative = selected[0]
+        let parameters = StitchGenerationParameters()
+        let stitchType = StitchTypeClassifier.classify(shape: mergedShape, parameters: parameters)
+        let merged = EmbroideryObject(name: representative.name, shape: mergedShape, stitchType: stitchType,
+                                       threadColor: representative.threadColor, parameters: parameters)
+        current.objects.removeAll { ids.contains($0.id) }
+        current.objects.insert(merged, at: min(firstIndex, current.objects.count))
+        document = current
+        selectedObjectIDs = [merged.id]
+        scheduleLiveRegenerate()
+        statusMessage = "Merged \(ids.count) objects into one."
+    }
+
+    // MARK: - Paint (manual coverage fix, spec: "shade in the rest of an
+    // area if the app only captures part of the shape")
+
+    @Published var isPaintMode = false {
+        didSet {
+            // Painting and multi-selecting are two different tools sharing
+            // the same click-and-drag gesture on the canvas; clearing the
+            // selection when entering paint mode keeps the two from
+            // fighting over what a drag means, and a fresh multi-selection
+            // left over from before wouldn't be an intentional "extend
+            // this object" target anyway.
+            guard isPaintMode, selectedObjectIDs.count > 1 else { return }
+            selectedObjectIDs = []
+        }
+    }
+    @Published var paintBrushRadiusMM: Double = 1.5
+    @Published var paintColorRGB = StitchPilotCore.RGBColor(hex: 0x000000)
+
+    /// Extends the single selected object's shape with a freehand brush
+    /// stroke, or -- if nothing is selected -- creates a brand-new object
+    /// from the stroke alone. A paint tool rather than a vector-editing
+    /// one specifically so fixing a gap doesn't require understanding why
+    /// the gap happened, just seeing it and drawing over it.
+    func paintStroke(points: [Point2D], radiusMM: Double) {
+        guard radiusMM > 0, !points.isEmpty, var current = document else { return }
+
+        if let id = selectedObjectID, let index = current.objects.firstIndex(where: { $0.id == id }) {
+            guard let extended = ShapeMerger.mergeWithStroke([current.objects[index].shape], strokePoints: points, radiusMM: radiusMM) else { return }
+            commitImmediateUndoSnapshot()
+            current.objects[index].shape = extended
+            current.objects[index].stitchType = StitchTypeClassifier.classify(shape: extended, parameters: current.objects[index].parameters)
+            document = current
+            scheduleLiveRegenerate()
+            statusMessage = "Extended \(current.objects[index].name)."
+        } else {
+            guard let strokeShape = ShapeMerger.mergeWithStroke([], strokePoints: points, radiusMM: radiusMM) else { return }
+            commitImmediateUndoSnapshot()
+            let parameters = StitchGenerationParameters()
+            let stitchType = StitchTypeClassifier.classify(shape: strokeShape, parameters: parameters)
+            let threadColor = matchToThreadLibrary
+                ? (ThreadLibrary.nearestMatch(to: paintColorRGB, in: effectivePalette) ?? .generic(paintColorRGB, name: "Painted Color"))
+                : .generic(paintColorRGB, name: "Painted Color")
+            let newObject = EmbroideryObject(name: "Painted Shape", shape: strokeShape, stitchType: stitchType,
+                                              threadColor: threadColor, parameters: parameters)
+            current.objects.append(newObject)
+            document = current
+            selectedObjectIDs = [newObject.id]
+            scheduleLiveRegenerate()
+            statusMessage = "Added a new painted shape."
+        }
+    }
+
     // MARK: - Undo
 
     /// Snapshots only what a user-visible edit can actually change: the
@@ -177,7 +287,7 @@ final class AppState: ObservableObject {
         var document: StitchDocument?
         var physicalWidthMM: Double
         var physicalHeightMM: Double
-        var selectedObjectID: EmbroideryObject.ID?
+        var selectedObjectIDs: Set<EmbroideryObject.ID>
     }
 
     @Published private(set) var canUndo = false
@@ -187,7 +297,7 @@ final class AppState: ObservableObject {
     private var undoCommitTask: Task<Void, Never>?
 
     private func currentUndoSnapshot() -> UndoSnapshot {
-        UndoSnapshot(document: document, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, selectedObjectID: selectedObjectID)
+        UndoSnapshot(document: document, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, selectedObjectIDs: selectedObjectIDs)
     }
 
     /// For edits that arrive as a rapid burst -- a slider drag firing on
@@ -253,7 +363,7 @@ final class AppState: ObservableObject {
         document = snapshot.document
         physicalWidthMM = snapshot.physicalWidthMM
         physicalHeightMM = snapshot.physicalHeightMM
-        selectedObjectID = snapshot.selectedObjectID
+        selectedObjectIDs = snapshot.selectedObjectIDs
         scheduleLiveRegenerate()
     }
 
@@ -289,7 +399,7 @@ final class AppState: ObservableObject {
         stitchPlan = nil
         readinessReport = nil
         lastColorSequence = []
-        selectedObjectID = nil
+        selectedObjectIDs = []
         lastRawShapes = []
         lastFillColors = []
         lastCombinedBounds = .empty
@@ -491,7 +601,7 @@ final class AppState: ObservableObject {
             return
         }
         commitImmediateUndoSnapshot()
-        selectedObjectID = nil
+        selectedObjectIDs = []
         regenerateFromStoredGeometry()
         autoDigitize()
         statusMessage = "Redone from the original artwork — edits made since import were discarded."

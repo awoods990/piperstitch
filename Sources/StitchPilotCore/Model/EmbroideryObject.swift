@@ -37,7 +37,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// per-crossing, since a column whose average is fine can still narrow
     /// below this in one section (e.g. a tapering stroke) without the
     /// classifier's single average ever seeing it.
-    public var minSatinWidthMM: Double = 1.0
+    public var minSatinWidthMM: Double = 1.5
 
     // Phase 2 — tatami fill
     public var fillSpacingMM: Double = 0.4
