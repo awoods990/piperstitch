@@ -35,6 +35,33 @@ struct ProjectFileTests {
         #expect(loaded.objects[0].shape.subPaths[0].points.count == 4)
     }
 
+    @Test func manualStitchTypeOverrideSurvivesRoundTrip() throws {
+        var original = makeDocument()
+        original.objects[0].stitchTypeIsManualOverride = true
+        let data = try ProjectFileFormat.write(original)
+        let loaded = try ProjectFileFormat.read(data)
+        #expect(loaded.objects[0].stitchTypeIsManualOverride == true)
+    }
+
+    /// A `.stitchpilot` file saved before `stitchTypeIsManualOverride`
+    /// existed has no such key in its JSON -- must still decode, treating
+    /// the object as not manually overridden (matching every object saved
+    /// under the old format, which were all auto-classified).
+    @Test func oldProjectFileWithoutManualOverrideKeyStillDecodes() throws {
+        let data = try ProjectFileFormat.write(makeDocument())
+        var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var document = try #require(json["document"] as? [String: Any])
+        var objects = try #require(document["objects"] as? [[String: Any]])
+        objects[0].removeValue(forKey: "stitchTypeIsManualOverride")
+        document["objects"] = objects
+        json["document"] = document
+        let strippedData = try JSONSerialization.data(withJSONObject: json)
+
+        let loaded = try ProjectFileFormat.read(strippedData)
+        #expect(loaded.objects[0].stitchTypeIsManualOverride == false)
+        #expect(loaded.objects[0].stitchType == .satin)
+    }
+
     @Test func loadedDocumentFlattensSuccessfully() throws {
         let data = try ProjectFileFormat.write(makeDocument())
         let loaded = try ProjectFileFormat.read(data)

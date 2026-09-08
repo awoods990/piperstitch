@@ -45,6 +45,16 @@ struct StitchCanvasView: View {
     /// Called with a completed stroke's points, in document space (mm),
     /// once the user releases after painting.
     var onPaintStroke: ([Point2D]) -> Void = { _ in }
+    /// Called with (dxMM, dyMM) once the user finishes dragging an
+    /// already-selected object (or group, e.g. a lettering group) to a new
+    /// position -- clicking directly on a selected shape and dragging
+    /// moves it, rather than starting a rubber-band selection.
+    var onMoveSelection: (Double, Double) -> Void = { _, _ in }
+    /// Called with the final scale factor and the fixed anchor point (the
+    /// corner opposite whichever handle was dragged, in document mm) once
+    /// the user finishes dragging a corner handle to resize the current
+    /// selection.
+    var onResizeSelection: (Double, Point2D) -> Void = { _, _ in }
 
     @State private var mode: StitchPreviewMode = .realistic
     @State private var realisticImage: CGImage?
@@ -77,6 +87,53 @@ struct StitchCanvasView: View {
     /// the same coordinates the merge engine expects.
     @State private var currentStrokePoints: [Point2D] = []
     @State private var isDragActive = false
+
+    /// Which of the four corners a selection's combined bounding box
+    /// resize handle represents -- `opposite` is the corner that stays
+    /// fixed in place while dragging this one, i.e. the scale anchor.
+    private enum SelectionCorner: CaseIterable {
+        case topLeft, topRight, bottomLeft, bottomRight
+        var opposite: SelectionCorner {
+            switch self {
+            case .topLeft: return .bottomRight
+            case .topRight: return .bottomLeft
+            case .bottomLeft: return .topRight
+            case .bottomRight: return .topLeft
+            }
+        }
+        func point(in box: BoundingBox) -> Point2D {
+            switch self {
+            case .topLeft: return Point2D(box.minX, box.minY)
+            case .topRight: return Point2D(box.maxX, box.minY)
+            case .bottomLeft: return Point2D(box.minX, box.maxY)
+            case .bottomRight: return Point2D(box.maxX, box.maxY)
+            }
+        }
+    }
+
+    /// What a drag currently means, decided once at the start of each
+    /// gesture (see `determineDragMode`) and held for its whole duration --
+    /// except `.pan`/`.rubberBand`, which stay live every call so Option
+    /// can be pressed or released mid-drag and it still does the right
+    /// thing (unchanged from before move/resize existed).
+    private enum CanvasDragMode {
+        case pan
+        case rubberBand
+        case moveSelection
+        case resizeSelection(anchorMM: Point2D, originalCornerMM: Point2D)
+    }
+    @State private var activeDragMode: CanvasDragMode?
+    /// Live in-progress move offset, in document mm, drawn as a ghost
+    /// outline of the selection during the drag -- the real objects aren't
+    /// touched until `handleDragEnded` commits via `onMoveSelection`.
+    @State private var liveMoveDeltaMM: (dx: Double, dy: Double) = (0, 0)
+    /// Live in-progress resize scale factor, likewise only a ghost preview
+    /// until commit via `onResizeSelection`.
+    @State private var liveResizeScale: Double = 1.0
+    /// A resize handle's hit-test radius in view points -- generous enough
+    /// to grab reliably without needing pixel-perfect precision on a small
+    /// glyph's corner.
+    private let handleHitRadius: CGFloat = 9
 
     var body: some View {
         GeometryReader { geo in
@@ -112,6 +169,10 @@ struct StitchCanvasView: View {
                 func drawOverlays() {
                     if showGrid { drawSizeGrid(document, context: context, toView: toView, effectiveScale: effectiveScale) }
                     drawSelectionHighlight(document, context: context, toView: toView)
+                    if !isPaintMode {
+                        drawLiveTransformGhost(document, context: context, toView: toView)
+                        drawResizeHandles(document, context: context, toView: toView)
+                    }
                     if isPaintMode, currentStrokePoints.count > 1 {
                         var path = Path()
                         path.move(to: toView(currentStrokePoints[0]))
@@ -313,6 +374,49 @@ struct StitchCanvasView: View {
         return nil
     }
 
+    /// The forward counterpart to `docPoint(from:document:transform:)` --
+    /// needed for resize-handle hit-testing in `determineDragMode`, which
+    /// runs outside the `Canvas` draw closure where the equivalent inline
+    /// `toView` closure lives.
+    private func viewPoint(from docPoint: Point2D, document: StitchDocument, transform: CanvasTransform) -> CGPoint {
+        CGPoint(x: transform.centerX + CGFloat(docPoint.x - document.physicalWidthMM / 2) * transform.scale,
+                y: transform.centerY + CGFloat(docPoint.y - document.physicalHeightMM / 2) * transform.scale)
+    }
+
+    /// The combined bounding box (document mm) of every currently-selected
+    /// object, or nil when nothing's selected -- the box the resize
+    /// handles sit on and the move/resize gestures operate against.
+    private func selectionBoundingBoxMM(_ document: StitchDocument) -> BoundingBox? {
+        guard !selectedObjectIDs.isEmpty else { return nil }
+        var box = BoundingBox.empty
+        for object in document.objects where selectedObjectIDs.contains(object.id) {
+            box = box.union(object.shape.boundingBox)
+        }
+        return box.isEmpty ? nil : box
+    }
+
+    /// Decides what a fresh drag gesture means, checked once at its start
+    /// (`value.startLocation` doesn't move during a gesture): Option always
+    /// pans; otherwise landing on a resize handle resizes, landing on an
+    /// already-selected object moves the selection, and anything else
+    /// starts a rubber-band selection -- the existing behavior.
+    private func determineDragMode(startLocation: CGPoint, document: StitchDocument, transform: CanvasTransform) -> CanvasDragMode {
+        if NSEvent.modifierFlags.contains(.option) { return .pan }
+        if let box = selectionBoundingBoxMM(document) {
+            for corner in SelectionCorner.allCases {
+                let handleView = viewPoint(from: corner.point(in: box), document: document, transform: transform)
+                if hypot(startLocation.x - handleView.x, startLocation.y - handleView.y) <= handleHitRadius {
+                    return .resizeSelection(anchorMM: corner.opposite.point(in: box), originalCornerMM: corner.point(in: box))
+                }
+            }
+        }
+        let startDoc = docPoint(from: startLocation, document: document, transform: transform)
+        if let hit = objectID(at: startDoc, in: document), selectedObjectIDs.contains(hit) {
+            return .moveSelection
+        }
+        return .rubberBand
+    }
+
     /// A plain tap selects just the tapped object (or clears the selection
     /// if it missed); a shift-tap toggles that one object in/out of
     /// whatever's already selected, the standard multi-select convention.
@@ -344,20 +448,42 @@ struct StitchCanvasView: View {
             currentStrokePoints.append(docPoint(from: value.location, document: document, transform: transform))
             return
         }
-        // Plain drag always rubber-band selects, at any zoom level -- Option
-        // is the pan modifier instead (checked live, every call, so it
-        // still works correctly if the key is pressed or released partway
-        // through a drag). Previously a drag panned whenever zoomed in at
-        // all, which left no way to rubber-band select once zoomed --
-        // exactly the situation selecting several small, now-close-together
-        // objects (to merge or replace with lettering) most needs zoom for.
-        if NSEvent.modifierFlags.contains(.option) {
-            panOffset = CGSize(width: lastPanOffset.width + value.translation.width,
-                                height: lastPanOffset.height + value.translation.height)
-            rubberBandRect = nil
-        } else {
-            rubberBandRect = CGRect(x: min(value.startLocation.x, value.location.x), y: min(value.startLocation.y, value.location.y),
-                                     width: abs(value.location.x - value.startLocation.x), height: abs(value.location.y - value.startLocation.y))
+        guard let document, let transform = computeTransform(document: document, size: size) else { return }
+
+        if activeDragMode == nil {
+            activeDragMode = determineDragMode(startLocation: value.startLocation, document: document, transform: transform)
+        }
+
+        switch activeDragMode! {
+        case .pan, .rubberBand:
+            // Plain drag always rubber-band selects, at any zoom level --
+            // Option is the pan modifier instead (checked live, every
+            // call, so it still works correctly if the key is pressed or
+            // released partway through a drag). Previously a drag panned
+            // whenever zoomed in at all, which left no way to rubber-band
+            // select once zoomed -- exactly the situation selecting
+            // several small, now-close-together objects (to merge or
+            // replace with lettering) most needs zoom for.
+            if NSEvent.modifierFlags.contains(.option) {
+                panOffset = CGSize(width: lastPanOffset.width + value.translation.width,
+                                    height: lastPanOffset.height + value.translation.height)
+                rubberBandRect = nil
+                activeDragMode = .pan
+            } else {
+                rubberBandRect = CGRect(x: min(value.startLocation.x, value.location.x), y: min(value.startLocation.y, value.location.y),
+                                         width: abs(value.location.x - value.startLocation.x), height: abs(value.location.y - value.startLocation.y))
+                activeDragMode = .rubberBand
+            }
+        case .moveSelection:
+            liveMoveDeltaMM = (Double(value.translation.width) / Double(transform.scale),
+                                Double(value.translation.height) / Double(transform.scale))
+        case .resizeSelection(let anchorMM, let originalCornerMM):
+            let currentDoc = docPoint(from: value.location, document: document, transform: transform)
+            let anchorDist = hypot(originalCornerMM.x - anchorMM.x, originalCornerMM.y - anchorMM.y)
+            let currentDist = hypot(currentDoc.x - anchorMM.x, currentDoc.y - anchorMM.y)
+            // Floored well above zero so dragging a handle past its anchor
+            // can't collapse or invert the selection.
+            liveResizeScale = anchorDist > 0.0001 ? max(0.05, currentDist / anchorDist) : 1.0
         }
     }
 
@@ -368,27 +494,39 @@ struct StitchCanvasView: View {
             currentStrokePoints = []
             return
         }
-        // `rubberBandRect` is nil exactly when the drag ended in pan mode
-        // (Option held) -- `handleDragChanged` clears it there every call.
-        guard rubberBandRect != nil else {
+        defer { activeDragMode = nil }
+        guard let mode = activeDragMode else { return }
+
+        switch mode {
+        case .pan:
             lastPanOffset = panOffset
-            return
+            rubberBandRect = nil
+        case .rubberBand:
+            defer { rubberBandRect = nil }
+            guard let rect = rubberBandRect, let document, let transform = computeTransform(document: document, size: size) else { return }
+            let corner1 = docPoint(from: CGPoint(x: rect.minX, y: rect.minY), document: document, transform: transform)
+            let corner2 = docPoint(from: CGPoint(x: rect.maxX, y: rect.maxY), document: document, transform: transform)
+            let selectionBox = BoundingBox(minX: min(corner1.x, corner2.x), minY: min(corner1.y, corner2.y),
+                                            maxX: max(corner1.x, corner2.x), maxY: max(corner1.y, corner2.y))
+            var hits: Set<EmbroideryObject.ID> = []
+            for object in document.objects where selectionBox.contains(object.shape.boundingBox) {
+                hits.insert(object.id)
+            }
+            // A drag too small to plausibly be an intentional rubber band
+            // (a near-click that happened to trip the 1pt drag threshold)
+            // selects nothing rather than everything under a 1x1 box at
+            // the pointer.
+            guard rect.width > 2 || rect.height > 2 else { return }
+            onSelectionChange(NSEvent.modifierFlags.contains(.shift) ? selectedObjectIDs.union(hits) : hits)
+        case .moveSelection:
+            defer { liveMoveDeltaMM = (0, 0) }
+            guard liveMoveDeltaMM.dx != 0 || liveMoveDeltaMM.dy != 0 else { return }
+            onMoveSelection(liveMoveDeltaMM.dx, liveMoveDeltaMM.dy)
+        case .resizeSelection(let anchorMM, _):
+            defer { liveResizeScale = 1.0 }
+            guard abs(liveResizeScale - 1) > 0.001 else { return }
+            onResizeSelection(liveResizeScale, anchorMM)
         }
-        defer { rubberBandRect = nil }
-        guard let rect = rubberBandRect, let document, let transform = computeTransform(document: document, size: size) else { return }
-        let corner1 = docPoint(from: CGPoint(x: rect.minX, y: rect.minY), document: document, transform: transform)
-        let corner2 = docPoint(from: CGPoint(x: rect.maxX, y: rect.maxY), document: document, transform: transform)
-        let selectionBox = BoundingBox(minX: min(corner1.x, corner2.x), minY: min(corner1.y, corner2.y),
-                                        maxX: max(corner1.x, corner2.x), maxY: max(corner1.y, corner2.y))
-        var hits: Set<EmbroideryObject.ID> = []
-        for object in document.objects where selectionBox.contains(object.shape.boundingBox) {
-            hits.insert(object.id)
-        }
-        // A drag too small to plausibly be an intentional rubber band (a
-        // near-click that happened to trip the 1pt drag threshold) selects
-        // nothing rather than everything under a 1x1 box at the pointer.
-        guard rect.width > 2 || rect.height > 2 else { return }
-        onSelectionChange(NSEvent.modifierFlags.contains(.shift) ? selectedObjectIDs.union(hits) : hits)
     }
 
     private func clampZoom(_ value: CGFloat) -> CGFloat { min(max(value, 1.0), 8.0) }
@@ -515,6 +653,50 @@ struct StitchCanvasView: View {
             }
             context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: 4.5, lineJoin: .round))
             context.stroke(path, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round, dash: [6, 4]))
+        }
+    }
+
+    /// While a move or resize drag is in progress, outlines the selected
+    /// shapes at their in-progress (not-yet-committed) position/size --
+    /// the underlying objects aren't touched until `handleDragEnded`
+    /// commits via `onMoveSelection`/`onResizeSelection`, so this is the
+    /// only feedback the user sees while dragging.
+    private func drawLiveTransformGhost(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint) {
+        let transform: AffineTransform2D
+        switch activeDragMode {
+        case .moveSelection:
+            guard liveMoveDeltaMM.dx != 0 || liveMoveDeltaMM.dy != 0 else { return }
+            transform = .translation(liveMoveDeltaMM.dx, liveMoveDeltaMM.dy)
+        case .resizeSelection(let anchorMM, _):
+            guard abs(liveResizeScale - 1) > 0.001 else { return }
+            transform = AffineTransform2D.translation(-anchorMM.x, -anchorMM.y)
+                .concatenating(.scale(liveResizeScale, liveResizeScale))
+                .concatenating(.translation(anchorMM.x, anchorMM.y))
+        case .pan, .rubberBand, nil:
+            return
+        }
+        for object in document.objects where selectedObjectIDs.contains(object.id) {
+            var path = Path()
+            for subPath in object.shape.subPaths {
+                guard let first = subPath.points.first else { continue }
+                path.move(to: toView(transform.apply(first)))
+                for pt in subPath.points.dropFirst() { path.addLine(to: toView(transform.apply(pt))) }
+                if subPath.closed { path.closeSubpath() }
+            }
+            context.stroke(path, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
+        }
+    }
+
+    /// Small draggable circles at the four corners of the selection's
+    /// combined bounding box -- click one and pull to resize the whole
+    /// selection, anchored at the opposite corner (`determineDragMode`).
+    private func drawResizeHandles(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint) {
+        guard let box = selectionBoundingBoxMM(document) else { return }
+        for corner in SelectionCorner.allCases {
+            let center = toView(corner.point(in: box))
+            let rect = CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)
+            context.fill(Path(ellipseIn: rect), with: .color(.white))
+            context.stroke(Path(ellipseIn: rect), with: .color(.accentColor), style: StrokeStyle(lineWidth: 1.5))
         }
     }
 

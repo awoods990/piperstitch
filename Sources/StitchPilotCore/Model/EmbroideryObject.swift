@@ -107,15 +107,42 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
     public var stitchType: StitchType
     public var threadColor: ThreadColor
     public var parameters: StitchGenerationParameters
+    /// True once the user has explicitly picked a stitch type for this
+    /// object (e.g. in the Object Inspector) rather than it coming from
+    /// auto-classification. Operations that re-derive `stitchType` from
+    /// geometry (such as resizing the whole design) must leave this object
+    /// alone once set, so a user's choice survives edits made afterward.
+    public var stitchTypeIsManualOverride: Bool = false
 
     public init(id: UUID = UUID(), name: String, shape: VectorShape, stitchType: StitchType,
-                threadColor: ThreadColor, parameters: StitchGenerationParameters = StitchGenerationParameters()) {
+                threadColor: ThreadColor, parameters: StitchGenerationParameters = StitchGenerationParameters(),
+                stitchTypeIsManualOverride: Bool = false) {
         self.id = id
         self.name = name
         self.shape = shape
         self.stitchType = stitchType
         self.threadColor = threadColor
         self.parameters = parameters
+        self.stitchTypeIsManualOverride = stitchTypeIsManualOverride
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, shape, stitchType, threadColor, parameters, stitchTypeIsManualOverride
+    }
+
+    /// Custom decoding so older `.stitchpilot` documents saved before
+    /// `stitchTypeIsManualOverride` existed keep loading (missing key
+    /// defaults to `false`, matching pre-existing objects that were all
+    /// auto-classified).
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        shape = try container.decode(VectorShape.self, forKey: .shape)
+        stitchType = try container.decode(StitchType.self, forKey: .stitchType)
+        threadColor = try container.decode(ThreadColor.self, forKey: .threadColor)
+        parameters = try container.decode(StitchGenerationParameters.self, forKey: .parameters)
+        stitchTypeIsManualOverride = try container.decodeIfPresent(Bool.self, forKey: .stitchTypeIsManualOverride) ?? false
     }
 }
 

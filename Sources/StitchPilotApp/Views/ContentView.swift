@@ -54,7 +54,9 @@ struct ContentView: View {
                                   isPaintMode: app.isPaintMode,
                                   paintColor: Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255),
                                   paintBrushRadiusMM: app.paintBrushRadiusMM,
-                                  onPaintStroke: { app.paintStroke(points: $0, radiusMM: app.paintBrushRadiusMM) })
+                                  onPaintStroke: { app.paintStroke(points: $0, radiusMM: app.paintBrushRadiusMM) },
+                                  onMoveSelection: { app.translateSelection(dxMM: $0, dyMM: $1) },
+                                  onResizeSelection: { app.scaleSelection(scale: $0, anchorMM: $1) })
                 if app.document == nil {
                     dropPrompt
                 }
@@ -575,7 +577,7 @@ private struct ObjectInspectorSection: View {
                     }
                 }
 
-                Picker("Stitch Type", selection: binding(object, \.stitchType)) {
+                Picker("Stitch Type", selection: stitchTypeBinding(object)) {
                     ForEach(StitchType.allCases, id: \.self) { type in
                         Text(label(for: type)).tag(type)
                     }
@@ -619,6 +621,22 @@ private struct ObjectInspectorSection: View {
         Binding(
             get: { app.selectedObject?[keyPath: keyPath] ?? object[keyPath: keyPath] },
             set: { newValue in app.updateSelectedObject { $0[keyPath: keyPath] = newValue } }
+        )
+    }
+
+    /// Picking a stitch type here is a deliberate user override, not a
+    /// side effect of geometry -- mark it so later operations that
+    /// re-derive stitch type from shape (e.g. resizing the whole design)
+    /// know to leave this object's choice alone.
+    private func stitchTypeBinding(_ object: EmbroideryObject) -> Binding<StitchType> {
+        Binding(
+            get: { app.selectedObject?.stitchType ?? object.stitchType },
+            set: { newValue in
+                app.updateSelectedObject {
+                    $0.stitchType = newValue
+                    $0.stitchTypeIsManualOverride = true
+                }
+            }
         )
     }
 
@@ -821,7 +839,14 @@ private struct AddLetteringSheet: View {
 
                 Picker("Font", selection: $selectedFontPostScriptName) {
                     ForEach(fonts, id: \.postScriptName) { font in
-                        Text(font.displayName).tag(font.postScriptName)
+                        Group {
+                            if let nsFont = NSFont(name: font.postScriptName, size: 15) {
+                                Text(font.displayName).font(Font(nsFont))
+                            } else {
+                                Text(font.displayName)
+                            }
+                        }
+                        .tag(font.postScriptName)
                     }
                 }
 
@@ -945,8 +970,8 @@ private struct DetectedTextSheet: View {
                         }
                         HStack {
                             Picker("Font", selection: $draft.fontPostScriptName) {
-                                Text("Helvetica Bold").tag("Helvetica-Bold")
-                                Text("Helvetica").tag("Helvetica")
+                                Text("Helvetica Bold").font(Font(NSFont(name: "Helvetica-Bold", size: 15) ?? NSFont.systemFont(ofSize: 15))).tag("Helvetica-Bold")
+                                Text("Helvetica").font(Font(NSFont(name: "Helvetica", size: 15) ?? NSFont.systemFont(ofSize: 15))).tag("Helvetica")
                             }
                             .labelsHidden()
                             .frame(width: 160)

@@ -234,6 +234,49 @@ final class AppState: ObservableObject {
         statusMessage = "Merged \(ids.count) objects into one."
     }
 
+    // MARK: - Move / resize selection (canvas drag, corner handles)
+
+    /// Translates every currently-selected object's shape by (dxMM, dyMM) --
+    /// dragging a selection around the canvas, most usefully a lettering
+    /// group (every glyph object is selected right after `addLettering`
+    /// adds it) but works for any selection. Regenerates from the moved
+    /// geometry like any other shape edit; stitch type is untouched since
+    /// moving doesn't change a shape's own dimensions.
+    func translateSelection(dxMM: Double, dyMM: Double) {
+        guard var current = document, !selectedObjectIDs.isEmpty, dxMM != 0 || dyMM != 0 else { return }
+        commitImmediateUndoSnapshot()
+        let transform = AffineTransform2D.translation(dxMM, dyMM)
+        for i in current.objects.indices where selectedObjectIDs.contains(current.objects[i].id) {
+            current.objects[i].shape = current.objects[i].shape.transformed(by: transform)
+        }
+        document = current
+        scheduleLiveRegenerate()
+    }
+
+    /// Scales every currently-selected object's shape by `scale`, anchored
+    /// at `anchorMM` (the corner opposite whichever resize handle was
+    /// dragged, so that corner stays fixed in place) -- dragging a
+    /// selection's corner handle to resize it, e.g. a lettering group.
+    /// Follows the same durability rule as `applyPhysicalSizeChange`: an
+    /// object whose stitch type the user already picked manually keeps it,
+    /// since resizing a shape shouldn't silently overwrite a deliberate
+    /// choice back to whatever auto-classification would produce.
+    func scaleSelection(scale: Double, anchorMM: Point2D) {
+        guard var current = document, !selectedObjectIDs.isEmpty, scale > 0, abs(scale - 1) > 0.001 else { return }
+        commitImmediateUndoSnapshot()
+        let transform = AffineTransform2D.translation(-anchorMM.x, -anchorMM.y)
+            .concatenating(.scale(scale, scale))
+            .concatenating(.translation(anchorMM.x, anchorMM.y))
+        for i in current.objects.indices where selectedObjectIDs.contains(current.objects[i].id) {
+            current.objects[i].shape = current.objects[i].shape.transformed(by: transform)
+            if !current.objects[i].stitchTypeIsManualOverride {
+                current.objects[i].stitchType = StitchTypeClassifier.classify(shape: current.objects[i].shape, parameters: current.objects[i].parameters)
+            }
+        }
+        document = current
+        scheduleLiveRegenerate()
+    }
+
     // MARK: - Paint (manual coverage fix, spec: "shade in the rest of an
     // area if the app only captures part of the shape")
 
@@ -738,7 +781,14 @@ final class AppState: ObservableObject {
             // that was digitized too small kept its illegible running-
             // stitch text illegible even at a size that could have sewn it
             // as clean satin.
-            resized.stitchType = StitchTypeClassifier.classify(shape: resized.shape, parameters: resized.parameters)
+            //
+            // But once the user has explicitly picked a stitch type for
+            // this object in the inspector, that choice is durable --
+            // resizing must not silently overwrite it back to whatever
+            // auto-classification would have produced.
+            if !resized.stitchTypeIsManualOverride {
+                resized.stitchType = StitchTypeClassifier.classify(shape: resized.shape, parameters: resized.parameters)
+            }
             return resized
         }
         document = StitchDocument(name: current.name, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: resizedObjects)

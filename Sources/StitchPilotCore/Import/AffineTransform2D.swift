@@ -44,3 +44,16 @@ public struct AffineTransform2D: Sendable {
         ((a * a + b * b).squareRoot() + (c * c + d * d).squareRoot()) / 2
     }
 }
+
+public extension VectorShape {
+    /// Applies an arbitrary affine transform to every point of every
+    /// sub-path -- the general-purpose move/resize used when the user
+    /// drags a selection on the canvas (translation) or its corner handle
+    /// (scale around an anchor), as opposed to `fitToPhysicalSize`'s
+    /// specific fit-and-center behavior.
+    func transformed(by transform: AffineTransform2D) -> VectorShape {
+        VectorShape(subPaths: subPaths.map { sp in
+            SubPath(points: sp.points.map { transform.apply($0) }, closed: sp.closed)
+        })
+    }
+}

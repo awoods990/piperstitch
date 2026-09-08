@@ -4,6 +4,49 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: the Add Lettering font picker shows each font rendered in itself
+
+Previously every entry in the "Font" dropdown was plain system-font text,
+so a name like "Brush Script" gave no idea what it actually looked like
+until picked. Each entry now renders in its own font.
+
+## Added: move and resize a selection directly on the canvas
+
+Clicking and dragging an already-selected object (or group -- every glyph
+of a just-added lettering group is selected automatically) now moves it,
+and four corner handles on the selection's bounding box let it be resized
+by dragging, anchored at the opposite corner so that corner stays put.
+Both show a live dashed-outline preview during the drag and only commit
+the actual geometry change on release. This is on top of the existing
+click-to-select and rubber-band-select, distinguished by where the drag
+starts: a corner handle resizes, an already-selected shape moves, anything
+else still rubber-band selects (or pans with Option held), so none of the
+existing selection gestures changed.
+
+Resizing an object this way follows the same stitch-type durability rule
+as a whole-document resize (below): an object whose stitch type was
+manually picked in the inspector keeps it rather than being silently
+reclassified from the new geometry.
+
+## Fixed: an object's manually-chosen stitch type reset whenever the design was resized
+
+Changing a design's overall physical width/height re-derives every
+object's stitch type from its (now-scaled) geometry, which is genuinely
+needed the first time a design is sized -- illegible small text can only
+become clean satin once it's scaled up past the size that made it
+illegible in the first place. But because this ran unconditionally, it
+also overwrote a stitch type the user had *already* deliberately picked in
+the Object Inspector, every time the design was resized afterward, with no
+way to make that choice stick.
+
+`EmbroideryObject` now tracks whether its stitch type was manually
+overridden (picking one in the inspector sets it); resize -- and any other
+shape edit that re-derives stitch type from geometry -- now leaves that
+object's choice alone once it's set. Existing `.stitchpilot` project files
+saved before this flag existed still decode correctly (missing key
+defaults to "not overridden," matching what was actually true for every
+object saved under the old format).
+
 ## Changed: rubber-band selection now works at any zoom level
 
 Dragging previously panned the canvas whenever zoomed in at all, leaving
