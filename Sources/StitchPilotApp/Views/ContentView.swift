@@ -38,6 +38,7 @@ struct ContentView: View {
     @State private var showingRedoConfirm = false
     @State private var showingMergeColors = false
     @State private var showingThreadLibrary = false
+    @State private var showingAddLettering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -165,6 +166,13 @@ struct ContentView: View {
 
             ToolbarItemGroup {
                 Button {
+                    showingAddLettering = true
+                } label: {
+                    Label("Add Lettering", systemImage: "textformat")
+                }
+                .help("Type text and pick a font -- generates clean satin letters directly from the font's own outline, instead of tracing a raster image of text (which can never be sharper than the source image's own resolution).")
+
+                Button {
                     app.mergeSelectedShapesIntoOneObject()
                 } label: {
                     Label("Merge Shapes", systemImage: "puzzlepiece")
@@ -219,6 +227,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingMergeColors) { MergeColorsSheet() }
         .sheet(isPresented: $showingThreadLibrary) { ThreadLibrarySheet() }
+        .sheet(isPresented: $showingAddLettering) { AddLetteringSheet() }
         .safeAreaInset(edge: .bottom) {
             statusBar
         }
@@ -754,6 +763,112 @@ private struct MergeColorsSheet: View {
         Circle()
             .fill(Color(red: Double(rgb.r) / 255, green: Double(rgb.g) / 255, blue: Double(rgb.b) / 255))
             .frame(width: 12, height: 12)
+    }
+}
+
+/// Generates real satin lettering from a font's own vector outline
+/// (`LetteringGenerator`) instead of raster-tracing an image of already-
+/// rendered text -- the fix for text that tracing can never sharpen
+/// beyond the source image's own pixel resolution, however the design is
+/// sized or classified afterward (see CHANGELOG.md). The font preview
+/// here is a plain SwiftUI `Text` in the chosen font -- a rough, cheap
+/// stand-in for what the letterforms look like, not a real stitch
+/// simulation; the canvas's own Realistic/Technical preview shows the
+/// actual result once added.
+private struct AddLetteringSheet: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var text = "SARASOTA MILITARY ACADEMY"
+    @State private var fonts: [(displayName: String, postScriptName: String)] = []
+    @State private var selectedFontPostScriptName = ""
+    @State private var fontSizeMM: Double = 8
+    @State private var letterSpacingMM: Double = 0
+    @State private var isCurved = false
+    @State private var radiusMM: Double = 40
+    @State private var color = Color.black
+
+    private var selectedFontDisplayName: String {
+        fonts.first { $0.postScriptName == selectedFontPostScriptName }?.displayName ?? selectedFontPostScriptName
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Add Lettering").font(.title3).fontWeight(.semibold).padding()
+            Divider()
+
+            Form {
+                TextField("Text", text: $text, prompt: Text("Type the text to add"))
+
+                Picker("Font", selection: $selectedFontPostScriptName) {
+                    ForEach(fonts, id: \.postScriptName) { font in
+                        Text(font.displayName).tag(font.postScriptName)
+                    }
+                }
+
+                HStack {
+                    Text("Letter height")
+                    Slider(value: $fontSizeMM, in: 2...60, step: 0.5)
+                    Text(String(format: "%.1f mm", fontSizeMM)).monospacedDigit().frame(width: 60, alignment: .trailing)
+                }
+                HStack {
+                    Text("Letter spacing")
+                    Slider(value: $letterSpacingMM, in: -1...10, step: 0.1)
+                    Text(String(format: "%.1f mm", letterSpacingMM)).monospacedDigit().frame(width: 60, alignment: .trailing)
+                }
+
+                Toggle("Curve along a ring", isOn: $isCurved)
+                    .help("Wraps the text along an arc -- e.g. a badge's curved title text -- instead of a straight line.")
+                if isCurved {
+                    HStack {
+                        Text("Curve radius")
+                        Slider(value: $radiusMM, in: 5...200, step: 1)
+                        Text(String(format: "%.0f mm", radiusMM)).monospacedDigit().frame(width: 60, alignment: .trailing)
+                    }
+                }
+
+                ColorPicker("Thread color", selection: $color, supportsOpacity: false)
+            }
+            .padding()
+            .formStyle(.grouped)
+
+            if !selectedFontPostScriptName.isEmpty, let nsFont = NSFont(name: selectedFontPostScriptName, size: 28) {
+                Text(text.isEmpty ? " " : text)
+                    .font(Font(nsFont))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.3)
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
+                    .foregroundStyle(color)
+            }
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Add") {
+                    let spec = LetteringSpec(text: text, fontPostScriptName: selectedFontPostScriptName,
+                                              fontSizeMM: fontSizeMM, letterSpacingMM: letterSpacingMM,
+                                              baseline: isCurved ? .arc(radiusMM: radiusMM) : .straight)
+                    let rgb = rgbColor(from: color)
+                    let threadColor = app.matchToThreadLibrary
+                        ? (ThreadLibrary.nearestMatch(to: rgb, in: app.effectivePalette) ?? .generic(rgb, name: "Lettering Color"))
+                        : .generic(rgb, name: "Lettering Color")
+                    app.addLettering(spec: spec, threadColor: threadColor)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedFontPostScriptName.isEmpty)
+            }
+            .padding()
+        }
+        .frame(width: 460, height: 480)
+        .onAppear {
+            if fonts.isEmpty {
+                fonts = AppState.availableLetteringFonts()
+                selectedFontPostScriptName = fonts.first { $0.displayName == "Helvetica" }?.postScriptName ?? fonts.first?.postScriptName ?? ""
+            }
+        }
     }
 }
 

@@ -279,6 +279,89 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Lettering
+
+    /// Every installed font family the Lettering tool's picker can offer,
+    /// paired with the exact PostScript name `LetteringGenerator` needs
+    /// (CoreText's own currency -- not always identical to the family
+    /// name, e.g. some families' bold member has no space where the
+    /// family name does). Resolves each family's bold member when it has
+    /// one, since a bold, simple stroke satin-stitches most cleanly; the
+    /// user still picks the family, this just chooses a sensible default
+    /// weight within it rather than offering every weight as a separate
+    /// scope-widening picker for a first version.
+    static func availableLetteringFonts() -> [(displayName: String, postScriptName: String)] {
+        let manager = NSFontManager.shared
+        var results: [(displayName: String, postScriptName: String)] = []
+        for family in manager.availableFontFamilies.sorted() {
+            let bold = manager.font(withFamily: family, traits: .boldFontMask, weight: 9, size: 12)
+            let font = bold ?? NSFont(name: family, size: 12) ?? manager.font(withFamily: family, traits: [], weight: 5, size: 12)
+            guard let font else { continue }
+            results.append((family, font.fontName))
+        }
+        return results
+    }
+
+    /// Generates real vector letterforms directly from a font's own
+    /// outline (`LetteringGenerator`) and adds them to the current
+    /// document as new objects -- one per glyph, each independently
+    /// classified and stitched exactly like any other imported shape.
+    /// This is the actual fix for text that raster tracing can never get
+    /// right regardless of resolution or physical size (see
+    /// CHANGELOG.md): instead of tracing an already-rendered image of
+    /// text, generate the letterforms directly from the font, clean at
+    /// any size or curve.
+    func addLettering(spec: LetteringSpec, threadColor: ThreadColor) {
+        do {
+            let shapes = try LetteringGenerator.generateShapes(spec: spec)
+            commitImmediateUndoSnapshot()
+
+            var combined = BoundingBox.empty
+            for shape in shapes { combined = combined.union(shape.boundingBox) }
+
+            // Center the new lettering in the current design; for a
+            // brand-new document (no prior import), center it in the
+            // physical size the lettering itself defines instead.
+            let targetCenterX: Double
+            let targetCenterY: Double
+            if let current = document, !current.boundingBox.isEmpty {
+                targetCenterX = current.physicalWidthMM / 2
+                targetCenterY = current.physicalHeightMM / 2
+            } else {
+                targetCenterX = combined.width / 2
+                targetCenterY = combined.height / 2
+            }
+            let offsetX = targetCenterX - (combined.minX + combined.width / 2)
+            let offsetY = targetCenterY - (combined.minY + combined.height / 2)
+
+            let newObjects = shapes.enumerated().map { i, shape -> EmbroideryObject in
+                let translated = VectorShape(subPaths: shape.subPaths.map { sp in
+                    SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
+                })
+                let parameters = StitchGenerationParameters()
+                let stitchType = StitchTypeClassifier.classify(shape: translated, parameters: parameters)
+                return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
+                                         threadColor: threadColor, parameters: parameters)
+            }
+
+            if var current = document {
+                current.objects.append(contentsOf: newObjects)
+                document = current
+            } else {
+                lastRawShapes = []
+                lastName = spec.text
+                physicalWidthMM = combined.width + 20
+                physicalHeightMM = combined.height + 20
+                document = StitchDocument(name: spec.text, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: newObjects)
+            }
+            selectedObjectIDs = Set(newObjects.map { $0.id })
+            scheduleLiveRegenerate()
+            statusMessage = "Added \"\(spec.text)\" as \(newObjects.count) lettering object(s)."
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
     // MARK: - Undo
 
     /// Snapshots only what a user-visible edit can actually change: the

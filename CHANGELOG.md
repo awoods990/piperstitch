@@ -4,6 +4,48 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: Lettering -- generate clean text directly from a font's outline instead of tracing a raster image of it
+
+Every fix so far to a real team-crest PNG's fine text (bigger initial
+size, resizing reclassifying stitch type, better canvas rendering) still
+ran into the same hard ceiling: raster tracing can never recover more
+detail than the source image's own pixel resolution has, so a badge's
+tightly-curved ring text stayed illegible no matter how the design was
+sized or rendered afterward. This is the actual fix for that class of
+problem, not another mitigation -- it sidesteps raster tracing for text
+entirely, the same approach real digitizing software uses for lettering.
+
+New `LetteringGenerator` (`Sources/StitchPilotCore/Engine/`) uses
+CoreText to get a font's own glyph outlines directly, flattens each
+glyph's bezier curves to a polyline (matching `SVGPathParser`'s own
+curve-flattening technique), and produces one `VectorShape` per letter
+(with a hole subpath for counters -- an "O", "A", "B" -- exactly the
+even-odd multi-subpath convention the rest of the engine already uses).
+Since a font outline is mathematically exact at any size, text generated
+this way is clean regardless of how small or how tightly curved it needs
+to be -- verified directly against the real "SARASOTA MILITARY ACADEMY"
+ring text and its tagline, both illegible from raster import at every
+size tried, both clearly readable as generated lettering.
+
+Supports a straight baseline or an arc (`radiusMM`) for ring/badge-style
+curved text, plus extra letter spacing beyond the font's own natural
+advance. Each generated letter flows through the exact same
+classify-and-stitch pipeline as any other imported shape -- no special-
+casing needed downstream, `StitchTypeClassifier` and `SatinColumnGenerator`
+already handle "here's a shape, make it a good stitch object."
+
+New "Add Lettering" toolbar button opens a sheet to type text, pick an
+installed font, set letter height/spacing, optionally curve it, and pick
+a thread color -- generates the letters as new objects in the current
+document (or starts a new one if nothing's open yet).
+
+This is Phase 1 of two: it lets a user manually replace raster-traced
+text with real lettering, or build a lettering-only design from scratch.
+Phase 2 (planned, not yet built): try to automatically detect existing
+text in an imported image, transcribe it, and suggest a font, so the
+Lettering tool can offer to replace the raster-traced region directly
+instead of the user retyping it from scratch.
+
 ## Fixed: canvas preview still looked jagged on fine detail after high-quality interpolation, because the source bitmap's resolution didn't track the actual on-screen size
 
 Requesting `.interpolation(.high)` (previous entry) visibly improved
