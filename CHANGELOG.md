@@ -4,43 +4,55 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
-## Fixed: lettering quality -- multi-stroke letters no longer sew as one lumpy satin column, small text stays legible
+## Changed: an entire lettering run now shares ONE stitch type, not a mix from letter to letter
 
-Two lettering-specific gaps, found by comparing this engine's output against
-documented commercial digitizing practice:
+A first pass at fixing multi-stroke letters (T, L, E, F, H, X... -- whose
+outline genuinely runs in different directions in different places,
+lumpy/ropey as one straight satin column) classified each glyph
+independently and downgraded just that letter to tatami fill. Technically
+defensible per shape, but it meant a word like "MILITARY" could sew most
+letters in satin and "T"/"R" in fill -- two different textures/sheens
+sitting side by side in the same word, which reads as a mistake even though
+each individual choice was reasonable in isolation. This matches how real
+lettering is actually digitized: an alphabet/run is authored as one style
+(satin lettering, block/fill lettering, or a fine outline for tiny text),
+never switched letter-by-letter within a word -- confirmed against
+documented commercial digitizing practice.
 
-Every glyph is a single `VectorShape` classified and stitched exactly like
-any other imported shape. `StitchTypeClassifier` only re-checks whether a
-shape's width is actually *uniform* along its length (as opposed to just
-averaging out to a plausible-looking number) for shapes in its 8-12mm
-average-width band -- below that it returns satin outright. Most individual
-letters land well under 8mm average width even when the *letter itself* is
-multi-stroke (T, L, E, F, H, X...), whose outline genuinely runs in
-different directions in different places. `SatinColumnGenerator` fits ONE
-global direction across a shape's entire outer boundary, so a multi-stroke
-letter classified as satin sewed as a single straight column end to end --
-lumpy and ropey right where the strokes meet, e.g. where a "T"'s crossbar
-meets its stem.
+`StitchTypeClassifier.classifyLetteringRun` now decides ONE stitch type for
+an entire lettering run at once: below a 5mm cap height, the whole run
+becomes triple-run (commercial guidance: satin wants roughly that much
+letter height to hold a clean column, below which it just reads as a blob);
+otherwise satin vs. fill is decided from the run's widest *simple*
+(no-hole) glyph, the shape that would actually be first to fail a satin
+column's practical width limit. `classifyGlyphInRun` then applies that
+shared decision to every glyph, with the one unavoidable exception: a
+letterform counter (O, P, R, A, D, B, Q...) can never be represented by a
+satin column in this engine (`SatinColumnGenerator` only ever looks at a
+shape's outer boundary), so a holed glyph falls back to tatami fill
+regardless of what the rest of an otherwise-satin run is doing -- a
+structural necessity, not a style choice.
 
-Also, nothing accounted for the letter height actually chosen -- a small
-letter's strokes can still average out to a nominally satin-width number
-while being too small in practice for a machine to lay the column down
-cleanly (commercial guidance: satin wants roughly 4-5mm+ letter height to
-hold a clean column; below that it reads as a blob and running/triple-run
-stays legible instead).
+This does mean an individual multi-stroke letter within an otherwise-satin
+run can still show some lumpiness at its own internal corners (unchanged
+from before either fix) -- the true fix for that specific case (splitting a
+glyph into per-stroke satin columns along its actual skeleton, the way
+dedicated auto-digitizing software does) needs real segmentation geometry
+`SatinColumnGenerator` doesn't have yet, and is a substantially larger
+undertaking than either classification-level pass. Consistency across the
+whole run is the better trade available without it.
 
-Added `StitchTypeClassifier.classifyLetterform`, used only for
-lettering-generated shapes (not the general classifier, so arbitrary
-imported artwork's classification is unaffected): below a 5mm cap height it
-forces triple-run instead of satin; otherwise it re-runs the same
-width-uniformity check the general classifier already trusts for its 8-12mm
-band, but for ANY letterform-satin verdict regardless of band -- routing a
-genuinely multi-directional letter to tatami fill instead, which isn't
-sensitive to the local direction change the way a satin column is. A
-true fix (splitting a glyph into per-stroke satin columns along its actual
-skeleton, the way dedicated auto-digitizing software does) is a
-substantially larger undertaking than this pass; this gets the common
-multi-stroke-letter case looking right without it.
+## Added: a "Refreshing…" indicator while the preview catches up to an edit
+
+Moving both halves of live regeneration off the main thread (previous
+entry) fixed the UI actually freezing on an edit, but introduced a new gap
+that wasn't there before: a synchronous freeze was at least obviously
+"something is happening," where a responsive-but-stale preview during a
+background regenerate can look like the edit was silently dropped. The
+canvas now shows a small "Refreshing…" pill with a spinner for as long as
+either the debounced stitch-plan regenerate or the realistic-bitmap render
+is still in flight, so a slow refresh on a detail-heavy design reads as
+"still working" instead of "did that work?"
 
 ## Added: canvas edits regenerate the preview off the main thread
 

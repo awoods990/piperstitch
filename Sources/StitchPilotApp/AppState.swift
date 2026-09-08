@@ -71,6 +71,15 @@ final class AppState: ObservableObject {
     @Published var statusMessage: String = "Drag in an image or SVG file, then click Click to Create."
     @Published var errorMessage: String?
     @Published var isBusy = false
+    /// True while a live edit's debounced regenerate (`scheduleLiveRegenerate`)
+    /// is waiting to fire or actually recomputing the stitch plan -- distinct
+    /// from `isBusy`, which is reserved for big one-shot blocking operations
+    /// (import, open project). The canvas shows a small "refreshing" hint
+    /// while this is true, since the background regenerate/render changes
+    /// introduced their own gap between "you made an edit" and "the preview
+    /// visibly caught up" that's otherwise easy to mistake for the app
+    /// being stuck rather than still working.
+    @Published var isRegeneratingPreview = false
 
     // MARK: - Custom thread library (spec §9: "a user's 'My Thread
     // Inventory' subset" -- the matching engine already accepts any
@@ -364,12 +373,19 @@ final class AppState: ObservableObject {
         for shape in shapes { combined = combined.union(shape.boundingBox) }
         let offsetX = targetCenter.x - (combined.minX + combined.width / 2)
         let offsetY = targetCenter.y - (combined.minY + combined.height / 2)
-        return shapes.enumerated().map { i, shape -> EmbroideryObject in
-            let translated = VectorShape(subPaths: shape.subPaths.map { sp in
+        let translatedShapes = shapes.map { shape in
+            VectorShape(subPaths: shape.subPaths.map { sp in
                 SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
             })
-            let parameters = StitchGenerationParameters()
-            let stitchType = StitchTypeClassifier.classifyLetterform(shape: translated, parameters: parameters, capHeightMM: spec.fontSizeMM)
+        }
+        let parameters = StitchGenerationParameters()
+        // One stitch type for the whole run (see `classifyLetteringRun`'s
+        // doc comment), not classified letter-by-letter -- a hole letter
+        // (O, P, R...) is the one unavoidable exception, handled per-glyph
+        // by `classifyGlyphInRun`.
+        let runStitchType = StitchTypeClassifier.classifyLetteringRun(shapes: translatedShapes, parameters: parameters, capHeightMM: spec.fontSizeMM)
+        return translatedShapes.enumerated().map { i, translated -> EmbroideryObject in
+            let stitchType = StitchTypeClassifier.classifyGlyphInRun(shape: translated, runStitchType: runStitchType)
             return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
                                      threadColor: threadColor, parameters: parameters)
         }
@@ -616,6 +632,13 @@ final class AppState: ObservableObject {
     }
 
     private var liveRegenerateTask: Task<Void, Never>?
+    /// How many `scheduleLiveRegenerate` cycles are currently in flight
+    /// (waiting out the debounce, or actually regenerating) -- a simple
+    /// bool would risk an older, superseded cycle's own completion
+    /// clearing `isRegeneratingPreview` while a newer one it overlapped
+    /// with is still genuinely working. Only reaching zero (every
+    /// outstanding cycle accounted for) clears it.
+    private var regenerateInFlightCount = 0
 
     /// Debounced regeneration so the preview updates on its own after an
     /// edit -- a density slider drag, a stitch-type change, a color merge
@@ -623,15 +646,25 @@ final class AppState: ObservableObject {
     /// (spec: the one-click promise extends to editing, not just the
     /// initial digitize). A short delay means a fast slider drag only runs
     /// the actual per-object generation pass once it settles, not on every
-    /// intermediate value while dragging.
+    /// intermediate value while dragging. `isRegeneratingPreview` flips on
+    /// immediately (not just once the debounce elapses) so the canvas can
+    /// show "refreshing" feedback right from the edit itself.
     private func scheduleLiveRegenerate() {
         guard document != nil else { return }
         liveRegenerateTask?.cancel()
+        regenerateInFlightCount += 1
+        isRegeneratingPreview = true
         liveRegenerateTask = Task { [weak self] in
+            defer { self?.finishedOneRegenerateAttempt() }
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             await self?.autoDigitizeInBackground()
         }
+    }
+
+    private func finishedOneRegenerateAttempt() {
+        regenerateInFlightCount = max(0, regenerateInFlightCount - 1)
+        if regenerateInFlightCount == 0 { isRegeneratingPreview = false }
     }
 
     /// Same end result as `autoDigitize()`, except the expensive part --

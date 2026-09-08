@@ -56,7 +56,8 @@ struct ContentView: View {
                                   paintBrushRadiusMM: app.paintBrushRadiusMM,
                                   onPaintStroke: { app.paintStroke(points: $0, radiusMM: app.paintBrushRadiusMM) },
                                   onMoveSelection: { app.translateSelection(dxMM: $0, dyMM: $1) },
-                                  onResizeSelection: { app.scaleSelection(scale: $0, anchorMM: $1) })
+                                  onResizeSelection: { app.scaleSelection(scale: $0, anchorMM: $1) },
+                                  isRegeneratingPreview: app.isRegeneratingPreview)
                 if app.document == nil {
                     dropPrompt
                 }

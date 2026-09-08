@@ -91,62 +91,75 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: letterformWithCounter, parameters: defaultParams) == .tatamiFill)
     }
 
-    // MARK: - classifyLetterform
+    // MARK: - classifyLetteringRun / classifyGlyphInRun
 
-    @Test func smallCapHeightForcesTripleRunInsteadOfSatin() {
-        // Same 4mm column `mediumColumnBecomesSatin` above confirms
-        // classifies as satin at full size -- at a 3mm letter height
-        // (below the 5mm satin floor) it should downgrade to triple-run.
+    /// The stem from `mediumColumnBecomesSatin` above (satin at full size)
+    /// -- an entire run made of just this shape at a 3mm letter height
+    /// (below the 5mm satin floor) should decide triple-run for the run.
+    @Test func smallCapHeightRunBecomesTripleRun() {
         let column = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classifyLetterform(shape: column, parameters: defaultParams, capHeightMM: 3) == .tripleRun)
+        #expect(StitchTypeClassifier.classifyLetteringRun(shapes: [column], parameters: defaultParams, capHeightMM: 3) == .tripleRun)
     }
 
-    @Test func smallCapHeightHairlineStaysRunningStitchNotTripleRun() {
-        // A shape `classify` already routes to running-stitch (too thin
-        // even for satin) shouldn't get bumped up to triple-run just
-        // because it's also small -- the small-cap-height override only
-        // ever downgrades a *satin* verdict, never upgrades a thinner one.
-        let hairline = VectorShape(subPaths: [SubPath(points: [
-            Point2D(0, 0), Point2D(20, 0), Point2D(20, 0.5), Point2D(0, 0.5),
+    /// The core behavior the user's own report drove this design toward:
+    /// a run containing both a simple single-stroke letter ("l") and a
+    /// "T"-shaped multi-stroke letter (strokes running in genuinely
+    /// different directions -- historically the case that made an
+    /// isolated per-glyph classifier downgrade just that one letter to
+    /// tatami fill) must land on ONE shared stitch type for every glyph in
+    /// the run, not a mix -- real lettering is authored as one style
+    /// (satin or fill), never switched letter-by-letter within a word.
+    @Test func multiStrokeAndSimpleGlyphsInARunShareOneStitchType() {
+        let stem = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(2, 0), Point2D(2, 20), Point2D(0, 20),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classifyLetterform(shape: hairline, parameters: defaultParams, capHeightMM: 3) == .runningStitch)
-    }
-
-    /// A "T" outline -- a narrow 2mm-wide, 17mm-tall stem with a wide
-    /// 20mm x 3mm bar across its top, the classic case of a letterform
-    /// whose strokes run in genuinely different directions. Its average
-    /// width (area/length along the principal axis) lands under 8mm, the
-    /// band where plain `classify` skips its own uniformity check and
-    /// returns satin outright -- which `SatinColumnGenerator` would then
-    /// lay down as ONE straight column across the whole letter, lumpy
-    /// right where the bar meets the stem. `classifyLetterform` re-runs
-    /// the uniformity check regardless of band for any letterform, and
-    /// this shape's width swings from ~2mm (down the stem) to ~20mm
-    /// (across the bar) -- routing it to tatami fill instead, which isn't
-    /// sensitive to that direction change the way a satin column is.
-    @Test func multiStrokeTShapeDowngradesFromSatinToTatami() {
         let tShape = VectorShape(subPaths: [SubPath(points: [
             Point2D(9, 0), Point2D(11, 0), Point2D(11, 17), Point2D(20, 17),
             Point2D(20, 20), Point2D(0, 20), Point2D(0, 17), Point2D(9, 17),
         ], closed: true)])
-        // Confirms plain `classify` really does pick satin here -- the
-        // baseline this test is guarding against, not just asserting the
-        // fixed behavior in isolation.
-        #expect(StitchTypeClassifier.classify(shape: tShape, parameters: defaultParams) == .satin)
-        #expect(StitchTypeClassifier.classifyLetterform(shape: tShape, parameters: defaultParams, capHeightMM: 20) == .tatamiFill)
+        let runType = StitchTypeClassifier.classifyLetteringRun(shapes: [stem, tShape], parameters: defaultParams, capHeightMM: 20)
+        #expect(runType == .satin)
+        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: stem, runStitchType: runType) == .satin)
+        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: tShape, runStitchType: runType) == .satin)
     }
 
-    /// A simple single-stroke letterform (e.g. "l", "i", "1") at a legible
-    /// size must NOT get swept into the same downgrade -- guards against
-    /// the uniformity re-check being so aggressive it second-guesses every
-    /// ordinary satin letter, not just genuinely multi-directional ones.
-    @Test func singleStrokeLetterformStaysSatinAtLegibleSize() {
-        let stem = VectorShape(subPaths: [SubPath(points: [
-            Point2D(0, 0), Point2D(2, 0), Point2D(2, 20), Point2D(0, 20),
+    /// A run whose widest simple glyph is over `maxSatinWidthMM` (a bold
+    /// block-lettering run) decides fill for the whole run, matching
+    /// commercial guidance that wide block letters use fill, not satin.
+    @Test func runWithAWideGlyphBecomesTatamiFillForTheWholeRun() {
+        let narrowLetter = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(4, 0), Point2D(4, 20), Point2D(0, 20),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classifyLetterform(shape: stem, parameters: defaultParams, capHeightMM: 20) == .satin)
+        let wideBlockLetter = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20),
+        ], closed: true)])
+        let runType = StitchTypeClassifier.classifyLetteringRun(shapes: [narrowLetter, wideBlockLetter], parameters: defaultParams, capHeightMM: 20)
+        #expect(runType == .tatamiFill)
+    }
+
+    /// A holed glyph (a letterform counter -- O, P, R...) can never be a
+    /// satin column in this engine regardless of what the rest of an
+    /// otherwise-satin run is doing -- the one unavoidable per-glyph
+    /// exception `classifyGlyphInRun` makes.
+    @Test func holedGlyphFallsBackToTatamiEvenInASatinRun() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
+        let hole = SubPath(points: [Point2D(3, 5), Point2D(7, 5), Point2D(7, 15), Point2D(3, 15)], closed: true)
+        let oShape = VectorShape(subPaths: [outer, hole])
+        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: oShape, runStitchType: .satin) == .tatamiFill)
+    }
+
+    /// The same holed glyph must NOT be force-downgraded when the run
+    /// itself already isn't satin -- `.tripleRun` and `.tatamiFill` both
+    /// already stitch every one of a shape's sub-paths correctly (see
+    /// `DigitizePipeline.rawStitchRuns`), so a hole letter in a small
+    /// (triple-run) run should stay triple-run like the rest of it.
+    @Test func holedGlyphStaysWithTheRunWhenTheRunIsAlreadyNotSatin() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
+        let hole = SubPath(points: [Point2D(3, 5), Point2D(7, 5), Point2D(7, 15), Point2D(3, 15)], closed: true)
+        let oShape = VectorShape(subPaths: [outer, hole])
+        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: oShape, runStitchType: .tripleRun) == .tripleRun)
     }
 
     @Test func degenerateShapeDefaultsToRunningStitch() {

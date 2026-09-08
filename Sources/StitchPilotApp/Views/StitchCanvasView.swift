@@ -55,6 +55,13 @@ struct StitchCanvasView: View {
     /// the user finishes dragging a corner handle to resize the current
     /// selection.
     var onResizeSelection: (Double, Point2D) -> Void = { _, _ in }
+    /// True while an edit's debounced stitch-plan regenerate is pending or
+    /// running (`AppState.isRegeneratingPreview`) -- combined with this
+    /// view's own realistic-bitmap render being in flight
+    /// (`activeRealisticRenderCount`) to show one "Refreshing…" indicator
+    /// covering the whole pipeline from edit to updated pixels, so a
+    /// regenerate that takes a moment doesn't read as the app being stuck.
+    var isRegeneratingPreview: Bool = false
 
     @State private var mode: StitchPreviewMode = .realistic
     @State private var realisticImage: CGImage?
@@ -88,6 +95,13 @@ struct StitchCanvasView: View {
     /// older copy of this view's own struct -- `@State`'s storage is a
     /// shared box, so reading it there still sees the live, current value.
     @State private var realisticRenderGeneration = 0
+    /// How many background bitmap renders are currently in flight -- shown
+    /// as part of the "Refreshing…" indicator alongside
+    /// `isRegeneratingPreview`. A count rather than a bool for the same
+    /// reason `AppState.regenerateInFlightCount` is: an older render's own
+    /// completion shouldn't be able to clear this while a newer one it
+    /// overlapped with is still genuinely running.
+    @State private var activeRealisticRenderCount = 0
 
     /// Rubber-band selection box, in view (canvas) coordinates, while a
     /// selection drag is in progress -- nil the rest of the time.
@@ -277,6 +291,26 @@ struct StitchCanvasView: View {
                     if zoomScale <= 1.0 { panOffset = .zero; lastPanOffset = .zero }
                 }
         )
+        .overlay(alignment: .topLeading) {
+            // Both halves of the pipeline (AppState's stitch-plan
+            // regenerate and this view's own realistic-bitmap render) run
+            // in the background now rather than blocking the UI -- which
+            // fixed the stall, but also means there's a real gap between
+            // "you made an edit" and "the preview visibly caught up" that
+            // used to not exist (the old synchronous version just froze
+            // for that same span, which -- if anything -- made it obvious
+            // something was happening). Surfacing that gap explicitly so
+            // it doesn't read as the app being stuck.
+            if isRegeneratingPreview || activeRealisticRenderCount > 0 {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Refreshing…").font(.caption)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(.thinMaterial, in: Capsule())
+                .padding(8)
+            }
+        }
         .overlay(alignment: .top) {
             if stitchPlan != nil {
                 Picker("Preview", selection: $mode) {
@@ -641,10 +675,12 @@ struct StitchCanvasView: View {
         let targetSignature = planSignature
         realisticRenderGeneration += 1
         let myGeneration = realisticRenderGeneration
+        activeRealisticRenderCount += 1
 
         Task.detached(priority: .userInitiated) {
             let image = StitchRenderer.render(stitchPlan, widthMM: widthMM, heightMM: heightMM, colors: colorsSnapshot, options: options)
             await MainActor.run {
+                activeRealisticRenderCount = max(0, activeRealisticRenderCount - 1)
                 guard myGeneration == realisticRenderGeneration else { return }
                 realisticImage = image
                 renderedSignature = targetSignature

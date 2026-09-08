@@ -84,57 +84,78 @@ public enum StitchTypeClassifier {
     /// Below this letter height, commercial digitizing guidance treats
     /// satin as unreliable -- the column narrows past what a machine lays
     /// down evenly and reads as a blob rather than a crisp letterform.
-    /// `classifyLetterform` routes anything smaller to `.tripleRun`
-    /// instead, which stays legible at any size since it traces the
-    /// letterform's outline rather than trying to fill it.
+    /// `classifyLetteringRun` routes an entire run smaller than this to
+    /// `.tripleRun` instead, which stays legible at any size since it
+    /// traces the letterform's outline rather than trying to fill it.
     private static let minimumSatinCapHeightMM = 5.0
 
-    /// A lettering-specific classification, layered on top of `classify`
-    /// with two adjustments that matter for glyph shapes specifically but
-    /// would be too broad a behavior change to make in the general
-    /// classifier (used for arbitrary imported artwork too):
+    /// Decides ONE stitch type for an entire lettering run -- every glyph
+    /// shape `LetteringGenerator` produces for one `LetteringSpec` -- rather
+    /// than classifying each glyph independently. This matches how real
+    /// lettering is actually digitized: a whole word/alphabet is authored
+    /// as one style (satin lettering, block/fill lettering, or a fine
+    /// outline for tiny text), never a mix of stitch categories from one
+    /// letter to the next within the same run. Two letters sewn in
+    /// different stitch types read as two different textures/sheens
+    /// sitting side by side in the same word -- visibly wrong even when
+    /// each one, judged in isolation, was a defensible classification of
+    /// its own shape.
     ///
-    /// 1. Below `minimumSatinCapHeightMM`, forces `.tripleRun` regardless
-    ///    of what `classify` would otherwise pick -- `classify` only sees
-    ///    the shape's own geometry, not the letter height the user
-    ///    actually chose, so it has no way to know a 3mm-tall letter's
-    ///    individual strokes are too small for satin to hold cleanly even
-    ///    if their average width nominally clears `minSatinWidthMM`.
+    /// An earlier version of this classified each glyph on its own and
+    /// downgraded a multi-stroke letter (T, L, E, F, H, X...) to tatami
+    /// fill whenever its width wasn't uniform along a single global axis
+    /// -- technically correct in isolation (`SatinColumnGenerator` really
+    /// does fit one direction across a glyph's whole outer boundary, which
+    /// looks lumpy on a shape whose strokes run in genuinely different
+    /// directions), but it meant a word like "MILITARY" could sew most
+    /// letters in satin and "T"/"R" in fill, which reads as a mistake, not
+    /// as two individually-reasonable choices. The real fix for a
+    /// multi-stroke letter is *split* satin -- multiple locally-direction-
+    /// correct columns joined together, the technique commercial
+    /// digitizing software actually uses -- which needs true per-stroke
+    /// skeleton segmentation in `SatinColumnGenerator` this engine doesn't
+    /// have yet; consistency across the run is the better trade available
+    /// without it.
     ///
-    /// 2. `classify` only runs its width-*uniformity* check (see its own
-    ///    doc comment) in the 8-12mm average-width band -- below 8mm it
-    ///    returns `.satin` outright. Most individual letter strokes land
-    ///    well under 8mm average width even when the *letter itself* is a
-    ///    multi-stroke shape (T, L, E, F, H, X...), whose outline runs in
-    ///    genuinely different directions in different places. Handed to
-    ///    `SatinColumnGenerator`, which fits ONE global direction across
-    ///    the entire outer boundary (`PolygonGeometry.principalAxis`),
-    ///    that reads as a lumpy, ropey mess right where the strokes meet --
-    ///    exactly the outcome real digitizing software avoids by treating
-    ///    a shape as fill rather than a satin column once it stops looking
-    ///    like a single straight stroke (see the width/distance-transform-
-    ///    based thick-vs-thin classification industrial auto-digitizers
-    ///    use). Re-running the same uniformity check `classify` already
-    ///    trusts for its 8-12mm band, but for ANY letterform `classify`
-    ///    picked satin for, catches this case and routes it to tatami fill
-    ///    instead -- fill isn't sensitive to local stroke direction the way
-    ///    a satin column is, so it holds up fine across a shape whose
-    ///    strokes branch or change direction, without needing this engine
-    ///    to implement true per-stroke skeleton segmentation.
-    public static func classifyLetterform(shape: VectorShape, parameters: StitchGenerationParameters, capHeightMM: Double) -> StitchType {
-        let base = classify(shape: shape, parameters: parameters)
+    /// Gates satin-vs-fill for the whole run on its widest *simple*
+    /// (no-hole) glyph -- the shape that would actually be first to fail a
+    /// satin column's practical width limit. A glyph with a hole doesn't
+    /// count toward this decision; see `classifyGlyphInRun`.
+    public static func classifyLetteringRun(shapes: [VectorShape], parameters: StitchGenerationParameters, capHeightMM: Double) -> StitchType {
+        guard capHeightMM >= minimumSatinCapHeightMM else { return .tripleRun }
 
-        guard capHeightMM >= minimumSatinCapHeightMM else {
-            return base == .runningStitch ? .runningStitch : .tripleRun
+        var widestSimpleGlyphAverageWidth = 0.0
+        for shape in shapes {
+            guard shape.subPaths.count == 1, let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
+            let area = abs(PolygonGeometry.signedArea(outer.points))
+            let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
+            let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
+            let length = hi - lo
+            guard length > 0, area > 0 else { continue }
+            widestSimpleGlyphAverageWidth = max(widestSimpleGlyphAverageWidth, area / length)
         }
-        guard base == .satin, let outer = shape.subPaths.first, outer.points.count >= 3 else { return base }
+        // No measurable simple glyph at all (e.g. a run that's entirely
+        // holed letters, or entirely spaces) -- satin is the sensible
+        // default; `classifyGlyphInRun` will route any actual hole to
+        // tatami fill regardless.
+        guard widestSimpleGlyphAverageWidth > 0 else { return .satin }
+        return widestSimpleGlyphAverageWidth <= parameters.maxSatinWidthMM ? .satin : .tatamiFill
+    }
 
-        let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
-        let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
-        guard hi > lo else { return base }
-        let widths = widthProfile(outer.points, axis: axis, mean: mean, lo: lo, hi: hi, samples: widthProfileSamples)
-        guard let maxWidth = widths.max(), let minWidth = widths.min(), maxWidth > 0 else { return base }
-        return (maxWidth - minWidth) / maxWidth <= uniformWidthToleranceFraction ? .satin : .tatamiFill
+    /// Applies the whole run's shared `runStitchType` (from
+    /// `classifyLetteringRun`) to one glyph, with the one case that can't
+    /// simply follow the run: a glyph with a hole (a letterform counter --
+    /// O, P, R, A, D, B, Q...) can never be represented by a satin column
+    /// in this engine (`SatinColumnGenerator` only ever looks at the outer
+    /// boundary, per its own doc comment), so it falls back to tatami fill
+    /// regardless of what the rest of the run is doing -- a structural
+    /// necessity, not a style choice. `.tripleRun`/`.runningStitch` and
+    /// `.tatamiFill` all already stitch every one of a shape's sub-paths
+    /// correctly (see `DigitizePipeline.rawStitchRuns`), so this only ever
+    /// differs from `runStitchType` when it's `.satin`.
+    public static func classifyGlyphInRun(shape: VectorShape, runStitchType: StitchType) -> StitchType {
+        guard runStitchType == .satin, shape.subPaths.count > 1 else { return runStitchType }
+        return .tatamiFill
     }
 
     /// Samples the shape's local width at several points along its
