@@ -68,6 +68,23 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The fabric this design is meant to be sewn on (spec's Phase 5 --
+    /// see `FabricType`'s own doc comment). A whole-document setting, not
+    /// per-object, since a design is normally digitized once for one
+    /// target garment/fabric -- changing it here writes `fabricType` onto
+    /// every current object's own parameters (spec §10: every object
+    /// carries its own copy) and regenerates, the same "bulk-apply, then
+    /// live-regenerate" pattern `mergeColors(from:into:)` uses for color.
+    @Published var selectedFabricType: FabricType = .standard {
+        didSet {
+            guard oldValue != selectedFabricType, var current = document else { return }
+            commitImmediateUndoSnapshot()
+            for i in current.objects.indices { current.objects[i].parameters.fabricType = selectedFabricType }
+            document = current
+            scheduleLiveRegenerate()
+        }
+    }
+
     @Published var statusMessage: String = "Drag in an image or SVG file, then click Click to Create."
     @Published var errorMessage: String?
     @Published var isBusy = false

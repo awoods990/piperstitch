@@ -93,6 +93,28 @@ struct StitchTypeClassifierTests {
 
     // MARK: - classifyLetteringRun / classifyGlyphInRun
 
+    /// A run with a genuinely branching glyph (a synthetic "H" -- two
+    /// parallel stems joined by a crossbar, same shape used in
+    /// `SatinColumnGeneratorTests.branchingHShapeIsRejectedRatherThan
+    /// ProducingTwistedRails`) alongside otherwise-simple letters must
+    /// fall back the WHOLE run to tatami fill, not just that one letter --
+    /// otherwise the branching letter alone falls back to a thin
+    /// running-stitch outline while its neighbors stay bold satin, the
+    /// same visible-mistake problem `classifyLetteringRun` exists to
+    /// avoid, just satin-vs-outline instead of satin-vs-fill.
+    @Test func runContainingABranchingGlyphFallsBackEntirelyToTatami() {
+        let simpleLetter = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(3, 0), Point2D(3, 20), Point2D(0, 20),
+        ], closed: true)])
+        let hShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(3, 0), Point2D(3, 8.5), Point2D(12, 8.5), Point2D(12, 0),
+            Point2D(15, 0), Point2D(15, 20), Point2D(12, 20), Point2D(12, 11.5), Point2D(3, 11.5),
+            Point2D(3, 20), Point2D(0, 20),
+        ], closed: true)])
+        let runType = StitchTypeClassifier.classifyLetteringRun(shapes: [simpleLetter, hShape], parameters: defaultParams, capHeightMM: 20)
+        #expect(runType == .tatamiFill)
+    }
+
     /// The stem from `mediumColumnBecomesSatin` above (satin at full size)
     /// -- an entire run made of just this shape at a 3mm letter height
     /// (below the 5mm satin floor) should decide triple-run for the run.

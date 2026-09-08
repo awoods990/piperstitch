@@ -10,6 +10,108 @@ public enum StitchType: String, Codable, Sendable, CaseIterable {
     case tatamiFill
 }
 
+/// A tatami fill's stitch texture -- `TatamiFillGenerator` picks the
+/// generation strategy from this, not a separate `StitchType` case, since
+/// both patterns fill the exact same kind of region (even-odd across every
+/// sub-path, same hole handling) and only differ in HOW the rows
+/// themselves are laid out; keeping them under one `StitchType` avoids
+/// touching every `switch` over `StitchType` elsewhere in the engine just
+/// to add a texture variant.
+public enum FillPattern: String, Codable, Sendable, CaseIterable {
+    /// Parallel rows at one angle -- this engine's original, only fill
+    /// texture until this case was added.
+    case rows
+    /// Two overlapping row passes at right angles to each other, each at
+    /// half the requested density (so the combined coverage is
+    /// comparable in weight to a single `.rows` pass, not roughly double
+    /// it) -- a lattice/cross-hatch texture rather than parallel rows,
+    /// useful for a large flat area where plain rows can show a faint
+    /// directional "grain" or sheen. What commercial digitizing software
+    /// usually calls an E-stitch/lattice fill.
+    case crossHatch
+    /// A checkerboard of cells, each filled at one of two alternating
+    /// angles 90° apart -- the basket-weave technique real digitizing
+    /// software uses on a large flat area to break up the faint
+    /// directional "grain"/sheen plain rows (or even cross-hatch, whose
+    /// own two angles are still uniform across the whole shape) can show.
+    /// Most useful on a genuinely large region (a background fill, a
+    /// bold block letter) -- on a small or narrow shape, the cell grid
+    /// itself becomes the more visible artifact instead.
+    case basketWeave
+
+    public var displayName: String {
+        switch self {
+        case .rows: return "Rows"
+        case .crossHatch: return "Cross-Hatch"
+        case .basketWeave: return "Basket Weave"
+        }
+    }
+}
+
+/// The fabric a design is meant to be sewn on -- affects how much
+/// `PullCompensationCalculator`'s automatic pull/push estimate should
+/// apply, since a stretchier material distorts more during stitching and
+/// needs more compensation to end up the intended size; a stable, rigid
+/// material needs less than the engine's baseline (tuned for a typical
+/// cotton twill). `.standard` makes no adjustment at all -- today's
+/// existing behavior, unchanged.
+///
+/// Only ever affects the AUTOMATIC estimate: an object's own explicit
+/// `pullCompensationMM`/`pushCompensationMM`, when set, always wins
+/// regardless of fabric type, the same as any other manual override this
+/// engine already respects (spec's general "auto by default, explicit
+/// wins" pattern).
+public enum FabricType: String, Codable, Sendable, CaseIterable {
+    case standard
+    case stableWoven
+    case knit
+    case stretchKnit
+    case terry
+    case leatherOrVinyl
+
+    public var displayName: String {
+        switch self {
+        case .standard: return "Standard"
+        case .stableWoven: return "Stable Woven (twill, canvas, denim)"
+        case .knit: return "Knit (t-shirt, polo)"
+        case .stretchKnit: return "Stretch Knit (athletic, spandex blend)"
+        case .terry: return "Terry / Plush (towel, fleece)"
+        case .leatherOrVinyl: return "Leather / Vinyl"
+        }
+    }
+
+    /// A short label for a space-constrained toolbar button -- `displayName`
+    /// is the fuller, self-explanatory version used in the picker's own menu.
+    public var shortName: String {
+        switch self {
+        case .standard: return "Standard"
+        case .stableWoven: return "Stable Woven"
+        case .knit: return "Knit"
+        case .stretchKnit: return "Stretch Knit"
+        case .terry: return "Terry/Plush"
+        case .leatherOrVinyl: return "Leather/Vinyl"
+        }
+    }
+
+    /// Multiplies `PullCompensationCalculator`'s base pull/push estimate.
+    /// Directional guidance only (this engine has no calibrated per-
+    /// fabric sew-out data yet -- see that type's own doc comment on why
+    /// its whole estimate is a heuristic, not a physical model): a low-
+    /// stretch, dimensionally stable material needs less correction than
+    /// the baseline, a stretchy knit needs meaningfully more, and terry/
+    /// plush needs a moderate bump for its own pile-related distortion.
+    public var compensationMultiplier: Double {
+        switch self {
+        case .standard: return 1.0
+        case .stableWoven: return 0.7
+        case .knit: return 1.3
+        case .stretchKnit: return 1.8
+        case .terry: return 1.4
+        case .leatherOrVinyl: return 0.6
+        }
+    }
+}
+
 /// Per-object embroidery-generation parameters. Every object carries its own
 /// copy (spec §10: "Every object should contain its own embroidery
 /// parameters") — there is no single global density/underlay/compensation.
@@ -45,6 +147,10 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// back to a single fixed angle. Set explicitly to override.
     public var fillAngleDegrees: Double? = nil
     public var fillRowStaggerMM: Double = 1.2
+    /// The fill texture -- see `FillPattern`'s own doc comment. `.rows`
+    /// (the default) is this engine's original, only fill texture;
+    /// unchanged unless set explicitly.
+    public var fillPattern: FillPattern = .rows
 
     // Phase 3 — underlay (spec §16)
     /// `nil` = automatic (the engine picks a sensible default per stitch
@@ -81,9 +187,60 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// satin/fill, same as pull.
     public var pushCompensationMM: Double? = nil
 
+    /// Adjusts the automatic pull/push compensation estimate for the
+    /// fabric this design is meant to be sewn on -- see `FabricType`'s own
+    /// doc comment. `.standard` (the default) makes no adjustment at all,
+    /// so existing designs/documents are unaffected unless this is set
+    /// explicitly.
+    public var fabricType: FabricType = .standard
+
     // Phase 3 — reserved for object overlap / inset-outset (next).
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case stitchLengthMM, minStitchLengthMM, maxStitchLengthMM
+        case satinDensityMM, maxSatinWidthMM, minSatinWidthMM
+        case fillSpacingMM, fillAngleDegrees, fillRowStaggerMM, fillPattern
+        case underlayType, underlayStitchLengthMM, underlayInsetMM, zigzagUnderlaySpacingMM, zigzagUnderlayWidthThresholdMM
+        case pullCompensationMM, pushCompensationMM, fabricType
+    }
+
+    /// A field added here with a non-`Optional` type and a default value
+    /// (most of this struct's fields, including every one added before
+    /// this initializer existed) is NOT actually given that default by
+    /// Swift's synthesized `Decodable` when its key is missing --
+    /// synthesis only special-cases `Optional` properties that way. Every
+    /// non-optional field here was, until this initializer, silently
+    /// relying on `decodeIfPresent`-like behavior this engine's own
+    /// comments claimed but Swift doesn't actually provide -- a
+    /// `.stitchpilot` file saved before a given phase's fields existed
+    /// would throw `keyNotFound` decoding it today. This explicit
+    /// decoder actually delivers what those comments always described:
+    /// every field defaults when its key is missing, keeping old project
+    /// files loading regardless of which phase they were saved under.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = StitchGenerationParameters()
+        stitchLengthMM = try c.decodeIfPresent(Double.self, forKey: .stitchLengthMM) ?? defaults.stitchLengthMM
+        minStitchLengthMM = try c.decodeIfPresent(Double.self, forKey: .minStitchLengthMM) ?? defaults.minStitchLengthMM
+        maxStitchLengthMM = try c.decodeIfPresent(Double.self, forKey: .maxStitchLengthMM) ?? defaults.maxStitchLengthMM
+        satinDensityMM = try c.decodeIfPresent(Double.self, forKey: .satinDensityMM) ?? defaults.satinDensityMM
+        maxSatinWidthMM = try c.decodeIfPresent(Double.self, forKey: .maxSatinWidthMM) ?? defaults.maxSatinWidthMM
+        minSatinWidthMM = try c.decodeIfPresent(Double.self, forKey: .minSatinWidthMM) ?? defaults.minSatinWidthMM
+        fillSpacingMM = try c.decodeIfPresent(Double.self, forKey: .fillSpacingMM) ?? defaults.fillSpacingMM
+        fillAngleDegrees = try c.decodeIfPresent(Double.self, forKey: .fillAngleDegrees)
+        fillRowStaggerMM = try c.decodeIfPresent(Double.self, forKey: .fillRowStaggerMM) ?? defaults.fillRowStaggerMM
+        fillPattern = try c.decodeIfPresent(FillPattern.self, forKey: .fillPattern) ?? defaults.fillPattern
+        underlayType = try c.decodeIfPresent(UnderlayType.self, forKey: .underlayType)
+        underlayStitchLengthMM = try c.decodeIfPresent(Double.self, forKey: .underlayStitchLengthMM) ?? defaults.underlayStitchLengthMM
+        underlayInsetMM = try c.decodeIfPresent(Double.self, forKey: .underlayInsetMM) ?? defaults.underlayInsetMM
+        zigzagUnderlaySpacingMM = try c.decodeIfPresent(Double.self, forKey: .zigzagUnderlaySpacingMM) ?? defaults.zigzagUnderlaySpacingMM
+        zigzagUnderlayWidthThresholdMM = try c.decodeIfPresent(Double.self, forKey: .zigzagUnderlayWidthThresholdMM) ?? defaults.zigzagUnderlayWidthThresholdMM
+        pullCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pullCompensationMM)
+        pushCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pushCompensationMM)
+        fabricType = try c.decodeIfPresent(FabricType.self, forKey: .fabricType) ?? defaults.fabricType
+    }
 }
 
 public enum UnderlayType: String, Codable, Sendable, CaseIterable {
@@ -113,10 +270,21 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
     /// geometry (such as resizing the whole design) must leave this object
     /// alone once set, so a user's choice survives edits made afterward.
     public var stitchTypeIsManualOverride: Bool = false
+    /// True for an applique piece: `DigitizePipeline` sews a placement
+    /// outline (trace the shape once, guiding where to lay the fabric)
+    /// and a tack-down outline (trace it again, slightly inset, securing
+    /// the fabric's raw edge) before this object's own normal
+    /// `stitchType` stitching, which then covers both the tack-down line
+    /// and the fabric edge as the finished decorative border/fill. Does
+    /// NOT change `stitchType` itself -- an applique piece still gets
+    /// classified/generated as satin, fill, or a running outline exactly
+    /// like any other object; this only adds the two outline passes
+    /// before it.
+    public var isApplique: Bool = false
 
     public init(id: UUID = UUID(), name: String, shape: VectorShape, stitchType: StitchType,
                 threadColor: ThreadColor, parameters: StitchGenerationParameters = StitchGenerationParameters(),
-                stitchTypeIsManualOverride: Bool = false) {
+                stitchTypeIsManualOverride: Bool = false, isApplique: Bool = false) {
         self.id = id
         self.name = name
         self.shape = shape
@@ -124,16 +292,17 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
         self.threadColor = threadColor
         self.parameters = parameters
         self.stitchTypeIsManualOverride = stitchTypeIsManualOverride
+        self.isApplique = isApplique
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, shape, stitchType, threadColor, parameters, stitchTypeIsManualOverride
+        case id, name, shape, stitchType, threadColor, parameters, stitchTypeIsManualOverride, isApplique
     }
 
     /// Custom decoding so older `.stitchpilot` documents saved before
-    /// `stitchTypeIsManualOverride` existed keep loading (missing key
-    /// defaults to `false`, matching pre-existing objects that were all
-    /// auto-classified).
+    /// `stitchTypeIsManualOverride`/`isApplique` existed keep loading
+    /// (missing key defaults to `false` for both, matching pre-existing
+    /// objects, which were all auto-classified, non-applique).
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -143,6 +312,7 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
         threadColor = try container.decode(ThreadColor.self, forKey: .threadColor)
         parameters = try container.decode(StitchGenerationParameters.self, forKey: .parameters)
         stitchTypeIsManualOverride = try container.decodeIfPresent(Bool.self, forKey: .stitchTypeIsManualOverride) ?? false
+        isApplique = try container.decodeIfPresent(Bool.self, forKey: .isApplique) ?? false
     }
 }
 

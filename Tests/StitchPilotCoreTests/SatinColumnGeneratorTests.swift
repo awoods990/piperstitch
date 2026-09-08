@@ -358,4 +358,34 @@ struct SatinColumnGeneratorTests {
         #expect(railA.count == railB.count)
         #expect(railA.count > 8)
     }
+
+    // MARK: - Mitered end caps
+
+    /// Confirms this engine's satin end-cap handling doesn't force a
+    /// perpendicular cut: when the shape's OWN end-cap edge is already at
+    /// an angle (e.g. a 45° miter, so two adjacent satin border segments
+    /// can meet cleanly at a corner the way a picture frame's corners
+    /// do), `computeRails`'s squared-end-cap logic (see
+    /// `onePointedEndAndOneFlatEndAreHandledIndependently`, which
+    /// exercises the same code path for a perpendicular flat end) uses
+    /// that edge's own two endpoints directly -- so the rails follow the
+    /// angled cut rather than squaring it off to 90°. This engine doesn't
+    /// have an interactive tool to automatically miter two separate
+    /// objects against each other yet, but a shape authored (by hand, or
+    /// imported) with an already-mitered end sews mitered correctly.
+    @Test func satinRailsFollowAnAlreadyMiteredEndCapRatherThanSquaringItToNinetyDegrees() throws {
+        // A 4mm-wide strip along x, right end cut at a true 45° miter --
+        // rising from (20,0) to (24,4) instead of a flat vertical edge.
+        let miteredStrip = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(24, 4), Point2D(0, 4),
+        ], closed: true)])
+
+        let (railA, railB) = try SatinColumnGenerator.computeRails(for: miteredStrip)
+        // The two rails must end at the miter edge's own two distinct
+        // corners -- (20,0) and (24,4) -- not a shared, perpendicular
+        // cut point in between.
+        let allEnds: Set<Point2D> = [railA.first!, railA.last!, railB.first!, railB.last!]
+        #expect(allEnds.contains(Point2D(20, 0)))
+        #expect(allEnds.contains(Point2D(24, 4)))
+    }
 }

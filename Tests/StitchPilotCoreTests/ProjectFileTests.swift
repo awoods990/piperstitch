@@ -62,6 +62,49 @@ struct ProjectFileTests {
         #expect(loaded.objects[0].stitchType == .satin)
     }
 
+    /// A genuinely old `.stitchpilot` file predates every "Phase 3+"
+    /// parameter field -- underlay, compensation, `zigzagUnderlay*`,
+    /// `fabricType` -- not just the newest one. Every one of those fields
+    /// is declared non-`Optional` with a default value, which Swift's
+    /// *synthesized* `Decodable` does NOT actually honor for a missing key
+    /// (only `Optional` properties get that treatment automatically) --
+    /// confirmed directly: a bare `Codable` struct with a non-optional
+    /// `Double = 1.0` field throws `keyNotFound` decoding JSON missing
+    /// that key, it doesn't silently use the default. Without
+    /// `StitchGenerationParameters`'s own explicit `init(from:)`, a file
+    /// saved before ANY of these fields existed would fail to open at
+    /// all. Strips every phase-3+ key to simulate that.
+    @Test func veryOldProjectFileMissingEveryPhase3ParameterFieldStillDecodes() throws {
+        let data = try ProjectFileFormat.write(makeDocument())
+        var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var document = try #require(json["document"] as? [String: Any])
+        var objects = try #require(document["objects"] as? [[String: Any]])
+        var parameters = try #require(objects[0]["parameters"] as? [String: Any])
+        for key in ["maxStitchLengthMM", "maxSatinWidthMM", "minSatinWidthMM", "fillRowStaggerMM",
+                    "underlayStitchLengthMM", "underlayInsetMM", "zigzagUnderlaySpacingMM", "zigzagUnderlayWidthThresholdMM",
+                    "underlayType", "pullCompensationMM", "pushCompensationMM", "fabricType"] {
+            parameters.removeValue(forKey: key)
+        }
+        objects[0]["parameters"] = parameters
+        document["objects"] = objects
+        json["document"] = document
+        let strippedData = try JSONSerialization.data(withJSONObject: json)
+
+        let loaded = try ProjectFileFormat.read(strippedData)
+        let defaults = StitchGenerationParameters()
+        #expect(loaded.objects[0].parameters.maxSatinWidthMM == defaults.maxSatinWidthMM)
+        #expect(loaded.objects[0].parameters.zigzagUnderlaySpacingMM == defaults.zigzagUnderlaySpacingMM)
+        #expect(loaded.objects[0].parameters.underlayType == nil)
+        #expect(loaded.objects[0].parameters.pullCompensationMM == nil)
+        #expect(loaded.objects[0].parameters.fabricType == .standard)
+        // satinDensityMM was explicitly set (0.35) and its own key is
+        // still present -- must survive untouched, not get overwritten
+        // by the default just because OTHER keys were stripped.
+        #expect(loaded.objects[0].parameters.satinDensityMM == 0.35)
+        let plan = try DigitizePipeline.flatten(loaded)
+        #expect(plan.stitchCount > 0)
+    }
+
     @Test func loadedDocumentFlattensSuccessfully() throws {
         let data = try ProjectFileFormat.write(makeDocument())
         let loaded = try ProjectFileFormat.read(data)

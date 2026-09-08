@@ -356,4 +356,141 @@ struct TatamiFillGeneratorTests {
         let plan = try DigitizePipeline.flatten(doc)
         #expect(plan.stitchCount > 30)
     }
+
+    // MARK: - FillPattern.crossHatch
+
+    /// Cross-hatch's two passes run at right angles -- confirms the result
+    /// actually contains stitch segments in two distinct directions, not
+    /// just a denser version of the same single-direction rows.
+    @Test func crossHatchProducesStitchesInTwoDistinctDirections() {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20),
+        ], closed: true)])
+        var params = squareParams(spacing: 0.6)
+        params.fillPattern = .crossHatch
+        let points = TatamiFillGenerator.generate(for: square, parameters: params)
+        #expect(!points.isEmpty)
+
+        // Classify each consecutive segment as "mostly horizontal" or
+        // "mostly vertical" by comparing its dx/dy magnitude -- with rows
+        // at 0° and 90°, real segments should land solidly in one bucket
+        // or the other (not a lot of in-between diagonal noise), and BOTH
+        // buckets should be well represented.
+        var horizontal = 0, vertical = 0
+        for i in 1..<points.count {
+            let dx = abs(points[i].x - points[i - 1].x), dy = abs(points[i].y - points[i - 1].y)
+            guard dx > 0.05 || dy > 0.05 else { continue }
+            if dx > dy * 3 { horizontal += 1 }
+            if dy > dx * 3 { vertical += 1 }
+        }
+        #expect(horizontal > 5, "expected plenty of horizontal segments from the 0° pass")
+        #expect(vertical > 5, "expected plenty of vertical segments from the 90° pass")
+    }
+
+    /// A hole must still be respected under cross-hatch -- both passes
+    /// delegate to the same hole-aware `generateRuns` `.rows` path, so
+    /// this should hold the same way `holeIsRespected` already does for
+    /// plain rows.
+    @Test func crossHatchStillRespectsAHole() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(30, 0), Point2D(30, 30), Point2D(0, 30)], closed: true)
+        let hole = SubPath(points: [Point2D(10, 10), Point2D(20, 10), Point2D(20, 20), Point2D(10, 20)], closed: true)
+        let shapeWithHole = VectorShape(subPaths: [outer, hole])
+        var params = squareParams(spacing: 0.6)
+        params.fillPattern = .crossHatch
+
+        let points = TatamiFillGenerator.generate(for: shapeWithHole, parameters: params)
+        #expect(!points.isEmpty)
+        let margin = 0.3
+        let pointsInsideHole = points.filter {
+            $0.x > 10 + margin && $0.x < 20 - margin && $0.y > 10 + margin && $0.y < 20 - margin
+        }
+        #expect(pointsInsideHole.isEmpty, "no cross-hatch stitch should land inside the hole")
+    }
+
+    @Test func crossHatchIntegratesWithDigitizePipeline() throws {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(15, 0), Point2D(15, 15), Point2D(0, 15),
+        ], closed: true)])
+        var params = squareParams()
+        params.fillPattern = .crossHatch
+        let object = EmbroideryObject(name: "CrossHatchFill", shape: square, stitchType: .tatamiFill,
+                                       threadColor: .generic(RGBColor(hex: 0x00FF00)), parameters: params)
+        let doc = StitchDocument(name: "CrossHatchTest", physicalWidthMM: 15, physicalHeightMM: 15, objects: [object])
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 30)
+    }
+
+    // MARK: - FillPattern.basketWeave
+
+    /// A large square (well over the ~12mm cell size) should produce
+    /// stitches in two distinct directions from its alternating cells,
+    /// the same structural check `crossHatchProducesStitchesInTwoDistinct
+    /// Directions` uses.
+    @Test func basketWeaveProducesStitchesInTwoDistinctDirections() {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(40, 0), Point2D(40, 40), Point2D(0, 40),
+        ], closed: true)])
+        var params = squareParams(spacing: 0.6)
+        params.fillPattern = .basketWeave
+        let points = TatamiFillGenerator.generate(for: square, parameters: params)
+        #expect(!points.isEmpty)
+
+        var horizontal = 0, vertical = 0
+        for i in 1..<points.count {
+            let dx = abs(points[i].x - points[i - 1].x), dy = abs(points[i].y - points[i - 1].y)
+            guard dx > 0.05 || dy > 0.05 else { continue }
+            if dx > dy * 3 { horizontal += 1 }
+            if dy > dx * 3 { vertical += 1 }
+        }
+        #expect(horizontal > 5, "expected horizontal segments from at least one checkerboard cell")
+        #expect(vertical > 5, "expected vertical segments from at least one checkerboard cell")
+    }
+
+    /// Every basket-weave stitch must stay within the original shape's own
+    /// bounds -- confirms the per-cell clip doesn't let a cell's fill spill
+    /// outside the actual shape.
+    @Test func basketWeaveStaysWithinTheShapesBounds() {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 30), Point2D(0, 30),
+        ], closed: true)])
+        var params = squareParams(spacing: 0.6)
+        params.fillPattern = .basketWeave
+        let points = TatamiFillGenerator.generate(for: square, parameters: params)
+        #expect(!points.isEmpty)
+        let box = BoundingBox(points: points)
+        #expect(box.minX >= -0.5 && box.maxX <= 30.5)
+        #expect(box.minY >= -0.5 && box.maxY <= 30.5)
+    }
+
+    /// A hole must still be respected under basket-weave -- each cell
+    /// clips every sub-path (including the hole) to itself before
+    /// filling, so a cell overlapping the hole should still exclude it.
+    @Test func basketWeaveStillRespectsAHole() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(40, 0), Point2D(40, 40), Point2D(0, 40)], closed: true)
+        let hole = SubPath(points: [Point2D(15, 15), Point2D(25, 15), Point2D(25, 25), Point2D(15, 25)], closed: true)
+        let shapeWithHole = VectorShape(subPaths: [outer, hole])
+        var params = squareParams(spacing: 0.6)
+        params.fillPattern = .basketWeave
+
+        let points = TatamiFillGenerator.generate(for: shapeWithHole, parameters: params)
+        #expect(!points.isEmpty)
+        let margin = 0.3
+        let pointsInsideHole = points.filter {
+            $0.x > 15 + margin && $0.x < 25 - margin && $0.y > 15 + margin && $0.y < 25 - margin
+        }
+        #expect(pointsInsideHole.isEmpty, "no basket-weave stitch should land inside the hole")
+    }
+
+    @Test func basketWeaveIntegratesWithDigitizePipeline() throws {
+        let square = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 30), Point2D(0, 30),
+        ], closed: true)])
+        var params = squareParams()
+        params.fillPattern = .basketWeave
+        let object = EmbroideryObject(name: "BasketWeaveFill", shape: square, stitchType: .tatamiFill,
+                                       threadColor: .generic(RGBColor(hex: 0x00FF00)), parameters: params)
+        let doc = StitchDocument(name: "BasketWeaveTest", physicalWidthMM: 30, physicalHeightMM: 30, objects: [object])
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 30)
+    }
 }

@@ -85,16 +85,17 @@ struct StitchCanvasView: View {
     /// at, so a zoom/resize can be compared against it and only trigger a
     /// re-render when the mismatch is large enough to matter.
     @State private var renderedPixelsPerMM: Double = 0
-    /// Bumped every time `regenerateRealisticImageIfNeeded` starts a new
-    /// background render -- lets a render that finishes after a *newer*
-    /// one has already started detect that it's stale and discard its
-    /// result instead of clobbering the newer one, without needing actual
-    /// task cancellation (there's no mid-render cancellation point inside
-    /// `StitchRenderer.render`). Safe to compare against from inside the
-    /// render's completion closure even though that closure captured an
-    /// older copy of this view's own struct -- `@State`'s storage is a
-    /// shared box, so reading it there still sees the live, current value.
-    @State private var realisticRenderGeneration = 0
+    /// The in-flight background render, if any -- cancelling and replacing
+    /// this on every new `regenerateRealisticImageIfNeeded` call (mirroring
+    /// `AppState.scheduleLiveRegenerate`/`liveRegenerateTask`'s already-
+    /// proven pattern) is what lets a render superseded by a newer one
+    /// detect that reliably via real `Task.isCancelled`, rather than an
+    /// earlier version of this code's own hand-rolled "generation counter"
+    /// comparison, which could let a stale render's result win the race and
+    /// overwrite a newer one's -- the on-screen bitmap silently going stale
+    /// until something else (switching preview mode and back) happened to
+    /// trigger another regenerate attempt.
+    @State private var renderTask: Task<Void, Never>?
     /// How many background bitmap renders are currently in flight -- shown
     /// as part of the "Refreshing…" indicator alongside
     /// `isRegeneratingPreview`. A count rather than a bool for the same
@@ -673,19 +674,18 @@ struct StitchCanvasView: View {
         let heightMM = document.physicalHeightMM
         let colorsSnapshot = colors
         let targetSignature = planSignature
-        realisticRenderGeneration += 1
-        let myGeneration = realisticRenderGeneration
-        activeRealisticRenderCount += 1
 
-        Task.detached(priority: .userInitiated) {
-            let image = StitchRenderer.render(stitchPlan, widthMM: widthMM, heightMM: heightMM, colors: colorsSnapshot, options: options)
-            await MainActor.run {
-                activeRealisticRenderCount = max(0, activeRealisticRenderCount - 1)
-                guard myGeneration == realisticRenderGeneration else { return }
-                realisticImage = image
-                renderedSignature = targetSignature
-                renderedPixelsPerMM = targetPixelsPerMM
-            }
+        renderTask?.cancel()
+        activeRealisticRenderCount += 1
+        renderTask = Task {
+            defer { activeRealisticRenderCount = max(0, activeRealisticRenderCount - 1) }
+            let image = await Task.detached(priority: .userInitiated) {
+                StitchRenderer.render(stitchPlan, widthMM: widthMM, heightMM: heightMM, colors: colorsSnapshot, options: options)
+            }.value
+            guard !Task.isCancelled else { return }
+            realisticImage = image
+            renderedSignature = targetSignature
+            renderedPixelsPerMM = targetPixelsPerMM
         }
     }
 

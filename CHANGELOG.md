@@ -4,6 +4,115 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: fabric-type-aware compensation, two new fill textures, and applique stitch primitives (spec's Phase 5 gap-analysis items)
+
+Four more items from the earlier gap analysis against commercial digitizing
+practice:
+
+**Fabric-type-aware defaults (spec's Phase 5).** `FabricType` (Standard,
+Stable Woven, Knit, Stretch Knit, Terry/Plush, Leather/Vinyl) scales
+`PullCompensationCalculator`'s automatic pull/push estimate by a
+directional multiplier per material -- a stretchy knit needs meaningfully
+more correction than the baseline, a stable rigid material needs less,
+capped by an absolute ceiling regardless of fabric so compensation can
+never itself become the dominant source of distortion. A new toolbar
+"Fabric" menu sets it for the whole document (writes `fabricType` onto
+every current object's own parameters, spec §10's "every object carries
+its own copy"), the same bulk-apply pattern Merge Colors already uses for
+color. Only ever affects the AUTOMATIC estimate -- an object's own
+explicit compensation value always wins, same as any other manual
+override this engine already respects. Not (yet) automatically
+re-applied to objects created after the setting is changed (a resize or
+"Redo from Original" regenerates fresh parameters) -- a known, bounded
+gap in this first version, the same way other bulk-set overrides in this
+engine already don't survive a full regenerate.
+
+**Two new fill textures (`FillPattern`).** Cross-Hatch sews two
+overlapping `.rows` passes at right angles, each at half density, for a
+lattice texture instead of parallel rows -- what commercial software
+usually calls an E-stitch/lattice fill. Basket Weave splits a large
+region into a checkerboard of cells (`PolygonGeometry.clipPolygonToRect`,
+a new Sutherland-Hodgman polygon clip, correct against a concave subject
+shape) and alternates each cell's fill angle 90°, breaking up the faint
+directional "grain"/sheen a large flat area can show under plain rows or
+even Cross-Hatch (whose own two angles are still uniform across the
+whole shape). Both delegate entirely back to the existing `.rows`
+generation path per pass/cell, so hole handling, stagger, and
+compensation all apply identically without their own reimplementation.
+Visually verified against a holed test shape for both patterns before
+shipping.
+
+**Applique stitch-sequence primitives.** `EmbroideryObject.isApplique`
+sews a placement outline (trace the shape once, guiding fabric
+placement) and a tack-down outline (trace it again, inset ~1mm, securing
+the fabric's raw edge) as their own separate, trimmed runs before the
+object's own normal stitching, which then covers both the tack-down
+thread and the fabric edge as the finished satin/fill border. This is
+the STITCH-SEQUENCE part of applique support specifically -- not a full
+workflow (no material-cutline export, no dedicated placement UI); the
+user still places and trims the fabric by hand between the placement and
+tack-down passes, guided by where the machine actually paused.
+
+**Mitered satin end caps -- verified, not newly built.** Turns out this
+engine's rail-fitting already supports an angled/mitered end cap as a
+side effect of the earlier squared-end-cap fix: `computeRails` uses
+whatever shape the end-cap edge in the input geometry actually has, angle
+included, rather than forcing every end perpendicular. Added a test
+confirming this (a shape with a deliberate 45° end already sews mitered).
+What's still missing is an interactive tool to automatically compute and
+apply a miter cut between two separate objects meeting at a corner (a
+picture-frame border's own corners, say) -- that adjacency-detection-and-
+cut workflow is real, separate scope this pass didn't attempt, honestly
+flagged rather than rushed.
+
+## Fixed: the realistic preview bitmap could silently go stale until switching preview mode and back
+
+`regenerateRealisticImageIfNeeded`'s own staleness check (a hand-rolled
+"generation counter" comparison) had a real race: two overlapping
+background renders could resolve in either order, and if an older one's
+result happened to win, it would commit over a newer one's -- or a
+render's own bookkeeping could get confused about which attempt was
+current. Symptom: the realistic preview stopped updating after an edit
+and stayed stuck showing the previous version, until switching to
+Technical and back to Realistic forced another regenerate attempt that
+happened not to race. Replaced with the exact pattern
+`AppState.scheduleLiveRegenerate` already uses correctly: store the
+in-flight render as a real `Task`, cancel and replace it on every new
+call, and check actual `Task.isCancelled` (not a counter) before
+committing a result.
+
+## Fixed: a lettering run could still end up with mixed stitch types when one letter genuinely couldn't be satin
+
+The previous fix made a whole lettering run share one stitch type, except
+a glyph that structurally couldn't be a single satin column (a branching
+letter like "H") still fell back to running-stitch on its own -- same
+visible-mistake problem the whole-run fix existed to solve, just a
+thin-outline-vs-bold mismatch instead of a satin-vs-fill one.
+`StitchTypeClassifier.classifyLetteringRun` now checks every glyph up
+front (reusing `SatinColumnGenerator.canRepresentAsSingleSatinColumn`,
+the same rail-computation-and-twist-check `generatePartial` itself would
+do) before deciding satin for the run at all: if ANY glyph would need a
+structural exception, tatami fill for the WHOLE run, not just that one
+letter. Tatami fill has no structural limits on hole count or branching
+complexity, making it the one stitch type genuinely guaranteed to
+represent every glyph in a run identically.
+
+## Fixed: `StitchGenerationParameters`/`EmbroideryObject` could throw loading an old `.stitchpilot` project file
+
+A real, pre-existing bug, found while adding a new field the same way:
+Swift's *synthesized* `Decodable` does NOT actually give a non-`Optional`
+property its declared default value when the JSON key is missing --
+despite this file's own long-standing comments claiming otherwise, that
+behavior is only automatic for `Optional` properties. Confirmed directly
+(a bare `Codable` struct with a non-optional `Double = 1.0` field throws
+`keyNotFound` decoding JSON missing that key). Most of
+`StitchGenerationParameters`'s fields are non-optional with defaults --
+`maxStitchLengthMM`, `zigzagUnderlaySpacingMM`, and others -- meaning a
+`.stitchpilot` file saved before a given phase's fields existed would
+fail to open at all. Both types now have an explicit `init(from:)` that
+actually delivers the "missing key defaults" behavior their comments
+always described.
+
 ## Added: three more industry-standard digitizing techniques (curvature-adaptive satin density, squared end caps, fill compensation on holes)
 
 Following up on a gap analysis against documented commercial digitizing

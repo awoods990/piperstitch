@@ -46,6 +46,12 @@ public enum TatamiFillGenerator {
     /// crossing is fine and expected for that common case.
     public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double) -> [[Point2D]] {
         guard !shape.subPaths.isEmpty else { return [] }
+        if parameters.fillPattern == .crossHatch {
+            return generateCrossHatchRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM)
+        }
+        if parameters.fillPattern == .basketWeave {
+            return generateBasketWeaveRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM)
+        }
         let angleDegrees = parameters.fillAngleDegrees ?? FillAngleSelector.selectAngle(for: shape)
         let angleRad = angleDegrees * .pi / 180
         let cosA = cos(-angleRad), sinA = sin(-angleRad) // rotate shape by -angle so fill rows become horizontal
@@ -63,7 +69,7 @@ public enum TatamiFillGenerator {
         // before scanning, so the fill sews at its intended size after
         // fabric pulls it in.
         let compensation = parameters.pullCompensationMM
-            ?? PullCompensationCalculator.estimate(stitchType: .tatamiFill, densityMM: parameters.fillSpacingMM, objectWidthMM: box.height)
+            ?? PullCompensationCalculator.estimate(stitchType: .tatamiFill, densityMM: parameters.fillSpacingMM, objectWidthMM: box.height, fabricType: parameters.fabricType)
         // Skip compensation on a shape too small relative to it: growing a
         // near-degenerate sliver by pull compensation would fabricate a
         // fill region that wasn't really there rather than adjusting one
@@ -107,7 +113,7 @@ public enum TatamiFillGenerator {
         // axis for this effect (as opposed to `box.height`, along which
         // pull compensation above already grew the boundary).
         let pushCompMM = parameters.pushCompensationMM
-            ?? PullCompensationCalculator.estimatePush(stitchType: .tatamiFill, densityMM: spacing, objectLengthMM: box.width)
+            ?? PullCompensationCalculator.estimatePush(stitchType: .tatamiFill, densityMM: spacing, objectLengthMM: box.width, fabricType: parameters.fabricType)
 
         // Collect each row's crossing-pairs as raw intervals first, without
         // resampling yet -- `chainRuns` below needs to see run-to-run
@@ -184,6 +190,87 @@ public enum TatamiFillGenerator {
         var end: Double
         var y: Double
         var rowIndex: Int
+    }
+
+    /// Two overlapping `.rows` passes at right angles, each at half the
+    /// requested density -- see `FillPattern.crossHatch`'s own doc
+    /// comment. Delegates entirely back to `generateRuns` (with the
+    /// pattern reset to `.rows` so it doesn't recurse) for each pass, so
+    /// every existing behavior -- hole handling via `chainRuns`, stagger,
+    /// pull/push compensation, the `breakThresholdMM` hole-connector
+    /// split -- applies identically to both passes without needing its
+    /// own reimplementation here.
+    private static func generateCrossHatchRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double) -> [[Point2D]] {
+        let baseAngle = parameters.fillAngleDegrees ?? FillAngleSelector.selectAngle(for: shape)
+        var passParameters = parameters
+        passParameters.fillPattern = .rows
+        passParameters.fillSpacingMM = max(parameters.fillSpacingMM * 2, 0.05)
+
+        passParameters.fillAngleDegrees = baseAngle
+        let passA = generateRuns(for: shape, parameters: passParameters, breakThresholdMM: breakThresholdMM)
+
+        passParameters.fillAngleDegrees = baseAngle + 90
+        let passB = generateRuns(for: shape, parameters: passParameters, breakThresholdMM: breakThresholdMM)
+
+        return passA + passB
+    }
+
+    /// The target cell size for `.basketWeave`'s checkerboard grid --
+    /// smaller than this and the grid itself becomes a more visible
+    /// artifact than whatever "grain" it's meant to break up; the actual
+    /// cell size still varies a bit (the shape's own bounding box is
+    /// divided evenly by however many cells that rounds up to, not
+    /// clipped to a fixed grid), so it doesn't need to divide the shape's
+    /// size evenly.
+    private static let basketWeaveCellSizeMM = 12.0
+
+    /// Splits `shape`'s own bounding box into a grid of roughly
+    /// `basketWeaveCellSizeMM`-sized cells, clips the shape (every
+    /// sub-path, so holes clip the same way the outer boundary does) to
+    /// each cell via `PolygonGeometry.clipPolygonToRect`, and fills each
+    /// cell independently as `.rows` at one of two angles 90° apart in a
+    /// checkerboard -- see `FillPattern.basketWeave`'s own doc comment.
+    /// Cells whose clipped shape has no usable outer boundary (the shape
+    /// doesn't reach that cell at all) are simply skipped.
+    private static func generateBasketWeaveRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double) -> [[Point2D]] {
+        var box = BoundingBox.empty
+        for sp in shape.subPaths { box = box.union(sp.boundingBox) }
+        guard !box.isEmpty, box.width > 0, box.height > 0 else { return [] }
+
+        let baseAngle = parameters.fillAngleDegrees ?? FillAngleSelector.selectAngle(for: shape)
+        let cols = max(1, Int((box.width / basketWeaveCellSizeMM).rounded(.up)))
+        let rowCount = max(1, Int((box.height / basketWeaveCellSizeMM).rounded(.up)))
+        let cellWidth = box.width / Double(cols)
+        let cellHeight = box.height / Double(rowCount)
+
+        var passParameters = parameters
+        passParameters.fillPattern = .rows
+
+        var allRuns: [[Point2D]] = []
+        for row in 0..<rowCount {
+            for col in 0..<cols {
+                let cellMinX = box.minX + Double(col) * cellWidth
+                let cellMinY = box.minY + Double(row) * cellHeight
+                // The last row/column reaches exactly to the shape's own
+                // extent rather than accumulated cell widths, so rounding
+                // error can't leave a sliver of the shape uncovered by any
+                // cell at the far edge.
+                let cellMaxX = col == cols - 1 ? box.maxX : cellMinX + cellWidth
+                let cellMaxY = row == rowCount - 1 ? box.maxY : cellMinY + cellHeight
+
+                let clippedSubPaths = shape.subPaths.compactMap { sp -> SubPath? in
+                    let clipped = PolygonGeometry.clipPolygonToRect(sp.points, minX: cellMinX, minY: cellMinY, maxX: cellMaxX, maxY: cellMaxY)
+                    guard clipped.count >= 3 else { return nil }
+                    return SubPath(points: clipped, closed: true)
+                }
+                guard !clippedSubPaths.isEmpty else { continue }
+
+                passParameters.fillAngleDegrees = (row + col).isMultiple(of: 2) ? baseAngle : baseAngle + 90
+                let cellRuns = generateRuns(for: VectorShape(subPaths: clippedSubPaths), parameters: passParameters, breakThresholdMM: breakThresholdMM)
+                allRuns.append(contentsOf: cellRuns)
+            }
+        }
+        return allRuns
     }
 
     /// Groups runs into connected chains across rows by X-overlap, so a

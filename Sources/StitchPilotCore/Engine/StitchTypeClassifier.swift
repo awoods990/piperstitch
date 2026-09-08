@@ -109,24 +109,39 @@ public enum StitchTypeClassifier {
     /// looks lumpy on a shape whose strokes run in genuinely different
     /// directions), but it meant a word like "MILITARY" could sew most
     /// letters in satin and "T"/"R" in fill, which reads as a mistake, not
-    /// as two individually-reasonable choices. The real fix for a
-    /// multi-stroke letter is *split* satin -- multiple locally-direction-
-    /// correct columns joined together, the technique commercial
-    /// digitizing software actually uses -- which needs true per-stroke
-    /// skeleton segmentation in `SatinColumnGenerator` this engine doesn't
-    /// have yet; consistency across the run is the better trade available
-    /// without it.
+    /// as two individually-reasonable choices. A later version fixed the
+    /// worst of that (see git history) but still let a genuinely
+    /// *branching* letter (H's two stems joined by a crossbar, which
+    /// `SatinColumnGenerator.canRepresentAsSingleSatinColumn` really can't
+    /// rail-fit as one column, not just "lumpy" but structurally broken)
+    /// fall back to running-stitch on its own -- same visible-mistake
+    /// problem, just a thinner-vs-bold mismatch instead of a
+    /// satin-vs-fill one.
     ///
-    /// Gates satin-vs-fill for the whole run on its widest *simple*
-    /// (no-hole) glyph -- the shape that would actually be first to fail a
-    /// satin column's practical width limit. A glyph with a hole doesn't
-    /// count toward this decision; see `classifyGlyphInRun`.
+    /// This version checks EVERY glyph up front, not just measures width:
+    /// if any glyph in the run genuinely can't be a single satin column --
+    /// branching, or more than one hole -- the WHOLE run falls back to
+    /// tatami fill together, rather than one letter alone. Unlike satin
+    /// (real structural limits: one boundary for an open column, one hole
+    /// for a ring), tatami fill has none -- `TatamiFillGenerator`'s
+    /// even-odd scanline fill handles any number of holes or any branching
+    /// complexity correctly, so it's the one stitch type genuinely
+    /// guaranteed to represent every glyph in a run the same way. True
+    /// per-stroke skeleton segmentation (letting a branching letter itself
+    /// become clean multi-segment satin, matching commercial digitizing
+    /// software) remains a substantially larger, separate undertaking.
+    ///
+    /// Otherwise gates satin-vs-fill for the whole run on its widest
+    /// *simple* (no-hole) glyph -- the shape that would actually be first
+    /// to fail a satin column's practical width limit.
     public static func classifyLetteringRun(shapes: [VectorShape], parameters: StitchGenerationParameters, capHeightMM: Double) -> StitchType {
         guard capHeightMM >= minimumSatinCapHeightMM else { return .tripleRun }
 
         var widestSimpleGlyphAverageWidth = 0.0
         for shape in shapes {
+            if shape.subPaths.count > 2 { return .tatamiFill }
             guard shape.subPaths.count == 1, let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
+            guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else { return .tatamiFill }
             let area = abs(PolygonGeometry.signedArea(outer.points))
             let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
             let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
@@ -136,9 +151,7 @@ public enum StitchTypeClassifier {
         }
         // No measurable simple glyph at all (e.g. a run that's entirely
         // holed letters, or entirely spaces) -- satin is the sensible
-        // default; `classifyGlyphInRun` still routes a multi-hole glyph
-        // (more than one counter -- B, 8) to tatami fill regardless, since
-        // that's beyond what a single ring column can represent.
+        // default; every glyph already passed the checks above.
         guard widestSimpleGlyphAverageWidth > 0 else { return .satin }
         return widestSimpleGlyphAverageWidth <= parameters.maxSatinWidthMM ? .satin : .tatamiFill
     }

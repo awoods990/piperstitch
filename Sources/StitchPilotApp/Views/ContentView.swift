@@ -166,6 +166,23 @@ struct ContentView: View {
                     Label("Thread Library", systemImage: "paintpalette")
                 }
                 .help("Define your own thread colors to match against.")
+
+                Menu {
+                    ForEach(FabricType.allCases, id: \.self) { fabric in
+                        Button {
+                            app.selectedFabricType = fabric
+                        } label: {
+                            if fabric == app.selectedFabricType {
+                                Label(fabric.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(fabric.displayName)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Fabric: \(app.selectedFabricType.shortName)", systemImage: "square.stack.3d.up")
+                }
+                .help("Adjusts the automatic pull/push compensation estimate for the fabric this design will be sewn on -- a stretchier material needs more correction, a stable/rigid one needs less. Applies to every object; an object's own manually-set compensation always wins over this.")
             }
 
             // A visible boundary between adjusting the automatic output
@@ -591,6 +608,9 @@ private struct ObjectInspectorSection: View {
                     }
                 }
 
+                Toggle("Applique", isOn: binding(object, \.isApplique))
+                    .help("Sews a placement outline, then a tack-down outline slightly inset, before this object's own stitching -- trace the placement line, lay and trim the fabric by hand, then continue for the tack-down and the finished satin/fill on top.")
+
                 switch object.stitchType {
                 case .runningStitch, .tripleRun:
                     TextField("Stitch Length (cm)", value: cmBinding(binding(object, \.parameters.stitchLengthMM)), format: .number)
@@ -601,6 +621,12 @@ private struct ObjectInspectorSection: View {
                 case .tatamiFill:
                     densitySlider("Row Spacing", keyPath: \.parameters.fillSpacingMM, object: object)
                     optionalDoubleField(object, label: "Fill Angle (°)", keyPath: \.parameters.fillAngleDegrees, defaultManualValue: 0, isAngle: true)
+                    Picker("Fill Pattern", selection: binding(object, \.parameters.fillPattern)) {
+                        ForEach(FillPattern.allCases, id: \.self) { pattern in
+                            Text(pattern.displayName).tag(pattern)
+                        }
+                    }
+                    .help("Cross-Hatch sews two overlapping passes at right angles instead of parallel rows -- a lattice texture that avoids the faint directional sheen plain rows can show on a large flat area.")
                 }
 
                 if object.stitchType == .satin || object.stitchType == .tatamiFill {

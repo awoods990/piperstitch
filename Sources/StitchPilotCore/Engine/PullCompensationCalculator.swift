@@ -6,22 +6,31 @@ import Foundation
 /// expanded outward to compensate first.
 ///
 /// This is a first-pass *heuristic*, not a calibrated physical model: real
-/// pull depends on fabric weight/stretch, hooping tension, and thread type,
-/// none of which StitchPilot has data for yet (fabric profiles are Phase 5;
-/// the manual sew-out calibration system in spec §68 is the intended way to
-/// eventually replace this heuristic with numbers measured from actual
-/// sew-outs). The formula below only captures the two effects that are
-/// true regardless of fabric: denser stitching pulls more, and the same
-/// absolute pull is a bigger relative distortion on a narrower object.
+/// pull depends on fabric weight/stretch, hooping tension, and thread type
+/// -- the manual sew-out calibration system in spec §68 is the intended way
+/// to eventually replace this heuristic with numbers measured from actual
+/// sew-outs. The formula below captures the two effects that are true
+/// regardless of fabric (denser stitching pulls more, the same absolute
+/// pull is a bigger relative distortion on a narrower object), then
+/// `fabricType` (spec's Phase 5) scales the whole result directionally for
+/// how stretchy/stable the target material is -- still not calibrated
+/// per-fabric data, just a documented direction and rough magnitude.
 public enum PullCompensationCalculator {
-    /// Never recommends more than this — beyond it, compensation itself
-    /// starts visibly distorting the design rather than correcting for pull.
-    private static let maxCompensationMM = 0.6
+    /// The un-scaled ceiling -- `.standard` fabric never recommends more
+    /// than this, beyond which compensation itself starts visibly
+    /// distorting the design rather than correcting for pull.
+    private static let baseMaxCompensationMM = 0.6
+    /// An absolute ceiling regardless of fabric type or how far
+    /// `FabricType.compensationMultiplier` would otherwise push it --
+    /// even a very stretchy fabric shouldn't get compensation large
+    /// enough to itself become the dominant source of distortion.
+    private static let hardCeilingCompensationMM = 1.0
     private static let baseCompensationMM = 0.15
 
-    public static func estimate(stitchType: StitchType, densityMM: Double, objectWidthMM: Double) -> Double {
+    public static func estimate(stitchType: StitchType, densityMM: Double, objectWidthMM: Double, fabricType: FabricType = .standard) -> Double {
         guard stitchType == .satin || stitchType == .tatamiFill else { return 0 }
-        guard densityMM > 0 else { return baseCompensationMM }
+        let effectiveMax = min(hardCeilingCompensationMM, baseMaxCompensationMM * fabricType.compensationMultiplier)
+        guard densityMM > 0 else { return min(effectiveMax, baseCompensationMM * fabricType.compensationMultiplier) }
 
         // Denser stitching (smaller spacing) pulls fabric together more.
         let densityFactor = max(0, (0.5 - densityMM)) * 0.6
@@ -30,7 +39,7 @@ public enum PullCompensationCalculator {
         // for very wide ones so compensation doesn't keep shrinking toward zero.
         let widthFactor = objectWidthMM > 0 ? min(1.5, max(0.6, 4.0 / objectWidthMM)) : 1.0
 
-        return min(maxCompensationMM, (baseCompensationMM + densityFactor) * widthFactor)
+        return min(effectiveMax, (baseCompensationMM + densityFactor) * widthFactor * fabricType.compensationMultiplier)
     }
 
     /// Push compensation's counterpart to `estimate` above: fabric doesn't
@@ -43,7 +52,7 @@ public enum PullCompensationCalculator {
     /// the length axis instead of the width axis — reuses the identical
     /// formula rather than inventing a differently-shaped one with no
     /// calibration data to justify it (see this type's own caveat above).
-    public static func estimatePush(stitchType: StitchType, densityMM: Double, objectLengthMM: Double) -> Double {
-        estimate(stitchType: stitchType, densityMM: densityMM, objectWidthMM: objectLengthMM)
+    public static func estimatePush(stitchType: StitchType, densityMM: Double, objectLengthMM: Double, fabricType: FabricType = .standard) -> Double {
+        estimate(stitchType: stitchType, densityMM: densityMM, objectWidthMM: objectLengthMM, fabricType: fabricType)
     }
 }

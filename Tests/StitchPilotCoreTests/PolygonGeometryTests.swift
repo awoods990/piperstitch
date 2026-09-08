@@ -93,4 +93,42 @@ struct PolygonGeometryTests {
             #expect(w.distance(to: p) < 0.001)
         }
     }
+
+    // MARK: - clipPolygonToRect
+
+    @Test func clipRectFullyInsideWindowIsUnchangedInArea() {
+        let square = [Point2D(2, 2), Point2D(8, 2), Point2D(8, 8), Point2D(2, 8)]
+        let clipped = PolygonGeometry.clipPolygonToRect(square, minX: 0, minY: 0, maxX: 10, maxY: 10)
+        #expect(abs(PolygonGeometry.signedArea(clipped)) == 36) // fully inside the window -- unchanged, 6x6
+    }
+
+    @Test func clipRectPartiallyOutsideWindowIsTrimmedToTheOverlap() {
+        let square = [Point2D(5, 5), Point2D(15, 5), Point2D(15, 15), Point2D(5, 15)]
+        let clipped = PolygonGeometry.clipPolygonToRect(square, minX: 0, minY: 0, maxX: 10, maxY: 10)
+        let box = BoundingBox(points: clipped)
+        // The true overlap of [5,15]x[5,15] with the [0,10]x[0,10] window is x:[5,10], y:[5,10].
+        #expect(abs(box.minX - 5) < 0.001 && abs(box.minY - 5) < 0.001)
+        #expect(abs(box.maxX - 10) < 0.001 && abs(box.maxY - 10) < 0.001)
+    }
+
+    @Test func clipRectEntirelyOutsideWindowProducesNothing() {
+        let square = [Point2D(20, 20), Point2D(30, 20), Point2D(30, 30), Point2D(20, 30)]
+        let clipped = PolygonGeometry.clipPolygonToRect(square, minX: 0, minY: 0, maxX: 10, maxY: 10)
+        #expect(clipped.count < 3, "no meaningful overlap should produce an empty (or degenerate) result")
+    }
+
+    /// A concave "L" shape, clipped by a window that only covers its
+    /// bottom-left leg -- confirms the clip correctly excludes the part
+    /// of the shape outside the window without needing the subject
+    /// polygon to be convex.
+    @Test func clipConcaveLShapeToOneLeg() {
+        let lShape = [
+            Point2D(0, 0), Point2D(10, 0), Point2D(10, 4), Point2D(4, 4), Point2D(4, 10), Point2D(0, 10),
+        ]
+        let clipped = PolygonGeometry.clipPolygonToRect(lShape, minX: 0, minY: 0, maxX: 4, maxY: 4)
+        let box = BoundingBox(points: clipped)
+        #expect(!clipped.isEmpty)
+        #expect(box.maxX <= 4.001 && box.maxY <= 4.001)
+        #expect(abs(PolygonGeometry.signedArea(clipped)) > 14) // most of the 4x4 corner cell
+    }
 }

@@ -235,6 +235,25 @@ public enum SatinColumnGenerator {
         return Point2D(origin.x + t * direction.x, origin.y + t * direction.y)
     }
 
+    /// Whether `shape` -- a single-boundary (no-hole) outline -- can be
+    /// represented as one well-formed satin column with this engine's
+    /// current rail-fitting: `computeRails` succeeds and the resulting
+    /// crossings don't twist (see `isTwisted`'s own doc comment). Used by
+    /// `StitchTypeClassifier.classifyLetteringRun` to check every glyph in
+    /// a lettering run up front, not just measure width -- a genuinely
+    /// branching letter (H's two stems joined by a crossbar) can't be a
+    /// single satin column regardless of width, and rather than that one
+    /// letter alone falling back to a different stitch type (visually
+    /// inconsistent with its neighbors), the whole run falls back to
+    /// tatami fill together. Cheap enough to call once per glyph at
+    /// classification time -- it does the same rail/crossing computation
+    /// `generatePartial` would, just checked and discarded here rather
+    /// than kept.
+    public static func canRepresentAsSingleSatinColumn(shape: VectorShape, parameters: StitchGenerationParameters) -> Bool {
+        guard shape.subPaths.count == 1 else { return false }
+        return (try? computeCrossings(for: shape, parameters: parameters)) != nil
+    }
+
     public static func generate(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
         let crossings = try computeCrossings(for: shape, parameters: parameters)
 
@@ -402,7 +421,7 @@ public enum SatinColumnGenerator {
             let midpointProjections = (0...crossingCount).map { projection(midpoint(resampledA[$0], resampledB[$0])) }
 
             let pushCompMM = parameters.pushCompensationMM
-                ?? PullCompensationCalculator.estimatePush(stitchType: .satin, densityMM: density, objectLengthMM: approxLength)
+                ?? PullCompensationCalculator.estimatePush(stitchType: .satin, densityMM: density, objectLengthMM: approxLength, fabricType: parameters.fabricType)
             if pushCompMM > 0, let minProj = midpointProjections.min(), let maxProj = midpointProjections.max(), maxProj - minProj > pushCompMM {
                 let loTarget = minProj + pushCompMM / 2
                 let hiTarget = maxProj - pushCompMM / 2
@@ -415,7 +434,7 @@ public enum SatinColumnGenerator {
         let rawWidths = (lo...hi).map { resampledA[$0].distance(to: resampledB[$0]) }
         let averageWidth = rawWidths.reduce(0, +) / Double(max(1, rawWidths.count))
         let pullCompMM = parameters.pullCompensationMM
-            ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth)
+            ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth, fabricType: parameters.fabricType)
 
         var expandedA: [Point2D] = []
         var expandedB: [Point2D] = []

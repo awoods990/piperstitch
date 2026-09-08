@@ -236,4 +236,69 @@ public enum PolygonGeometry {
         }
         return result
     }
+
+    /// Clips `polygon` against an axis-aligned rectangle via Sutherland-
+    /// Hodgman -- clips sequentially against each of the rectangle's four
+    /// half-planes, correct for any simple subject polygon (concave
+    /// included) against this convex clip window. Used by
+    /// `TatamiFillGenerator`'s basket-weave fill (`FillPattern` doesn't
+    /// carry this -- it's automatic, triggered purely by a large enough
+    /// shape) to split a large region into cells with an alternating fill
+    /// angle. Returns an empty array when the polygon doesn't intersect
+    /// the rectangle at all.
+    ///
+    /// Known limitation shared with any basic Sutherland-Hodgman clip: a
+    /// CONCAVE subject polygon that dips out of the rectangle and back in
+    /// within one clipped pass can come back as one polygon with a
+    /// zero-width "bridge" edge connecting what's geometrically two
+    /// separate pieces, rather than two genuinely disjoint output
+    /// polygons. Harmless for this call site specifically -- the result
+    /// only ever feeds `TatamiFillGenerator`'s even-odd *scanline*
+    /// crossing count, where a zero-width bridge contributes a
+    /// self-cancelling enter/exit pair at the same position and doesn't
+    /// change which side of any real scanline position reads as inside.
+    public static func clipPolygonToRect(_ polygon: [Point2D], minX: Double, minY: Double, maxX: Double, maxY: Double) -> [Point2D] {
+        guard polygon.count >= 3 else { return [] }
+
+        func clipEdge(_ points: [Point2D], inside: (Point2D) -> Bool, intersect: (Point2D, Point2D) -> Point2D) -> [Point2D] {
+            guard !points.isEmpty else { return [] }
+            var result: [Point2D] = []
+            var prev = points[points.count - 1]
+            var prevInside = inside(prev)
+            for cur in points {
+                let curInside = inside(cur)
+                if curInside {
+                    if !prevInside { result.append(intersect(prev, cur)) }
+                    result.append(cur)
+                } else if prevInside {
+                    result.append(intersect(prev, cur))
+                }
+                prev = cur
+                prevInside = curInside
+            }
+            return result
+        }
+
+        // An intersect function is only ever invoked on an edge that
+        // actually crosses its corresponding boundary (`inside` differs
+        // between the edge's two endpoints), so the denominator below is
+        // guaranteed nonzero -- two points on the same side of a vertical
+        // (or horizontal) test line can't have equal x (or y) AND differ
+        // on which side of it they're on.
+        func intersectX(_ a: Point2D, _ b: Point2D, x: Double) -> Point2D {
+            let t = (x - a.x) / (b.x - a.x)
+            return Point2D(x, a.y + (b.y - a.y) * t)
+        }
+        func intersectY(_ a: Point2D, _ b: Point2D, y: Double) -> Point2D {
+            let t = (y - a.y) / (b.y - a.y)
+            return Point2D(a.x + (b.x - a.x) * t, y)
+        }
+
+        var output = polygon
+        output = clipEdge(output, inside: { $0.x >= minX }, intersect: { intersectX($0, $1, x: minX) })
+        output = clipEdge(output, inside: { $0.x <= maxX }, intersect: { intersectX($0, $1, x: maxX) })
+        output = clipEdge(output, inside: { $0.y >= minY }, intersect: { intersectY($0, $1, y: minY) })
+        output = clipEdge(output, inside: { $0.y <= maxY }, intersect: { intersectY($0, $1, y: maxY) })
+        return output
+    }
 }

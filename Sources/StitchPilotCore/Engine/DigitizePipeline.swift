@@ -184,7 +184,50 @@ public enum DigitizePipeline {
             .filter { !$0.isEmpty }
     }
 
+    /// How far the tack-down outline insets from the shape's own boundary
+    /// (see `EmbroideryObject.isApplique`'s doc comment) -- sewn just
+    /// inside the finished edge so the object's own following
+    /// satin/fill stitching fully covers both the tack-down thread and
+    /// the fabric's raw edge, rather than the tack-down line poking out
+    /// past it.
+    private static let appliqueTackDownInsetMM = 1.0
+
+    /// The placement outline (trace the shape once, unmodified -- guides
+    /// where to lay the fabric piece before sewing continues) and the
+    /// tack-down outline (trace it again, inset -- secures the fabric's
+    /// raw edge) that sew before an applique object's own normal
+    /// stitching. Both are plain running-stitch traces over every one of
+    /// the shape's sub-paths (so a holed applique piece gets its inner
+    /// edge traced too, same as running stitch already does for any
+    /// other holed shape).
+    private static func appliqueRuns(for shape: VectorShape, parameters: StitchGenerationParameters) -> [[Point2D]] {
+        let placement = shape.subPaths.flatMap {
+            RunningStitchGenerator.generate(for: $0, stitchLengthMM: parameters.stitchLengthMM, minStitchLengthMM: parameters.minStitchLengthMM)
+        }
+        let insetSubPaths = shape.subPaths.map { sp in
+            SubPath(points: PolygonGeometry.offsetPolygon(sp.points, by: appliqueTackDownInsetMM), closed: sp.closed)
+        }
+        let tackDown = insetSubPaths.flatMap {
+            RunningStitchGenerator.generate(for: $0, stitchLengthMM: parameters.stitchLengthMM, minStitchLengthMM: parameters.minStitchLengthMM)
+        }
+        return [placement, tackDown].filter { !$0.isEmpty }
+    }
+
     private static func rawStitchRuns(for object: EmbroideryObject, breakThresholdMM: Double) throws -> [[Point2D]] {
+        let mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM)
+        guard object.isApplique else { return mainRuns }
+        // Placement + tack-down sew first, as their own separate runs --
+        // `flattenWithColors` already trims and jumps between an object's
+        // own multiple runs (see its own comment on a tatami fill's
+        // hole-crossing break), the exact behavior wanted here too: cut
+        // the thread between the tack-down pass and the main stitching
+        // rather than dragging a stitch across, since the fabric is
+        // physically placed/trimmed by hand in between in a real
+        // applique workflow.
+        return appliqueRuns(for: object.shape, parameters: object.parameters) + mainRuns
+    }
+
+    private static func rawMainStitchRuns(for object: EmbroideryObject, breakThresholdMM: Double) throws -> [[Point2D]] {
         switch object.stitchType {
         case .runningStitch:
             return [object.shape.subPaths.flatMap {
