@@ -4,6 +4,39 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: Add Lettering can replace the objects it's meant to replace, not just add alongside them
+
+If the user already had objects selected (e.g. the illegible raster-
+traced fragments of some text) when opening Add Lettering, the sheet now
+offers "Replace N selected object(s)" (on by default) -- checked, adding
+the new lettering deletes those objects and centers the lettering on
+their own combined area, instead of requiring a separate manual delete
+before or after. Generalizes the same placement logic Detected Text's
+automatic replace already used (`generateLetteringObjects`, now shared
+across all three ways of adding lettering) to a user's own manual
+selection, not just an OCR-detected region.
+
+## Fixed: color quantization always spent its entire color budget instead of finding how many colors a design actually has
+
+`ColorQuantizer`'s k-means step always produced exactly `maxColors`
+clusters once an image had more distinct pixel colors than that budget
+allows -- true of nearly any real photo or logo, since compression and
+anti-aliasing noise alone produce far more than a handful of literal RGB
+values. It had no way to say "this design only actually needs 3 colors"
+even when that was true, so a plain bold logo with only a few genuinely
+distinct colors still came back with as many separate thread colors as
+the budget allowed, rather than the few colors real logos actually have.
+
+Now repeatedly merges whichever remaining pair of clusters is closest in
+perceptual color space (CIE76 Delta-E), as long as the distance is still
+within a conservative threshold, so the final color count reflects what
+the artwork actually contains -- `maxColors` stays an upper bound, not a
+target every import hits regardless of content. Deliberately distinct
+colors (even similar ones a designer chose on purpose) stay well above
+the threshold and are untouched; verified against a synthetic case with
+a genuinely distinct small accent color to confirm it isn't swept up
+into a larger nearby cluster.
+
 ## Fixed: raster-imported shapes had real holes cut wherever a different-colored shape was overlaid on top
 
 A shape with text or a logo mark overlaid on a solid background (a

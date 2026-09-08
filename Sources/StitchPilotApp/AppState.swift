@@ -309,6 +309,29 @@ final class AppState: ObservableObject {
         return results
     }
 
+    /// Generates one `EmbroideryObject` per glyph from `spec`
+    /// (`LetteringGenerator`), translated so the combined result is
+    /// centered on `targetCenter` -- the shared placement logic behind
+    /// `addLettering`, `addLettering(spec:threadColor:replacing:)`, and
+    /// `replaceDetectedText`, so all three ways of adding lettering
+    /// position and classify it identically.
+    private func generateLetteringObjects(spec: LetteringSpec, threadColor: ThreadColor, targetCenter: Point2D) throws -> [EmbroideryObject] {
+        let shapes = try LetteringGenerator.generateShapes(spec: spec)
+        var combined = BoundingBox.empty
+        for shape in shapes { combined = combined.union(shape.boundingBox) }
+        let offsetX = targetCenter.x - (combined.minX + combined.width / 2)
+        let offsetY = targetCenter.y - (combined.minY + combined.height / 2)
+        return shapes.enumerated().map { i, shape -> EmbroideryObject in
+            let translated = VectorShape(subPaths: shape.subPaths.map { sp in
+                SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
+            })
+            let parameters = StitchGenerationParameters()
+            let stitchType = StitchTypeClassifier.classify(shape: translated, parameters: parameters)
+            return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
+                                     threadColor: threadColor, parameters: parameters)
+        }
+    }
+
     /// Generates real vector letterforms directly from a font's own
     /// outline (`LetteringGenerator`) and adds them to the current
     /// document as new objects -- one per glyph, each independently
@@ -320,41 +343,26 @@ final class AppState: ObservableObject {
     /// any size or curve.
     func addLettering(spec: LetteringSpec, threadColor: ThreadColor) {
         do {
-            let shapes = try LetteringGenerator.generateShapes(spec: spec)
+            // Center the new lettering in the current design; for a
+            // brand-new document (no prior import), figure the center out
+            // after generation, once the lettering's own size is known.
+            var targetCenter = Point2D(physicalWidthMM / 2, physicalHeightMM / 2)
+            let isNewDocument = document == nil || document!.boundingBox.isEmpty
+            if isNewDocument {
+                let previewShapes = try LetteringGenerator.generateShapes(spec: spec)
+                var combined = BoundingBox.empty
+                for shape in previewShapes { combined = combined.union(shape.boundingBox) }
+                targetCenter = Point2D(combined.width / 2, combined.height / 2)
+            }
+            let newObjects = try generateLetteringObjects(spec: spec, threadColor: threadColor, targetCenter: targetCenter)
             commitImmediateUndoSnapshot()
 
-            var combined = BoundingBox.empty
-            for shape in shapes { combined = combined.union(shape.boundingBox) }
-
-            // Center the new lettering in the current design; for a
-            // brand-new document (no prior import), center it in the
-            // physical size the lettering itself defines instead.
-            let targetCenterX: Double
-            let targetCenterY: Double
-            if let current = document, !current.boundingBox.isEmpty {
-                targetCenterX = current.physicalWidthMM / 2
-                targetCenterY = current.physicalHeightMM / 2
-            } else {
-                targetCenterX = combined.width / 2
-                targetCenterY = combined.height / 2
-            }
-            let offsetX = targetCenterX - (combined.minX + combined.width / 2)
-            let offsetY = targetCenterY - (combined.minY + combined.height / 2)
-
-            let newObjects = shapes.enumerated().map { i, shape -> EmbroideryObject in
-                let translated = VectorShape(subPaths: shape.subPaths.map { sp in
-                    SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
-                })
-                let parameters = StitchGenerationParameters()
-                let stitchType = StitchTypeClassifier.classify(shape: translated, parameters: parameters)
-                return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
-                                         threadColor: threadColor, parameters: parameters)
-            }
-
-            if var current = document {
+            if var current = document, !isNewDocument {
                 current.objects.append(contentsOf: newObjects)
                 document = current
             } else {
+                var combined = BoundingBox.empty
+                for object in newObjects { combined = combined.union(object.shape.boundingBox) }
                 lastRawShapes = []
                 lastName = spec.text
                 physicalWidthMM = combined.width + 20
@@ -364,6 +372,39 @@ final class AppState: ObservableObject {
             selectedObjectIDs = Set(newObjects.map { $0.id })
             scheduleLiveRegenerate()
             statusMessage = "Added \"\(spec.text)\" as \(newObjects.count) lettering object(s)."
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
+    /// Like `addLettering`, but first removes `objectIDsToReplace` --
+    /// offered by the Add Lettering sheet whenever objects are already
+    /// selected when it's opened, so replacing a raster-traced fragment
+    /// (or several) with correct, real lettering is one action instead of
+    /// a separate manual delete before or after adding it. The new
+    /// lettering is centered on the removed objects' own combined area,
+    /// not the whole document, so it lands where they were.
+    func addLettering(spec: LetteringSpec, threadColor: ThreadColor, replacing objectIDsToReplace: Set<EmbroideryObject.ID>) {
+        guard !objectIDsToReplace.isEmpty, let current = document else {
+            addLettering(spec: spec, threadColor: threadColor)
+            return
+        }
+        do {
+            var replacedBounds = BoundingBox.empty
+            for object in current.objects where objectIDsToReplace.contains(object.id) {
+                replacedBounds = replacedBounds.union(object.shape.boundingBox)
+            }
+            let targetCenter = replacedBounds.isEmpty ? Point2D(physicalWidthMM / 2, physicalHeightMM / 2) : replacedBounds.center
+            let newObjects = try generateLetteringObjects(spec: spec, threadColor: threadColor, targetCenter: targetCenter)
+            commitImmediateUndoSnapshot()
+
+            var updated = current
+            updated.objects.removeAll { objectIDsToReplace.contains($0.id) }
+            updated.objects.append(contentsOf: newObjects)
+            document = updated
+            selectedObjectIDs = Set(newObjects.map { $0.id })
+            scheduleLiveRegenerate()
+            statusMessage = "Replaced \(objectIDsToReplace.count) object(s) with \"\(spec.text)\" as \(newObjects.count) lettering object(s)."
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -405,26 +446,10 @@ final class AppState: ObservableObject {
     func replaceDetectedText(_ region: DetectedTextRegion, spec: LetteringSpec, threadColor: ThreadColor) {
         guard let current = document else { return }
         do {
-            let shapes = try LetteringGenerator.generateShapes(spec: spec)
-            commitImmediateUndoSnapshot()
-
-            var combined = BoundingBox.empty
-            for shape in shapes { combined = combined.union(shape.boundingBox) }
-
             let mmBox = mmBoundingBox(forPixelBox: region.boundingBoxPixels)
             let targetCenter = mmBox?.center ?? Point2D(physicalWidthMM / 2, physicalHeightMM / 2)
-            let offsetX = targetCenter.x - (combined.minX + combined.width / 2)
-            let offsetY = targetCenter.y - (combined.minY + combined.height / 2)
-
-            let newObjects = shapes.enumerated().map { i, shape -> EmbroideryObject in
-                let translated = VectorShape(subPaths: shape.subPaths.map { sp in
-                    SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
-                })
-                let parameters = StitchGenerationParameters()
-                let stitchType = StitchTypeClassifier.classify(shape: translated, parameters: parameters)
-                return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
-                                         threadColor: threadColor, parameters: parameters)
-            }
+            let newObjects = try generateLetteringObjects(spec: spec, threadColor: threadColor, targetCenter: targetCenter)
+            commitImmediateUndoSnapshot()
 
             var updated = current
             if let mmBox {

@@ -799,6 +799,13 @@ private struct AddLetteringSheet: View {
     @State private var isCurved = false
     @State private var radiusMM: Double = 40
     @State private var color = Color.black
+    /// Snapshotted once, when the sheet opens -- objects the user already
+    /// had selected (e.g. the raster-traced fragments of some illegible
+    /// text) that this new lettering is likely meant to replace. Captured
+    /// up front rather than read live from `app.selectedObjectIDs` so it
+    /// can't drift out from under the toggle below while the sheet is open.
+    @State private var objectIDsToReplace: Set<EmbroideryObject.ID> = []
+    @State private var replaceSelectedObjects = true
 
     private var selectedFontDisplayName: String {
         fonts.first { $0.postScriptName == selectedFontPostScriptName }?.displayName ?? selectedFontPostScriptName
@@ -840,6 +847,11 @@ private struct AddLetteringSheet: View {
                 }
 
                 ColorPicker("Thread color", selection: $color, supportsOpacity: false)
+
+                if !objectIDsToReplace.isEmpty {
+                    Toggle("Replace \(objectIDsToReplace.count) selected object\(objectIDsToReplace.count == 1 ? "" : "s")", isOn: $replaceSelectedObjects)
+                        .help("Deletes the objects you had selected and puts this new lettering in their place, instead of just adding it alongside them.")
+                }
             }
             .padding()
             .formStyle(.grouped)
@@ -866,7 +878,11 @@ private struct AddLetteringSheet: View {
                     let threadColor = app.matchToThreadLibrary
                         ? (ThreadLibrary.nearestMatch(to: rgb, in: app.effectivePalette) ?? .generic(rgb, name: "Lettering Color"))
                         : .generic(rgb, name: "Lettering Color")
-                    app.addLettering(spec: spec, threadColor: threadColor)
+                    if replaceSelectedObjects, !objectIDsToReplace.isEmpty {
+                        app.addLettering(spec: spec, threadColor: threadColor, replacing: objectIDsToReplace)
+                    } else {
+                        app.addLettering(spec: spec, threadColor: threadColor)
+                    }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
@@ -880,6 +896,7 @@ private struct AddLetteringSheet: View {
                 fonts = AppState.availableLetteringFonts()
                 selectedFontPostScriptName = fonts.first { $0.displayName == "Helvetica" }?.postScriptName ?? fonts.first?.postScriptName ?? ""
             }
+            objectIDsToReplace = app.selectedObjectIDs
         }
     }
 }

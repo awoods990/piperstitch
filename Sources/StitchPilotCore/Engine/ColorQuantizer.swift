@@ -62,7 +62,63 @@ public enum ColorQuantizer {
         } else {
             clusters = kMeans(entries: entries, k: maxColors)
         }
-        return mergeAntiAliasingClusters(clusters)
+        return mergeNearDuplicateColors(mergeAntiAliasingClusters(clusters))
+    }
+
+    /// How close two clusters' own colors need to be (CIE76 Delta-E) to
+    /// count as "the same intended color, just split apart by noise" --
+    /// fairly conservative (deliberately distinct design colors, even two
+    /// similar blues, are typically well above this) but large enough to
+    /// catch what real compression/dithering noise actually produces (a
+    /// nominally solid region sampled out at 3000+ distinct RGB values in
+    /// one real logo this project was tested against, several of which
+    /// landed far enough apart in LAB space for k-means to hand them
+    /// separate clusters -- see CHANGELOG.md).
+    private static let mergeThresholdDeltaE = 12.0
+
+    /// `kMeans` always spends its *entire* `maxColors` budget once there
+    /// are more distinct pixel colors than that budget allows -- it has no
+    /// way to say "this design only actually needs 3 colors" even when
+    /// that's true, so a simple bold logo with only a few genuinely
+    /// distinct colors still comes back with `maxColors` separate ones
+    /// (found directly: most real logos only have a handful of intended
+    /// colors, not one per traced object). This repeatedly merges
+    /// whichever *remaining* pair of clusters is closest in perceptual
+    /// color space, as long as that distance is still within
+    /// `mergeThresholdDeltaE`, so the final color count reflects how many
+    /// colors the artwork actually has -- `maxColors` stays an upper
+    /// bound (already enforced above), not a fixed target every import
+    /// hits regardless of content.
+    private static func mergeNearDuplicateColors(_ clusters: [ColorCluster]) -> [ColorCluster] {
+        var result = clusters
+        while result.count > 1 {
+            var bestPair: (Int, Int)?
+            var bestDistance = Double.infinity
+            for i in 0..<result.count {
+                for j in (i + 1)..<result.count {
+                    let d = RGBColor.deltaE(result[i].rgb, result[j].rgb)
+                    if d < bestDistance {
+                        bestDistance = d
+                        bestPair = (i, j)
+                    }
+                }
+            }
+            guard let (i, j) = bestPair, bestDistance < mergeThresholdDeltaE else { break }
+
+            let a = result[i], b = result[j]
+            let totalWeight = a.pixelCount + b.pixelCount
+            guard totalWeight > 0 else { break }
+            let wa = Double(a.pixelCount) / Double(totalWeight), wb = Double(b.pixelCount) / Double(totalWeight)
+            let merged = RGBColor(
+                r: UInt8((Double(a.rgb.r) * wa + Double(b.rgb.r) * wb).rounded()),
+                g: UInt8((Double(a.rgb.g) * wa + Double(b.rgb.g) * wb).rounded()),
+                b: UInt8((Double(a.rgb.b) * wa + Double(b.rgb.b) * wb).rounded())
+            )
+            result.remove(at: j) // remove the higher index first so `i` stays valid
+            result.remove(at: i)
+            result.append(ColorCluster(rgb: merged, pixelCount: totalWeight))
+        }
+        return result.sorted { $0.pixelCount > $1.pixelCount }
     }
 
     /// A smoothly anti-aliased edge between two solid colors (a scaled-down
