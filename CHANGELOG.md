@@ -4,6 +4,63 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: lettering quality -- multi-stroke letters no longer sew as one lumpy satin column, small text stays legible
+
+Two lettering-specific gaps, found by comparing this engine's output against
+documented commercial digitizing practice:
+
+Every glyph is a single `VectorShape` classified and stitched exactly like
+any other imported shape. `StitchTypeClassifier` only re-checks whether a
+shape's width is actually *uniform* along its length (as opposed to just
+averaging out to a plausible-looking number) for shapes in its 8-12mm
+average-width band -- below that it returns satin outright. Most individual
+letters land well under 8mm average width even when the *letter itself* is
+multi-stroke (T, L, E, F, H, X...), whose outline genuinely runs in
+different directions in different places. `SatinColumnGenerator` fits ONE
+global direction across a shape's entire outer boundary, so a multi-stroke
+letter classified as satin sewed as a single straight column end to end --
+lumpy and ropey right where the strokes meet, e.g. where a "T"'s crossbar
+meets its stem.
+
+Also, nothing accounted for the letter height actually chosen -- a small
+letter's strokes can still average out to a nominally satin-width number
+while being too small in practice for a machine to lay the column down
+cleanly (commercial guidance: satin wants roughly 4-5mm+ letter height to
+hold a clean column; below that it reads as a blob and running/triple-run
+stays legible instead).
+
+Added `StitchTypeClassifier.classifyLetterform`, used only for
+lettering-generated shapes (not the general classifier, so arbitrary
+imported artwork's classification is unaffected): below a 5mm cap height it
+forces triple-run instead of satin; otherwise it re-runs the same
+width-uniformity check the general classifier already trusts for its 8-12mm
+band, but for ANY letterform-satin verdict regardless of band -- routing a
+genuinely multi-directional letter to tatami fill instead, which isn't
+sensitive to the local direction change the way a satin column is. A
+true fix (splitting a glyph into per-stroke satin columns along its actual
+skeleton, the way dedicated auto-digitizing software does) is a
+substantially larger undertaking than this pass; this gets the common
+multi-stroke-letter case looking right without it.
+
+## Added: canvas edits regenerate the preview off the main thread
+
+Every edit -- a density slider drag, a color merge, a paint stroke -- was
+re-running the *entire* document's stitch generation, then re-rendering the
+full realistic-preview bitmap, both synchronously on the main thread a
+moment after the edit. On a detail-heavy design (a raster import with many
+objects, or several lettering objects) both steps are expensive enough to
+visibly stall the UI while they run. Both now happen off the main thread;
+only the moment either finishes hops back to update what's on screen. A
+result superseded by a newer edit that arrived while the older one was
+still computing is discarded rather than clobbering the newer one.
+
+## Changed: toolbar now separates automatic-output tools from manual editing tools
+
+Merge Colors and Thread Library (which adjust what auto-digitize already
+produced) now sit visibly apart from Add Lettering, Detected Text, Merge
+Shapes, and Paint (direct hands-on editing) with a divider between the two
+groups, instead of reading as one long undifferentiated row of buttons.
+
 ## Changed: the Add Lettering font picker shows each font rendered in itself
 
 Previously every entry in the "Font" dropdown was plain system-font text,

@@ -81,6 +81,62 @@ public enum StitchTypeClassifier {
         return (maxWidth - minWidth) / maxWidth <= uniformWidthToleranceFraction ? .satin : .tatamiFill
     }
 
+    /// Below this letter height, commercial digitizing guidance treats
+    /// satin as unreliable -- the column narrows past what a machine lays
+    /// down evenly and reads as a blob rather than a crisp letterform.
+    /// `classifyLetterform` routes anything smaller to `.tripleRun`
+    /// instead, which stays legible at any size since it traces the
+    /// letterform's outline rather than trying to fill it.
+    private static let minimumSatinCapHeightMM = 5.0
+
+    /// A lettering-specific classification, layered on top of `classify`
+    /// with two adjustments that matter for glyph shapes specifically but
+    /// would be too broad a behavior change to make in the general
+    /// classifier (used for arbitrary imported artwork too):
+    ///
+    /// 1. Below `minimumSatinCapHeightMM`, forces `.tripleRun` regardless
+    ///    of what `classify` would otherwise pick -- `classify` only sees
+    ///    the shape's own geometry, not the letter height the user
+    ///    actually chose, so it has no way to know a 3mm-tall letter's
+    ///    individual strokes are too small for satin to hold cleanly even
+    ///    if their average width nominally clears `minSatinWidthMM`.
+    ///
+    /// 2. `classify` only runs its width-*uniformity* check (see its own
+    ///    doc comment) in the 8-12mm average-width band -- below 8mm it
+    ///    returns `.satin` outright. Most individual letter strokes land
+    ///    well under 8mm average width even when the *letter itself* is a
+    ///    multi-stroke shape (T, L, E, F, H, X...), whose outline runs in
+    ///    genuinely different directions in different places. Handed to
+    ///    `SatinColumnGenerator`, which fits ONE global direction across
+    ///    the entire outer boundary (`PolygonGeometry.principalAxis`),
+    ///    that reads as a lumpy, ropey mess right where the strokes meet --
+    ///    exactly the outcome real digitizing software avoids by treating
+    ///    a shape as fill rather than a satin column once it stops looking
+    ///    like a single straight stroke (see the width/distance-transform-
+    ///    based thick-vs-thin classification industrial auto-digitizers
+    ///    use). Re-running the same uniformity check `classify` already
+    ///    trusts for its 8-12mm band, but for ANY letterform `classify`
+    ///    picked satin for, catches this case and routes it to tatami fill
+    ///    instead -- fill isn't sensitive to local stroke direction the way
+    ///    a satin column is, so it holds up fine across a shape whose
+    ///    strokes branch or change direction, without needing this engine
+    ///    to implement true per-stroke skeleton segmentation.
+    public static func classifyLetterform(shape: VectorShape, parameters: StitchGenerationParameters, capHeightMM: Double) -> StitchType {
+        let base = classify(shape: shape, parameters: parameters)
+
+        guard capHeightMM >= minimumSatinCapHeightMM else {
+            return base == .runningStitch ? .runningStitch : .tripleRun
+        }
+        guard base == .satin, let outer = shape.subPaths.first, outer.points.count >= 3 else { return base }
+
+        let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
+        let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
+        guard hi > lo else { return base }
+        let widths = widthProfile(outer.points, axis: axis, mean: mean, lo: lo, hi: hi, samples: widthProfileSamples)
+        guard let maxWidth = widths.max(), let minWidth = widths.min(), maxWidth > 0 else { return base }
+        return (maxWidth - minWidth) / maxWidth <= uniformWidthToleranceFraction ? .satin : .tatamiFill
+    }
+
     /// Samples the shape's local width at several points along its
     /// principal axis by casting a perpendicular ray through the outer
     /// boundary — a coarse, classification-only measurement (not the

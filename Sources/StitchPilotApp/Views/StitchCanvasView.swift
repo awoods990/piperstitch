@@ -78,6 +78,16 @@ struct StitchCanvasView: View {
     /// at, so a zoom/resize can be compared against it and only trigger a
     /// re-render when the mismatch is large enough to matter.
     @State private var renderedPixelsPerMM: Double = 0
+    /// Bumped every time `regenerateRealisticImageIfNeeded` starts a new
+    /// background render -- lets a render that finishes after a *newer*
+    /// one has already started detect that it's stale and discard its
+    /// result instead of clobbering the newer one, without needing actual
+    /// task cancellation (there's no mid-render cancellation point inside
+    /// `StitchRenderer.render`). Safe to compare against from inside the
+    /// render's completion closure even though that closure captured an
+    /// older copy of this view's own struct -- `@State`'s storage is a
+    /// shared box, so reading it there still sees the live, current value.
+    @State private var realisticRenderGeneration = 0
 
     /// Rubber-band selection box, in view (canvas) coordinates, while a
     /// selection drag is in progress -- nil the rest of the time.
@@ -604,6 +614,14 @@ struct StitchCanvasView: View {
         return min(40, max(6, effectiveScale * backingScale))
     }
 
+    /// Renders the realistic preview bitmap off the main thread -- on a
+    /// detailed design (many objects/stitches, exactly the case a raster
+    /// import or lettering-heavy design produces), `StitchRenderer.render`
+    /// walking every stitch command is expensive enough to visibly stall
+    /// the UI if run synchronously inside a SwiftUI `onChange` the way it
+    /// used to be. Nothing touches `@State` until the render is actually
+    /// done, and `realisticRenderGeneration` discards a result that a
+    /// newer edit has since superseded.
     private func regenerateRealisticImageIfNeeded() {
         guard mode == .realistic, let document, let stitchPlan else { return }
         let targetPixelsPerMM = desiredPixelsPerMM(document: document)
@@ -614,11 +632,25 @@ struct StitchCanvasView: View {
         // trigger one).
         let resolutionDrifted = renderedPixelsPerMM <= 0 || abs(targetPixelsPerMM - renderedPixelsPerMM) / renderedPixelsPerMM > 0.25
         guard planSignature != renderedSignature || resolutionDrifted else { return }
+
         var options = StitchRenderer.Options()
         options.pixelsPerMM = targetPixelsPerMM
-        realisticImage = StitchRenderer.render(stitchPlan, widthMM: document.physicalWidthMM, heightMM: document.physicalHeightMM, colors: colors, options: options)
-        renderedSignature = planSignature
-        renderedPixelsPerMM = targetPixelsPerMM
+        let widthMM = document.physicalWidthMM
+        let heightMM = document.physicalHeightMM
+        let colorsSnapshot = colors
+        let targetSignature = planSignature
+        realisticRenderGeneration += 1
+        let myGeneration = realisticRenderGeneration
+
+        Task.detached(priority: .userInitiated) {
+            let image = StitchRenderer.render(stitchPlan, widthMM: widthMM, heightMM: heightMM, colors: colorsSnapshot, options: options)
+            await MainActor.run {
+                guard myGeneration == realisticRenderGeneration else { return }
+                realisticImage = image
+                renderedSignature = targetSignature
+                renderedPixelsPerMM = targetPixelsPerMM
+            }
+        }
     }
 
     private func drawArtworkFill(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint, opacity: Double) {

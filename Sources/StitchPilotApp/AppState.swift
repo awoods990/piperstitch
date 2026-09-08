@@ -369,7 +369,7 @@ final class AppState: ObservableObject {
                 SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
             })
             let parameters = StitchGenerationParameters()
-            let stitchType = StitchTypeClassifier.classify(shape: translated, parameters: parameters)
+            let stitchType = StitchTypeClassifier.classifyLetterform(shape: translated, parameters: parameters, capHeightMM: spec.fontSizeMM)
             return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
                                      threadColor: threadColor, parameters: parameters)
         }
@@ -630,7 +630,46 @@ final class AppState: ObservableObject {
         liveRegenerateTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
-            self?.autoDigitize()
+            await self?.autoDigitizeInBackground()
+        }
+    }
+
+    /// Same end result as `autoDigitize()`, except the expensive part --
+    /// re-running `DigitizePipeline` over every object in the document --
+    /// happens off the main actor, so a live edit (a slider drag, a color
+    /// merge, a paint stroke) doesn't visibly block the UI while it
+    /// computes; `stitchPlan`/`lastColorSequence`/`readinessReport` are
+    /// only assigned once it finishes, back on the main actor. Only used
+    /// by the debounced live-preview path (`scheduleLiveRegenerate`) --
+    /// every explicit "digitize now and use the result immediately" action
+    /// (Click to Create, Redo from Original, import, open project) keeps
+    /// calling the synchronous `autoDigitize()`, since those need
+    /// `stitchPlan` set before they return, not sometime after.
+    ///
+    /// If a newer edit arrives (and cancels `liveRegenerateTask`) while
+    /// this is still computing, the in-flight background work isn't
+    /// interrupted -- `DigitizePipeline` has no mid-run cancellation
+    /// points to interrupt at -- but its result is discarded once it
+    /// finishes rather than clobbering whatever the newer edit produces,
+    /// via the `Task.isCancelled` check below.
+    private func autoDigitizeInBackground() async {
+        guard let document else { return }
+        errorMessage = nil
+        let hoopWidthMM = selectedHoop?.widthMM
+        let hoopHeightMM = selectedHoop?.heightMM
+        let generation = Task.detached(priority: .userInitiated) { () throws -> (StitchPlan, [ThreadColor]) in
+            try DigitizePipeline.flattenWithColors(document)
+        }
+        do {
+            let (plan, colors) = try await generation.value
+            guard !Task.isCancelled else { return }
+            stitchPlan = plan
+            lastColorSequence = colors
+            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM)
+            statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
+        } catch {
+            guard !Task.isCancelled else { return }
+            errorMessage = friendlyMessage(for: error)
         }
     }
 

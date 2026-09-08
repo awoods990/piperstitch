@@ -91,6 +91,64 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: letterformWithCounter, parameters: defaultParams) == .tatamiFill)
     }
 
+    // MARK: - classifyLetterform
+
+    @Test func smallCapHeightForcesTripleRunInsteadOfSatin() {
+        // Same 4mm column `mediumColumnBecomesSatin` above confirms
+        // classifies as satin at full size -- at a 3mm letter height
+        // (below the 5mm satin floor) it should downgrade to triple-run.
+        let column = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classifyLetterform(shape: column, parameters: defaultParams, capHeightMM: 3) == .tripleRun)
+    }
+
+    @Test func smallCapHeightHairlineStaysRunningStitchNotTripleRun() {
+        // A shape `classify` already routes to running-stitch (too thin
+        // even for satin) shouldn't get bumped up to triple-run just
+        // because it's also small -- the small-cap-height override only
+        // ever downgrades a *satin* verdict, never upgrades a thinner one.
+        let hairline = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 0.5), Point2D(0, 0.5),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classifyLetterform(shape: hairline, parameters: defaultParams, capHeightMM: 3) == .runningStitch)
+    }
+
+    /// A "T" outline -- a narrow 2mm-wide, 17mm-tall stem with a wide
+    /// 20mm x 3mm bar across its top, the classic case of a letterform
+    /// whose strokes run in genuinely different directions. Its average
+    /// width (area/length along the principal axis) lands under 8mm, the
+    /// band where plain `classify` skips its own uniformity check and
+    /// returns satin outright -- which `SatinColumnGenerator` would then
+    /// lay down as ONE straight column across the whole letter, lumpy
+    /// right where the bar meets the stem. `classifyLetterform` re-runs
+    /// the uniformity check regardless of band for any letterform, and
+    /// this shape's width swings from ~2mm (down the stem) to ~20mm
+    /// (across the bar) -- routing it to tatami fill instead, which isn't
+    /// sensitive to that direction change the way a satin column is.
+    @Test func multiStrokeTShapeDowngradesFromSatinToTatami() {
+        let tShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(9, 0), Point2D(11, 0), Point2D(11, 17), Point2D(20, 17),
+            Point2D(20, 20), Point2D(0, 20), Point2D(0, 17), Point2D(9, 17),
+        ], closed: true)])
+        // Confirms plain `classify` really does pick satin here -- the
+        // baseline this test is guarding against, not just asserting the
+        // fixed behavior in isolation.
+        #expect(StitchTypeClassifier.classify(shape: tShape, parameters: defaultParams) == .satin)
+        #expect(StitchTypeClassifier.classifyLetterform(shape: tShape, parameters: defaultParams, capHeightMM: 20) == .tatamiFill)
+    }
+
+    /// A simple single-stroke letterform (e.g. "l", "i", "1") at a legible
+    /// size must NOT get swept into the same downgrade -- guards against
+    /// the uniformity re-check being so aggressive it second-guesses every
+    /// ordinary satin letter, not just genuinely multi-directional ones.
+    @Test func singleStrokeLetterformStaysSatinAtLegibleSize() {
+        let stem = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(2, 0), Point2D(2, 20), Point2D(0, 20),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classifyLetterform(shape: stem, parameters: defaultParams, capHeightMM: 20) == .satin)
+    }
+
     @Test func degenerateShapeDefaultsToRunningStitch() {
         let line = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(10, 0)], closed: false)])
         #expect(StitchTypeClassifier.classify(shape: line, parameters: defaultParams) == .runningStitch)

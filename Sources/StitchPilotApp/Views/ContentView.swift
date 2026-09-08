@@ -167,6 +167,13 @@ struct ContentView: View {
                 .help("Define your own thread colors to match against.")
             }
 
+            // A visible boundary between adjusting the automatic output
+            // above (color assignment) and the hands-on editing tools
+            // below (lettering, merging, painting) -- both groups act on
+            // the current design, but one tunes what auto-digitize already
+            // produced while the other is direct manual editing.
+            ToolbarItem { Divider() }
+
             ToolbarItemGroup {
                 Button {
                     showingAddLettering = true
