@@ -4,6 +4,41 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: a round of interface changes -- layout, a two-row toolbar, and a digitizing-terms glossary
+
+- A fresh window now opens at 80% of the current display (`NSScreen.main`'s
+  own `visibleFrame`, computed once at launch) instead of a fixed size --
+  scales sensibly from a laptop screen to a large external monitor. Only
+  affects a window with no saved frame to restore; a normal relaunch still
+  goes through macOS's own window-state restoration.
+- The object list is 20% narrower (220 -> 176pt), the canvas's own minimum
+  width is 20% larger (420 -> 504pt), and the Inspector is wider (260 ->
+  300pt) so its longer parameter descriptions wrap less. The app's own
+  minimum window width moved from 900 to 1000pt to still clear all three
+  panels' combined minimums.
+- The toolbar is now two custom rows instead of one native row: a File row
+  (Click to Create, New, Start Over, Open, Save, Back/Undo, Download/
+  Export, Send/Share, Help) and an Editing row (Merge Colors, Thread
+  Library, Fabric, Add Lettering, Detected Text, Merge Shapes, Paint) --
+  NSToolbar itself has no multi-row layout, so both rows are a plain
+  custom `HStack` pinned to the top via `.safeAreaInset` rather than the
+  system `.toolbar` modifier.
+- A new Help button opens a searchable glossary of every digitizing term
+  used in this app's own UI -- stitch types, fill patterns, generation
+  parameters, editing tools, machine/production terms, and the readiness
+  score -- each with a plain-language definition and why it actually
+  matters for how a design sews out.
+- The canvas's Technical/Realistic mode picker's own title (never visibly
+  rendered by its segmented style, but exposed via tooltip/accessibility)
+  no longer says "Preview" -- renamed to "Mode."
+- The embroidery readiness score is now always visible at the bottom-right
+  of the window (not just the Inspector, which can be scrolled away from
+  it) and updates live as an edit's regenerate re-analyzes the design --
+  watch the score move as you fix what it flags, not just see a one-time
+  snapshot.
+- Confirmed (already true, no change needed): shift-clicking an object on
+  the canvas already toggled it in/out of the current selection.
+
 ## Added: fabric-type-aware compensation, two new fill textures, and applique stitch primitives (spec's Phase 5 gap-analysis items)
 
 Four more items from the earlier gap analysis against commercial digitizing

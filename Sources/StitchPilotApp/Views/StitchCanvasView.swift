@@ -314,7 +314,7 @@ struct StitchCanvasView: View {
         }
         .overlay(alignment: .top) {
             if stitchPlan != nil {
-                Picker("Preview", selection: $mode) {
+                Picker("Mode", selection: $mode) {
                     ForEach(StitchPreviewMode.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)

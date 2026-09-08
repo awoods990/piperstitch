@@ -40,11 +40,12 @@ struct ContentView: View {
     @State private var showingThreadLibrary = false
     @State private var showingAddLettering = false
     @State private var showingDetectedText = false
+    @State private var showingHelp = false
 
     var body: some View {
         HStack(spacing: 0) {
             ObjectListView()
-                .frame(width: 220)
+                .frame(width: 176) // 20% narrower than the original 220pt, to give the canvas more room
             Divider()
 
             ZStack {
@@ -65,208 +66,27 @@ struct ContentView: View {
                     Rectangle().stroke(Color.accentColor, lineWidth: 3).padding(4)
                 }
             }
-            .frame(minWidth: 420, minHeight: 420)
+            .frame(minWidth: 504, minHeight: 420) // 20% larger minimum than the original 420pt
             .onDrop(of: [.fileURL], isTargeted: $isTargeted, perform: handleDrop)
 
             Divider()
             InspectorView()
-                .frame(width: 260)
+                .frame(width: 300) // wider than the original 260pt so longer parameter descriptions wrap less
         }
-        .toolbar {
-            // The One-Click Stitch action: styled with the app's own mark
-            // and a prominent tint so it's unmistakably *the* button in
-            // this toolbar, not one of an equal-weight row of icons —
-            // everything else here is a secondary/manual path for users
-            // who want to inspect or adjust before exporting. There's no
-            // separate "Auto Digitize" action any more: every edit
-            // (import, resize, per-object parameter change, color merge)
-            // regenerates the preview on its own a moment later, so this
-            // button's only remaining job is the export step itself.
-            ToolbarItemGroup {
-                Button {
-                    app.createEmbroideryFile()
-                } label: {
-                    HStack(spacing: 6) {
-                        brandMark(size: 18)
-                        Text("Click to Create").fontWeight(.semibold)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.09, green: 0.42, blue: 0.72))
-                .disabled(app.document == nil)
-                .help("One click: digitize this artwork and save it as a machine embroidery file.")
-
-                // Kept directly beside the primary action -- "redo the
-                // whole thing from scratch" is the natural undo-adjacent
-                // counterpart to "create," not a filing/editing action like
-                // the New/Open/Save group below.
-                Button {
-                    showingRedoConfirm = true
-                } label: {
-                    Label("Redo from Original", systemImage: "arrow.clockwise")
-                }
-                .disabled(!app.hasOriginalArtwork)
-                .help("Discard edits made since import and regenerate fresh from the original artwork.")
-                .confirmationDialog("Redo from the original artwork? Edits made since import (color merges, per-object overrides, deletions) will be discarded.",
-                                     isPresented: $showingRedoConfirm, titleVisibility: .visible) {
-                    Button("Redo from Original", role: .destructive) { app.redoEmbroideryFileCreation() }
-                    Button("Cancel", role: .cancel) {}
-                }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                fileToolbarRow
+                Divider()
+                editingToolbarRow
+                Divider()
             }
-
-            ToolbarItemGroup {
-                Button {
-                    if app.document == nil {
-                        app.newProject()
-                    } else {
-                        showingNewProjectConfirm = true
-                    }
-                } label: {
-                    Label("New Project", systemImage: "doc.badge.plus")
-                }
-                .confirmationDialog("Start a new project? The current design will be closed without saving.",
-                                     isPresented: $showingNewProjectConfirm, titleVisibility: .visible) {
-                    Button("Start New Project", role: .destructive) { app.newProject() }
-                    Button("Cancel", role: .cancel) {}
-                }
-                Menu {
-                    Button("Open Artwork...") { app.openArtworkWithPanel() }
-                    Button("Open Project...") { app.openProjectWithPanel() }
-                } label: {
-                    Label("Open", systemImage: "folder")
-                }
-                Button {
-                    app.saveProject()
-                } label: {
-                    Label("Save Project", systemImage: "square.and.arrow.down")
-                }
-                .disabled(app.document == nil)
-
-                Button {
-                    app.undo()
-                } label: {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
-                }
-                .keyboardShortcut("z", modifiers: .command)
-                .disabled(!app.canUndo)
-                .help("Undo the last edit.")
-            }
-
-            ToolbarItemGroup {
-                Button {
-                    showingMergeColors = true
-                } label: {
-                    Label("Merge Colors", systemImage: "arrow.triangle.merge")
-                }
-                .disabled((app.document?.objects.count ?? 0) < 2)
-                .help("Reassign several objects to the same thread color at once.")
-                Button {
-                    showingThreadLibrary = true
-                } label: {
-                    Label("Thread Library", systemImage: "paintpalette")
-                }
-                .help("Define your own thread colors to match against.")
-
-                Menu {
-                    ForEach(FabricType.allCases, id: \.self) { fabric in
-                        Button {
-                            app.selectedFabricType = fabric
-                        } label: {
-                            if fabric == app.selectedFabricType {
-                                Label(fabric.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(fabric.displayName)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("Fabric: \(app.selectedFabricType.shortName)", systemImage: "square.stack.3d.up")
-                }
-                .help("Adjusts the automatic pull/push compensation estimate for the fabric this design will be sewn on -- a stretchier material needs more correction, a stable/rigid one needs less. Applies to every object; an object's own manually-set compensation always wins over this.")
-            }
-
-            // A visible boundary between adjusting the automatic output
-            // above (color assignment) and the hands-on editing tools
-            // below (lettering, merging, painting) -- both groups act on
-            // the current design, but one tunes what auto-digitize already
-            // produced while the other is direct manual editing.
-            ToolbarItem { Divider() }
-
-            ToolbarItemGroup {
-                Button {
-                    showingAddLettering = true
-                } label: {
-                    Label("Add Lettering", systemImage: "textformat")
-                }
-                .help("Type text and pick a font -- generates clean satin letters directly from the font's own outline, instead of tracing a raster image of text (which can never be sharper than the source image's own resolution).")
-
-                if !app.detectedTextRegions.isEmpty {
-                    Button {
-                        showingDetectedText = true
-                    } label: {
-                        Label("Detected Text (\(app.detectedTextRegions.count))", systemImage: "text.viewfinder")
-                    }
-                    .tint(.orange)
-                    .help("This import appears to contain text -- review it and optionally replace the raster-traced version with clean generated lettering.")
-                }
-
-                Button {
-                    app.mergeSelectedShapesIntoOneObject()
-                } label: {
-                    Label("Merge Shapes", systemImage: "puzzlepiece")
-                }
-                .disabled(!app.canMergeSelectedShapes)
-                .help("Join the selected objects' outlines into one shape -- fixes a letter or detail that came in as several disconnected fragments. Rubber-band or shift-click several objects first.")
-
-                Button {
-                    app.isPaintMode.toggle()
-                } label: {
-                    Label("Paint", systemImage: "paintbrush.pointed")
-                }
-                .tint(app.isPaintMode ? Color.accentColor : nil)
-                .help("Draw in missing coverage by hand -- extends the selected object, or draws a new shape if nothing's selected.")
-                if app.isPaintMode {
-                    Slider(value: cmBinding($app.paintBrushRadiusMM), in: 0.05...1.0)
-                        .frame(width: 90)
-                        .help("Brush size")
-                    ColorPicker("", selection: Binding(
-                        get: { Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255) },
-                        set: { app.paintColorRGB = rgbColor(from: $0) }
-                    ), supportsOpacity: false)
-                    .labelsHidden()
-                }
-            }
-
-            ToolbarItemGroup {
-                // "Export" saves a file to disk -- a download, not an
-                // upload, hence the down-arrow icon (an earlier version of
-                // this button used an up-arrow, which reads as "send," the
-                // job Share below actually does).
-                Menu {
-                    Button("Tajima (.dst)") { app.exportDST() }
-                    Button("Brother/Baby Lock (.pes)") { app.exportPES() }
-                    Button("Melco (.exp)") { app.exportEXP() }
-                    Button("Janome (.jef)") { app.exportJEF() }
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.down")
-                }
-                .disabled(app.stitchPlan == nil)
-                Menu {
-                    Button("Tajima (.dst)") { app.shareCurrentFile(format: .dst) }
-                    Button("Brother/Baby Lock (.pes)") { app.shareCurrentFile(format: .pes) }
-                    Button("Melco (.exp)") { app.shareCurrentFile(format: .exp) }
-                    Button("Janome (.jef)") { app.shareCurrentFile(format: .jef) }
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-                .disabled(app.stitchPlan == nil)
-                .help("Send the embroidery file via AirDrop, Mail, Messages, and more.")
-            }
+            .background(.bar)
         }
         .sheet(isPresented: $showingMergeColors) { MergeColorsSheet() }
         .sheet(isPresented: $showingThreadLibrary) { ThreadLibrarySheet() }
         .sheet(isPresented: $showingAddLettering) { AddLetteringSheet() }
         .sheet(isPresented: $showingDetectedText) { DetectedTextSheet() }
+        .sheet(isPresented: $showingHelp) { GlossarySheet() }
         .safeAreaInset(edge: .bottom) {
             statusBar
         }
@@ -275,6 +95,228 @@ struct ContentView: View {
         } message: {
             Text(app.errorMessage ?? "")
         }
+    }
+
+    /// File-related actions: creating/starting over, opening/saving, undo,
+    /// and getting the finished file out (export/share) -- everything that
+    /// touches the document as a whole or its life on disk, as opposed to
+    /// editing what's actually in it (`editingToolbarRow`, the row below
+    /// this one). A native `NSToolbar` can't lay out as two rows on its
+    /// own, so both rows are a plain custom `HStack` pinned to the top via
+    /// `.safeAreaInset` instead of the system `.toolbar` modifier.
+    private var fileToolbarRow: some View {
+        HStack(spacing: 14) {
+            // The One-Click Stitch action: styled with the app's own mark
+            // and a prominent tint so it's unmistakably *the* button in
+            // this row, not one of an equal-weight row of icons —
+            // everything else here is a secondary/manual path for users
+            // who want to inspect or adjust before exporting. There's no
+            // separate "Auto Digitize" action any more: every edit
+            // (import, resize, per-object parameter change, color merge)
+            // regenerates the preview on its own a moment later, so this
+            // button's only remaining job is the export step itself.
+            Button {
+                app.createEmbroideryFile()
+            } label: {
+                HStack(spacing: 6) {
+                    brandMark(size: 18)
+                    Text("Click to Create").fontWeight(.semibold)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color(red: 0.09, green: 0.42, blue: 0.72))
+            .disabled(app.document == nil)
+            .help("One click: digitize this artwork and save it as a machine embroidery file.")
+
+            Divider().frame(height: 20)
+
+            Button {
+                if app.document == nil {
+                    app.newProject()
+                } else {
+                    showingNewProjectConfirm = true
+                }
+            } label: {
+                Label("New", systemImage: "doc.badge.plus")
+            }
+            .confirmationDialog("Start a new project? The current design will be closed without saving.",
+                                 isPresented: $showingNewProjectConfirm, titleVisibility: .visible) {
+                Button("Start New Project", role: .destructive) { app.newProject() }
+                Button("Cancel", role: .cancel) {}
+            }
+
+            // "Redo the whole thing from scratch" -- kept next to New
+            // rather than off in the editing row, since both are ways of
+            // starting over, just from a different point.
+            Button {
+                showingRedoConfirm = true
+            } label: {
+                Label("Start Over", systemImage: "arrow.clockwise")
+            }
+            .disabled(!app.hasOriginalArtwork)
+            .help("Discard edits made since import and regenerate fresh from the original artwork.")
+            .confirmationDialog("Redo from the original artwork? Edits made since import (color merges, per-object overrides, deletions) will be discarded.",
+                                 isPresented: $showingRedoConfirm, titleVisibility: .visible) {
+                Button("Start Over", role: .destructive) { app.redoEmbroideryFileCreation() }
+                Button("Cancel", role: .cancel) {}
+            }
+
+            Menu {
+                Button("Open Artwork...") { app.openArtworkWithPanel() }
+                Button("Open Project...") { app.openProjectWithPanel() }
+            } label: {
+                Label("Open", systemImage: "folder")
+            }
+            Button {
+                app.saveProject()
+            } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
+            }
+            .disabled(app.document == nil)
+
+            Button {
+                app.undo()
+            } label: {
+                Label("Back", systemImage: "arrow.uturn.backward")
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(!app.canUndo)
+            .help("Undo the last edit.")
+
+            Spacer()
+
+            // "Export" saves a file to disk -- a download, not an upload,
+            // hence the down-arrow icon (an earlier version of this
+            // button used an up-arrow, which reads as "send," the job
+            // Share below actually does).
+            Menu {
+                Button("Tajima (.dst)") { app.exportDST() }
+                Button("Brother/Baby Lock (.pes)") { app.exportPES() }
+                Button("Melco (.exp)") { app.exportEXP() }
+                Button("Janome (.jef)") { app.exportJEF() }
+            } label: {
+                Label("Download", systemImage: "square.and.arrow.down")
+            }
+            .disabled(app.stitchPlan == nil)
+            Menu {
+                Button("Tajima (.dst)") { app.shareCurrentFile(format: .dst) }
+                Button("Brother/Baby Lock (.pes)") { app.shareCurrentFile(format: .pes) }
+                Button("Melco (.exp)") { app.shareCurrentFile(format: .exp) }
+                Button("Janome (.jef)") { app.shareCurrentFile(format: .jef) }
+            } label: {
+                Label("Send", systemImage: "square.and.arrow.up")
+            }
+            .disabled(app.stitchPlan == nil)
+            .help("Send the embroidery file via AirDrop, Mail, Messages, and more.")
+
+            Divider().frame(height: 20)
+
+            Button {
+                showingHelp = true
+            } label: {
+                Label("Help", systemImage: "questionmark.circle")
+            }
+            .help("Definitions of the digitizing terms used throughout this app, and why they matter.")
+        }
+        .buttonStyle(.borderless)
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// Editing-related actions: everything that changes what's actually in
+    /// the design -- adjusting the automatic color/fabric output, and the
+    /// hands-on tools (lettering, merging, painting) -- as opposed to
+    /// document-level actions in `fileToolbarRow` above.
+    private var editingToolbarRow: some View {
+        HStack(spacing: 14) {
+            Button {
+                showingMergeColors = true
+            } label: {
+                Label("Merge Colors", systemImage: "arrow.triangle.merge")
+            }
+            .disabled((app.document?.objects.count ?? 0) < 2)
+            .help("Reassign several objects to the same thread color at once.")
+            Button {
+                showingThreadLibrary = true
+            } label: {
+                Label("Thread Library", systemImage: "paintpalette")
+            }
+            .help("Define your own thread colors to match against.")
+
+            Menu {
+                ForEach(FabricType.allCases, id: \.self) { fabric in
+                    Button {
+                        app.selectedFabricType = fabric
+                    } label: {
+                        if fabric == app.selectedFabricType {
+                            Label(fabric.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(fabric.displayName)
+                        }
+                    }
+                }
+            } label: {
+                Label("Fabric: \(app.selectedFabricType.shortName)", systemImage: "square.stack.3d.up")
+            }
+            .help("Adjusts the automatic pull/push compensation estimate for the fabric this design will be sewn on -- a stretchier material needs more correction, a stable/rigid one needs less. Applies to every object; an object's own manually-set compensation always wins over this.")
+
+            // A visible boundary between adjusting the automatic output
+            // above (color/fabric) and the hands-on editing tools below
+            // (lettering, merging, painting) -- both act on the current
+            // design, but one tunes what auto-digitize already produced
+            // while the other is direct manual editing.
+            Divider().frame(height: 20)
+
+            Button {
+                showingAddLettering = true
+            } label: {
+                Label("Add Lettering", systemImage: "textformat")
+            }
+            .help("Type text and pick a font -- generates clean satin letters directly from the font's own outline, instead of tracing a raster image of text (which can never be sharper than the source image's own resolution).")
+
+            if !app.detectedTextRegions.isEmpty {
+                Button {
+                    showingDetectedText = true
+                } label: {
+                    Label("Detected Text (\(app.detectedTextRegions.count))", systemImage: "text.viewfinder")
+                }
+                .tint(.orange)
+                .help("This import appears to contain text -- review it and optionally replace the raster-traced version with clean generated lettering.")
+            }
+
+            Button {
+                app.mergeSelectedShapesIntoOneObject()
+            } label: {
+                Label("Merge Shapes", systemImage: "puzzlepiece")
+            }
+            .disabled(!app.canMergeSelectedShapes)
+            .help("Join the selected objects' outlines into one shape -- fixes a letter or detail that came in as several disconnected fragments. Rubber-band or shift-click several objects first.")
+
+            Button {
+                app.isPaintMode.toggle()
+            } label: {
+                Label("Paint", systemImage: "paintbrush.pointed")
+            }
+            .tint(app.isPaintMode ? Color.accentColor : nil)
+            .help("Draw in missing coverage by hand -- extends the selected object, or draws a new shape if nothing's selected.")
+            if app.isPaintMode {
+                Slider(value: cmBinding($app.paintBrushRadiusMM), in: 0.05...1.0)
+                    .frame(width: 90)
+                    .help("Brush size")
+                ColorPicker("", selection: Binding(
+                    get: { Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255) },
+                    set: { app.paintColorRGB = rgbColor(from: $0) }
+                ), supportsOpacity: false)
+                .labelsHidden()
+            }
+
+            Spacer()
+        }
+        .buttonStyle(.borderless)
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     /// The app's own mark (the stitched "S" + cursor-click glyph), bundled
@@ -313,10 +355,34 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .font(.callout)
             Spacer()
+            readinessBadge
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.bar)
+    }
+
+    /// A compact, always-visible readiness score at the bottom-right of the
+    /// window -- unlike the full "Embroidery Readiness" section in the
+    /// Inspector (issue-by-issue detail, but only visible while scrolled
+    /// to it), this stays on screen no matter what part of the Inspector
+    /// is showing, and re-reads `app.readinessReport` directly, so it
+    /// updates the moment an edit's live regenerate re-analyzes the
+    /// design -- the user sees the score move as they make improvements,
+    /// not just as a one-time snapshot.
+    @ViewBuilder
+    private var readinessBadge: some View {
+        if let report = app.readinessReport {
+            HStack(spacing: 6) {
+                Image(systemName: report.isReadyToSew ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                Text("Readiness: \(report.score)/100")
+            }
+            .font(.callout)
+            .foregroundStyle(report.isReadyToSew ? Color.green : Color.orange)
+            .help(report.isReadyToSew
+                  ? "Ready to sew -- no issues found."
+                  : "\(report.issues.count) issue\(report.issues.count == 1 ? "" : "s") found -- see Embroidery Readiness in the Inspector for details.")
+        }
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
@@ -1118,4 +1184,154 @@ private struct ThreadLibrarySheet: View {
         .frame(width: 380, height: 420)
     }
 
+}
+
+/// One glossary entry -- a term used somewhere in the app's own UI, what
+/// it means, and why it actually matters for digitizing quality (not just
+/// a dictionary definition) -- shown by the toolbar's Help button.
+private struct GlossaryEntry: Identifiable {
+    let id = UUID()
+    let term: String
+    let definition: String
+}
+
+private struct GlossarySection: Identifiable {
+    let id = UUID()
+    let title: String
+    let entries: [GlossaryEntry]
+}
+
+/// A reference glossary for every digitizing term this app's own UI uses --
+/// stitch types, fill patterns, generation parameters, editing tools,
+/// machine/production terms, and the readiness score -- each with a plain-
+/// language definition and why it actually affects how a design sews out,
+/// not just a dictionary entry. Opened from the toolbar's Help button;
+/// content lives here as static data rather than pulled from the engine
+/// itself, since it's meant to explain concepts a user encounters in the
+/// UI, not document the code.
+private struct GlossarySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    private let sections: [GlossarySection] = [
+        GlossarySection(title: "Stitch Types", entries: [
+            GlossaryEntry(term: "Running Stitch",
+                           definition: "A single line of stitches tracing an outline, evenly spaced. The lightest-weight stitch type -- good for fine detail or a hairline stroke too thin for satin to hold cleanly, but reads as a thin line, not a filled shape."),
+            GlossaryEntry(term: "Triple Run",
+                           definition: "The same outline sewn three times (forward, back, forward) instead of once. Reads as a bolder, more solid line than a single running stitch -- this app uses it automatically for lettering too small for satin to hold a clean column, since it stays legible at any size."),
+            GlossaryEntry(term: "Satin (Satin Stitch / Satin Column)",
+                           definition: "Dense zigzag stitching between two \"rails\" running the length of a narrow shape -- a letter stroke, a logo outline segment. Gives a smooth, glossy, filled look, but only works well on a genuinely narrow column (roughly 1.5-12mm); too wide and it can gap, pucker, or snag."),
+            GlossaryEntry(term: "Tatami Fill",
+                           definition: "Parallel rows of stitching that solidly cover a wider area -- a background shape, a bold block letter, anywhere satin would be too wide to sew cleanly. Matte rather than glossy, and handles holes/counters (like a letter's own counter) correctly, which satin in this engine can't unless it's a single simple ring."),
+        ]),
+        GlossarySection(title: "Fill Patterns", entries: [
+            GlossaryEntry(term: "Rows",
+                           definition: "Tatami fill's default texture: straight parallel rows at one angle. Simple and reliable for most shapes."),
+            GlossaryEntry(term: "Cross-Hatch",
+                           definition: "Two overlapping row passes at right angles to each other, each at half density -- a lattice texture instead of parallel lines. Useful when plain rows show a faint directional sheen you'd rather avoid."),
+            GlossaryEntry(term: "Basket Weave",
+                           definition: "Splits a large fill area into a checkerboard of cells, alternating the fill angle 90° between neighboring cells. The standard technique for breaking up the \"grain\" a big flat area can show under one uniform fill direction -- most useful on genuinely large regions, not small detail."),
+        ]),
+        GlossarySection(title: "Stitch Parameters", entries: [
+            GlossaryEntry(term: "Density",
+                           definition: "How close together the stitches are (satin's crossing spacing, or fill's row spacing). Denser stitching gives fuller coverage and a richer look, but uses more thread, takes longer to sew, and can stiffen or even perforate the fabric if pushed too far."),
+            GlossaryEntry(term: "Stitch Length",
+                           definition: "How far apart individual stitch points are along a running/triple-run line. Shorter gives smoother curves and finer detail; longer sews faster but can look choppy on a tight curve."),
+            GlossaryEntry(term: "Underlay",
+                           definition: "A lighter foundation layer of stitching sewn *underneath* the visible stitching, before it. Stabilizes the fabric and keeps the top stitching from sinking into it -- without underlay, satin especially can look thin, uneven, or let the fabric show through. This app picks a sensible underlay automatically unless you override it (None, Center Run, Edge Run, or Zigzag)."),
+            GlossaryEntry(term: "Pull Compensation",
+                           definition: "How much a shape is widened before sewing to counteract fabric pulling inward, perpendicular to the stitching, as it's sewn -- without it, a design can sew narrower than digitized. Denser stitching and narrower shapes need more; this app estimates it automatically per object (and per fabric type), or you can set it by hand."),
+            GlossaryEntry(term: "Push Compensation",
+                           definition: "Pull compensation's counterpart along the stitching direction instead of across it -- fabric pushes apart lengthwise as it sews, so a shape can end up longer than digitized unless shortened first to compensate."),
+            GlossaryEntry(term: "Fill Angle",
+                           definition: "The direction tatami fill's rows run. Affects how light catches the finished stitching and how the fill interacts with neighboring shapes -- this app picks a sensible angle automatically (perpendicular to the shape's own elongation) unless you set one explicitly."),
+            GlossaryEntry(term: "Max / Min Satin Width",
+                           definition: "The practical width range satin can sew cleanly within (roughly 1.5-12mm by default). Narrower than the minimum sews as running/triple-run instead; wider than the maximum converts to tatami fill -- both automatic, so a shape is never left un-sewable just because its width falls outside satin's comfort zone."),
+        ]),
+        GlossarySection(title: "Editing Tools", entries: [
+            GlossaryEntry(term: "Merge Colors",
+                           definition: "Reassigns several objects to the same thread color at once. Most real logos use only a handful of thread colors, not a separate one for every distinct shape a raster import detected -- merging keeps the color count sewable and the thread changes to a minimum."),
+            GlossaryEntry(term: "Merge Shapes",
+                           definition: "Joins several selected objects' outlines into one combined shape. Fixes a letter or detail that came in as multiple disconnected fragments (common with a raster/photo import) so it sews as one clean piece instead of several overlapping ones."),
+            GlossaryEntry(term: "Paint Tool",
+                           definition: "Draws in missing coverage by hand -- extends the selected object with a brush stroke, or creates a new shape if nothing's selected. Useful for patching a gap the automatic import missed."),
+            GlossaryEntry(term: "Add Lettering",
+                           definition: "Generates clean letterforms directly from a font's own outline instead of tracing a raster image of text -- sharp at any size, unlike text that came in as part of an imported photo or logo file."),
+            GlossaryEntry(term: "Applique",
+                           definition: "A technique where a separate piece of fabric is placed on the garment and secured with stitching, rather than filling the whole shape with thread -- lighter, faster to sew for large areas, and gives a distinct fabric-texture look. This app can generate the placement outline and tack-down stitching that guide where to lay and secure the fabric by hand."),
+            GlossaryEntry(term: "Fabric Type",
+                           definition: "Adjusts the automatic pull/push compensation estimate for how stretchy or stable the target material is -- a stretch knit needs meaningfully more correction than a stable woven fabric like twill or canvas to sew out at the intended size."),
+        ]),
+        GlossarySection(title: "Machine & Production Terms", entries: [
+            GlossaryEntry(term: "Trim",
+                           definition: "A command that cuts the thread. Inserted automatically between color changes and across a long gap between same-color objects, so the machine doesn't drag a visible strand of thread across exposed fabric."),
+            GlossaryEntry(term: "Jump",
+                           definition: "The needle moves to a new position without stitching -- a \"travel\" move. A jump that's too long (and not trimmed) can leave a visible thread strand across the design, which is exactly what a trim before it prevents."),
+            GlossaryEntry(term: "Color Change",
+                           definition: "A stop point where the machine pauses for a thread color swap. Fewer color changes means faster, less error-prone production -- part of why merging colors and choosing a sensible object sewing order both matter."),
+            GlossaryEntry(term: "Tie-In / Tie-Off",
+                           definition: "A few small anchor stitches sewn at the start and end of each thread color, locking the thread in place so it can't work loose or pull out -- standard practice, applied automatically here."),
+            GlossaryEntry(term: "Hoop",
+                           definition: "The frame that holds fabric taut while it's being sewn. A design must fit within the hoop's usable sewing area -- this app checks the current design against your selected hoop and flags it if it doesn't fit."),
+            GlossaryEntry(term: "Stitch Count",
+                           definition: "The total number of individual needle penetrations in the design. Roughly proportional to how long the design takes to sew and how much thread it uses -- a useful sanity check before sending a design to production."),
+        ]),
+        GlossarySection(title: "Quality", entries: [
+            GlossaryEntry(term: "Embroidery Readiness Score",
+                           definition: "An automatic 0-100 score (shown at the bottom-right of the window and in the Inspector) checking a design for known problem patterns -- stitches that are too long or too short, a design that doesn't fit the selected hoop, and similar issues. Updates live as you edit, so you can watch it improve as you fix what it flags. A high score means fewer surprises at the embroidery machine, not a guarantee of a perfect sew-out."),
+        ]),
+    ]
+
+    private var filteredSections: [GlossarySection] {
+        guard !searchText.isEmpty else { return sections }
+        return sections.compactMap { section in
+            let matches = section.entries.filter {
+                $0.term.localizedCaseInsensitiveContains(searchText) || $0.definition.localizedCaseInsensitiveContains(searchText)
+            }
+            return matches.isEmpty ? nil : GlossarySection(title: section.title, entries: matches)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Digitizing Terms").font(.title3).fontWeight(.semibold).padding()
+            Divider()
+
+            TextField("Search terms...", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+            List {
+                ForEach(filteredSections) { section in
+                    Section(section.title) {
+                        ForEach(section.entries) { entry in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.term).font(.headline)
+                                Text(entry.definition)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+                }
+                if filteredSections.isEmpty {
+                    Text("No terms match \"\(searchText)\".")
+                        .foregroundStyle(.secondary)
+                        .padding()
+                }
+            }
+            .listStyle(.sidebar)
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+        .frame(width: 480, height: 560)
+    }
 }
