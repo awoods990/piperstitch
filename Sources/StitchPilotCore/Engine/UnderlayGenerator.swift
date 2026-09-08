@@ -47,6 +47,14 @@ public enum UnderlayGenerator {
     /// selection depends on "object geometry, stitch type... width."
     private static func centerRun(shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
         guard let (railA, railB) = try? SatinColumnGenerator.computeRails(for: shape) else { return [] }
+        // A ring column (a letterform counter -- O, P, R...) has no real
+        // "ends" to inset away from the way an open column's tapered tips
+        // need -- `SatinColumnGenerator.computeRails` signals this by
+        // returning both rails explicitly closed (first point repeated at
+        // the end). Trimming it the same way as an open column would cut
+        // a gap into otherwise-continuous underlay coverage at whatever
+        // point the ring's rails happened to start.
+        let isClosedRing = railA.count > 1 && railA.first == railA.last
 
         let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
         let count = max(4, Int((approxLength / max(parameters.underlayStitchLengthMM, 0.5)).rounded()))
@@ -54,10 +62,10 @@ public enum UnderlayGenerator {
         let resampledB = PolygonGeometry.resampleByCount(railB, count: count)
 
         let centerline = zip(resampledA, resampledB).map { Point2D(($0.x + $1.x) / 2, ($0.y + $1.y) / 2) }
-        let inset = trimPolylineEnds(centerline, insetMM: parameters.underlayInsetMM)
-        guard inset.count > 1 else { return [] }
+        let path = isClosedRing ? centerline : trimPolylineEnds(centerline, insetMM: parameters.underlayInsetMM)
+        guard path.count > 1 else { return [] }
 
-        return RunningStitchGenerator.generate(for: SubPath(points: inset, closed: false),
+        return RunningStitchGenerator.generate(for: SubPath(points: path, closed: isClosedRing),
                                                 stitchLengthMM: parameters.underlayStitchLengthMM, minStitchLengthMM: 0.4)
     }
 

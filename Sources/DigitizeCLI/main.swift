@@ -75,9 +75,56 @@ if args.count >= 3, args[1] == "--detect-text" {
     exit(0)
 }
 
+if args.count >= 5, args[1] == "--lettering-preview" {
+    // Diagnostic: render real lettering (generated the same way AppState's
+    // Add Lettering path does, including the run-level stitch-type
+    // classification) to a PNG, without driving the GUI.
+    let text = args[2]
+    let fontPostScriptName = args[3]
+    let outputURL = URL(fileURLWithPath: args[4])
+    let fontSizeMM = args.count > 5 ? (Double(args[5]) ?? 20) : 20
+
+    let spec = LetteringSpec(text: text, fontPostScriptName: fontPostScriptName, fontSizeMM: fontSizeMM)
+    let rawShapes = try LetteringGenerator.generateShapes(spec: spec)
+    var rawCombined = BoundingBox.empty
+    for shape in rawShapes { rawCombined = rawCombined.union(shape.boundingBox) }
+    // Center within the canvas the same way AppState.generateLetteringObjects does.
+    let offsetX = -rawCombined.minX + 5, offsetY = -rawCombined.minY + 5
+    let shapes = rawShapes.map { shape in
+        VectorShape(subPaths: shape.subPaths.map { sp in
+            SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
+        })
+    }
+    var combined = BoundingBox.empty
+    for shape in shapes { combined = combined.union(shape.boundingBox) }
+    let parameters = StitchGenerationParameters()
+    let runType = StitchTypeClassifier.classifyLetteringRun(shapes: shapes, parameters: parameters, capHeightMM: fontSizeMM)
+    print("Run stitch type: \(runType)")
+    let objects = shapes.enumerated().map { i, shape -> EmbroideryObject in
+        let stitchType = StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType)
+        print("  glyph \(i): subPaths=\(shape.subPaths.count) -> \(stitchType)")
+        return EmbroideryObject(name: "Letter \(i)", shape: shape, stitchType: stitchType,
+                                 threadColor: .generic(RGBColor(hex: 0x1144AA)), parameters: parameters)
+    }
+    let widthMM = combined.width + 10, heightMM = combined.height + 10
+    let doc = StitchDocument(name: text, physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
+    let plan = try DigitizePipeline.flatten(doc)
+    print("Stitch count: \(plan.stitchCount)")
+    var options = StitchRenderer.Options()
+    options.pixelsPerMM = 20
+    guard let pngData = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: [.generic(RGBColor(hex: 0x1144AA))], options: options) else {
+        print("Render failed"); exit(1)
+    }
+    try pngData.write(to: outputURL)
+    print("Wrote \(outputURL.path)")
+    exit(0)
+}
+
 guard args.count >= 3 else {
     print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8] [pixelsPerMM=12]")
     print("       DigitizeCLI --recommend-size <input>")
+    print("       DigitizeCLI --detect-text <input>")
+    print("       DigitizeCLI --lettering-preview <text> <fontPostScriptName> <output.png> [fontSizeMM=20]")
     exit(1)
 }
 

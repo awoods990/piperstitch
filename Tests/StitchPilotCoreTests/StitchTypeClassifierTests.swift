@@ -143,11 +143,26 @@ struct StitchTypeClassifierTests {
     /// satin column in this engine regardless of what the rest of an
     /// otherwise-satin run is doing -- the one unavoidable per-glyph
     /// exception `classifyGlyphInRun` makes.
-    @Test func holedGlyphFallsBackToTatamiEvenInASatinRun() {
+    /// A single-hole glyph (a letterform counter -- O, P, R, A, D, Q...)
+    /// now follows an otherwise-satin run instead of being forced to
+    /// tatami: `SatinColumnGenerator` can represent it as a genuine ring
+    /// column around the one hole.
+    @Test func singleHoledGlyphStaysSatinInASatinRun() {
         let outer = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
         let hole = SubPath(points: [Point2D(3, 5), Point2D(7, 5), Point2D(7, 15), Point2D(3, 15)], closed: true)
         let oShape = VectorShape(subPaths: [outer, hole])
-        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: oShape, runStitchType: .satin) == .tatamiFill)
+        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: oShape, runStitchType: .satin) == .satin)
+    }
+
+    /// A glyph with TWO separate holes (B, 8 -- two counters) is still
+    /// beyond what a single ring column can represent, so it still falls
+    /// back to tatami fill even in an otherwise-satin run.
+    @Test func multiHoledGlyphFallsBackToTatamiEvenInASatinRun() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
+        let upperHole = SubPath(points: [Point2D(2, 11), Point2D(8, 11), Point2D(8, 18), Point2D(2, 18)], closed: true)
+        let lowerHole = SubPath(points: [Point2D(2, 2), Point2D(8, 2), Point2D(8, 9), Point2D(2, 9)], closed: true)
+        let bShape = VectorShape(subPaths: [outer, upperHole, lowerHole])
+        #expect(StitchTypeClassifier.classifyGlyphInRun(shape: bShape, runStitchType: .satin) == .tatamiFill)
     }
 
     /// The same holed glyph must NOT be force-downgraded when the run

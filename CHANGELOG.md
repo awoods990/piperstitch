@@ -4,6 +4,42 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: satin can now sew a genuine ring around a single hole -- O, P, R, A, D, Q no longer forced to fill
+
+Previously ANY shape with a hole was structurally impossible to satin --
+`SatinColumnGenerator` only ever looked at a shape's outer boundary
+(`shape.subPaths.first`), with no way to represent a hole at all, so a
+letterform counter always fell back to tatami fill even in an otherwise-
+satin lettering run. That's the single biggest source of one letter
+visibly differing from its neighbors, since most alphabets' holed letters
+(O, P, R, A, D, Q, and their lowercase forms) are common.
+
+`SatinColumnGenerator.computeRails` now detects a shape with exactly one
+hole and computes a genuine closed-loop ring column around it instead:
+casting rays at evenly-spaced angles from a point inside the hole, it
+finds where each ray crosses the hole boundary and the outer boundary,
+giving two rails in angular correspondence by construction (no "twisted"
+crossings) that zigzag continuously all the way around rather than tapering
+to a point at two ends the way an open stroke's rails do. Casting from the
+HOLE's own center (not the outer shape's) matters for an off-center counter
+like "P" or "R", whose hole sits in the upper half, not the middle of the
+whole glyph -- a ray from the outer shape's own centroid would miss the
+hole (or the sweep) entirely for many angles.
+
+Downstream code that consumes these rails (`SatinColumnGenerator`'s own
+push-compensation trimming, `UnderlayGenerator`'s center-run underlay) both
+detect a closed ring (both rails' first point repeated at the end) and skip
+the end-trimming logic built for an open column's tapered tips, which would
+otherwise cut an arbitrary gap into the ring's otherwise-continuous
+coverage. Pull compensation still applies normally -- it's perpendicular to
+the column at each crossing, just as meaningful on a ring as an open
+stroke.
+
+A glyph with MORE than one hole (B, 8 -- two separate counters) is still
+beyond a single ring column and falls back to tatami fill; true multi-hole
+support would need the same per-hole ring logic applied more than once
+per glyph, not attempted in this pass.
+
 ## Changed: an entire lettering run now shares ONE stitch type, not a mix from letter to letter
 
 A first pass at fixing multi-stroke letters (T, L, E, F, H, X... -- whose
@@ -26,12 +62,11 @@ letter height to hold a clean column, below which it just reads as a blob);
 otherwise satin vs. fill is decided from the run's widest *simple*
 (no-hole) glyph, the shape that would actually be first to fail a satin
 column's practical width limit. `classifyGlyphInRun` then applies that
-shared decision to every glyph, with the one unavoidable exception: a
-letterform counter (O, P, R, A, D, B, Q...) can never be represented by a
-satin column in this engine (`SatinColumnGenerator` only ever looks at a
-shape's outer boundary), so a holed glyph falls back to tatami fill
-regardless of what the rest of an otherwise-satin run is doing -- a
-structural necessity, not a style choice.
+shared decision to every glyph -- as of the ring-column support below, a
+single-hole letterform (O, P, R, A, D, Q...) follows the run normally too;
+only a glyph with MORE than one hole (B, 8) still has to fall back to
+tatami fill regardless of what the rest of an otherwise-satin run is
+doing, a structural necessity rather than a style choice.
 
 This does mean an individual multi-stroke letter within an otherwise-satin
 run can still show some lumpiness at its own internal corners (unchanged

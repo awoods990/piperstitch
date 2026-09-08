@@ -236,4 +236,79 @@ struct SatinColumnGeneratorTests {
         let mixedPlan = try DigitizePipeline.flatten(mixedDoc)
         #expect(mixedPlan.stitchCount > plan.stitchCount, "the narrow object's real satin stitches must still be added on top of the fallback's")
     }
+
+    // MARK: - Ring columns (a letterform counter -- O, P, R, A, D, Q...)
+
+    /// A "square donut" -- 20x20mm outer boundary with a centered 10x10mm
+    /// hole, a uniform 5mm-wide ring all the way around. `computeRails`'s
+    /// ring case should produce two same-length, explicitly-closed rails
+    /// (the signal downstream code uses to skip end-trimming/push comp
+    /// meant for an open column's tapered tips, which a ring doesn't have).
+    @Test func ringRailsAreClosedAndEqualLength() throws {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20)], closed: true)
+        let hole = SubPath(points: [Point2D(5, 5), Point2D(15, 5), Point2D(15, 15), Point2D(5, 15)], closed: true)
+        let ring = VectorShape(subPaths: [outer, hole])
+
+        let (railA, railB) = try SatinColumnGenerator.computeRails(for: ring)
+        #expect(railA.count == railB.count)
+        #expect(railA.count > 8)
+        #expect(railA.first == railA.last, "outer rail should be explicitly closed")
+        #expect(railB.first == railB.last, "hole rail should be explicitly closed")
+    }
+
+    /// The actual bug this ring support fixes: before it, any shape with a
+    /// hole was routed away from satin entirely (`StitchTypeClassifier`),
+    /// because the only satin path there was would have ignored the hole
+    /// subpath and solid-filled it. Confirms the real, generated stitches
+    /// stay on the ring's stroke -- nowhere near the hole's own center --
+    /// rather than covering the hole solid.
+    @Test func ringColumnStaysOnTheStrokeNotSolidFillingTheHole() throws {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20)], closed: true)
+        let hole = SubPath(points: [Point2D(5, 5), Point2D(15, 5), Point2D(15, 15), Point2D(5, 15)], closed: true)
+        let ring = VectorShape(subPaths: [outer, hole])
+
+        let stitches = try SatinColumnGenerator.generatePartial(for: ring, parameters: params())
+        #expect(stitches.count > 20)
+
+        for point in stitches {
+            let chebyshevFromCenter = max(abs(point.x - 10), abs(point.y - 10))
+            #expect(chebyshevFromCenter > 3, "stitch \(point) landed too close to the hole's center -- looks solid-filled, not a ring")
+            #expect(chebyshevFromCenter < 11, "stitch \(point) landed outside the ring's outer boundary")
+        }
+    }
+
+    /// A ring column integrated through the full pipeline (including
+    /// underlay, which also calls `computeRails`) must produce a real,
+    /// non-empty plan without throwing -- exercises `UnderlayGenerator`'s
+    /// ring-aware center-run path (`isClosedRing`) alongside satin itself.
+    @Test func ringColumnIntegratesWithDigitizePipeline() throws {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20)], closed: true)
+        let hole = SubPath(points: [Point2D(5, 5), Point2D(15, 5), Point2D(15, 15), Point2D(5, 15)], closed: true)
+        let ring = VectorShape(subPaths: [outer, hole])
+        let object = EmbroideryObject(name: "O", shape: ring, stitchType: .satin,
+                                       threadColor: .generic(RGBColor(hex: 0x000000)), parameters: params())
+        let doc = StitchDocument(name: "RingTest", physicalWidthMM: 20, physicalHeightMM: 20, objects: [object])
+
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 20)
+    }
+
+    /// A hole positioned only in the upper portion of a taller outer
+    /// shape (like a real "P" or "R"'s counter, which sits nowhere near
+    /// the middle of the whole glyph) -- the outer shape's OWN centroid
+    /// (~(5, 15), the shape's vertical middle) falls outside this hole
+    /// (y: 20-26), which would break a ray-cast centered there. Confirms
+    /// `computeRingRails` casting from the HOLE's own center instead
+    /// still produces a usable ring.
+    @Test func offCenterHoleLikeARealLetterPStillProducesAUsableRing() throws {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 30), Point2D(0, 30)], closed: true)
+        let hole = SubPath(points: [Point2D(2, 20), Point2D(8, 20), Point2D(8, 26), Point2D(2, 26)], closed: true)
+        #expect(!PolygonGeometry.pointInPolygons(Point2D(5, 15), polygons: [hole.points]),
+                "test setup sanity check: the outer shape's own centroid should fall outside this off-center hole")
+
+        let ring = VectorShape(subPaths: [outer, hole])
+        let (railA, railB) = try SatinColumnGenerator.computeRails(for: ring)
+        #expect(railA.count == railB.count)
+        #expect(railA.count > 8)
+    }
 }

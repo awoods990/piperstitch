@@ -136,25 +136,32 @@ public enum StitchTypeClassifier {
         }
         // No measurable simple glyph at all (e.g. a run that's entirely
         // holed letters, or entirely spaces) -- satin is the sensible
-        // default; `classifyGlyphInRun` will route any actual hole to
-        // tatami fill regardless.
+        // default; `classifyGlyphInRun` still routes a multi-hole glyph
+        // (more than one counter -- B, 8) to tatami fill regardless, since
+        // that's beyond what a single ring column can represent.
         guard widestSimpleGlyphAverageWidth > 0 else { return .satin }
         return widestSimpleGlyphAverageWidth <= parameters.maxSatinWidthMM ? .satin : .tatamiFill
     }
 
     /// Applies the whole run's shared `runStitchType` (from
     /// `classifyLetteringRun`) to one glyph, with the one case that can't
-    /// simply follow the run: a glyph with a hole (a letterform counter --
-    /// O, P, R, A, D, B, Q...) can never be represented by a satin column
-    /// in this engine (`SatinColumnGenerator` only ever looks at the outer
-    /// boundary, per its own doc comment), so it falls back to tatami fill
-    /// regardless of what the rest of the run is doing -- a structural
-    /// necessity, not a style choice. `.tripleRun`/`.runningStitch` and
+    /// simply follow the run: a glyph with MORE THAN ONE hole (two
+    /// separate counters -- B, 8) can't be represented by a satin column
+    /// in this engine, whose ring support (`SatinColumnGenerator.
+    /// computeRails`) only handles a single enclosed hole -- so it falls
+    /// back to tatami fill regardless of what the rest of the run is
+    /// doing, a structural necessity rather than a style choice.
+    ///
+    /// A glyph with exactly ONE hole (a single letterform counter -- O, P,
+    /// R, A, D, Q...) follows the run normally: `SatinColumnGenerator`
+    /// represents it as a genuine closed-loop ring column around the
+    /// hole, not a solid disc. `.tripleRun`/`.runningStitch` and
     /// `.tatamiFill` all already stitch every one of a shape's sub-paths
-    /// correctly (see `DigitizePipeline.rawStitchRuns`), so this only ever
-    /// differs from `runStitchType` when it's `.satin`.
+    /// correctly regardless of hole count (see
+    /// `DigitizePipeline.rawStitchRuns`), so this only ever differs from
+    /// `runStitchType` when it's `.satin` on a multi-hole glyph.
     public static func classifyGlyphInRun(shape: VectorShape, runStitchType: StitchType) -> StitchType {
-        guard runStitchType == .satin, shape.subPaths.count > 1 else { return runStitchType }
+        guard runStitchType == .satin, shape.subPaths.count > 2 else { return runStitchType }
         return .tatamiFill
     }
 
