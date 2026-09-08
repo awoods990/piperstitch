@@ -60,6 +60,14 @@ struct StitchCanvasView: View {
     @State private var panOffset: CGSize = .zero
     @State private var lastPanOffset: CGSize = .zero
     @State private var showGrid = false
+    /// The canvas's own measured size, tracked so the realistic preview can
+    /// be rendered at a resolution matched to how big the design actually
+    /// appears on screen right now -- see `desiredPixelsPerMM`'s doc comment.
+    @State private var canvasSize: CGSize = .zero
+    /// The `pixelsPerMM` the current `realisticImage` was actually rendered
+    /// at, so a zoom/resize can be compared against it and only trigger a
+    /// re-render when the mismatch is large enough to matter.
+    @State private var renderedPixelsPerMM: Double = 0
 
     /// Rubber-band selection box, in view (canvas) coordinates, while a
     /// selection drag is in progress -- nil the rest of the time.
@@ -186,6 +194,8 @@ struct StitchCanvasView: View {
                     .onChanged { value in handleDragChanged(value, size: geo.size) }
                     .onEnded { value in handleDragEnded(value, size: geo.size) }
             )
+            .onAppear { canvasSize = geo.size }
+            .onChange(of: geo.size) { canvasSize = $0 }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .gesture(
@@ -247,6 +257,12 @@ struct StitchCanvasView: View {
         .onAppear { regenerateRealisticImageIfNeeded() }
         .onChange(of: mode) { _ in regenerateRealisticImageIfNeeded() }
         .onChange(of: planSignature) { _ in regenerateRealisticImageIfNeeded() }
+        .onChange(of: canvasSize) { _ in regenerateRealisticImageIfNeeded() }
+        // `lastZoomScale` (not the continuously-updating `zoomScale`) only
+        // changes once a pinch gesture ends or a zoom button is pressed --
+        // re-rendering the whole bitmap on every frame of an in-progress
+        // pinch would be a real, user-visible stutter.
+        .onChange(of: lastZoomScale) { _ in regenerateRealisticImageIfNeeded() }
         .onChange(of: document?.name) { _ in resetZoom() }
     }
 
@@ -408,10 +424,51 @@ struct StitchCanvasView: View {
         context.draw(highQualityImage, in: rect)
     }
 
+    /// The realistic preview's target resolution, matched to how big the
+    /// design actually appears on screen right now (`canvasSize` and
+    /// `lastZoomScale`) rather than always using one fixed value --
+    /// otherwise a large, detailed design viewed at a modest on-screen
+    /// size forces a big single-step downscale of `StitchRenderer`'s fine
+    /// repeating detail (thin per-stitch highlight lines, alternating
+    /// shading), which still visibly aliases even with high-quality
+    /// interpolation (`drawRealisticLayer`'s fix helps, but can't fully
+    /// compensate for a large enough scale mismatch -- found directly
+    /// against a real design's fine satin text still reading as an
+    /// illegible scribble at a fixed 12px/mm even after that fix). Retina-
+    /// aware (multiplied by the screen's backing scale factor) so the
+    /// preview stays crisp at 100% zoom on a Retina display, not just at
+    /// the bitmap's own native resolution. Clamped to a sane range so a
+    /// tiny window or a deep zoom-in never requests an absurd bitmap size.
+    private func desiredPixelsPerMM(document: StitchDocument) -> Double {
+        let fallback = StitchRenderer.Options().pixelsPerMM
+        guard canvasSize.width > 0, canvasSize.height > 0 else { return fallback }
+        let margin: CGFloat = 24
+        let availableW = canvasSize.width - margin * 2
+        let availableH = canvasSize.height - margin * 2
+        let frameW = max(document.physicalWidthMM, hoop?.widthMM ?? 0)
+        let frameH = max(document.physicalHeightMM, hoop?.heightMM ?? 0)
+        guard frameW > 0, frameH > 0, availableW > 0, availableH > 0 else { return fallback }
+        let fitScale = min(availableW / frameW, availableH / frameH) // points per mm, on screen
+        let effectiveScale = Double(fitScale * lastZoomScale)
+        let backingScale = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
+        return min(40, max(6, effectiveScale * backingScale))
+    }
+
     private func regenerateRealisticImageIfNeeded() {
-        guard mode == .realistic, let document, let stitchPlan, planSignature != renderedSignature else { return }
-        realisticImage = StitchRenderer.render(stitchPlan, widthMM: document.physicalWidthMM, heightMM: document.physicalHeightMM, colors: colors)
+        guard mode == .realistic, let document, let stitchPlan else { return }
+        let targetPixelsPerMM = desiredPixelsPerMM(document: document)
+        // A real digitize change (plan) always needs a fresh render; a
+        // resolution target drifting by less than ~25% from what's already
+        // rendered isn't worth the cost of re-rendering the whole bitmap
+        // again (every small window resize or zoom tick would otherwise
+        // trigger one).
+        let resolutionDrifted = renderedPixelsPerMM <= 0 || abs(targetPixelsPerMM - renderedPixelsPerMM) / renderedPixelsPerMM > 0.25
+        guard planSignature != renderedSignature || resolutionDrifted else { return }
+        var options = StitchRenderer.Options()
+        options.pixelsPerMM = targetPixelsPerMM
+        realisticImage = StitchRenderer.render(stitchPlan, widthMM: document.physicalWidthMM, heightMM: document.physicalHeightMM, colors: colors, options: options)
         renderedSignature = planSignature
+        renderedPixelsPerMM = targetPixelsPerMM
     }
 
     private func drawArtworkFill(_ document: StitchDocument, context: GraphicsContext, toView: (Point2D) -> CGPoint, opacity: Double) {

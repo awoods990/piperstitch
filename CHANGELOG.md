@@ -4,6 +4,28 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: canvas preview still looked jagged on fine detail after high-quality interpolation, because the source bitmap's resolution didn't track the actual on-screen size
+
+Requesting `.interpolation(.high)` (previous entry) visibly improved
+dense, high-contrast areas, but a real design's fine satin text still
+read as an illegible scribble at some on-screen sizes. `StitchRenderer`
+always rendered its preview bitmap at one fixed resolution (12px/mm)
+regardless of how big the design actually appears on screen -- viewed
+at a modest on-screen size, a large, detailed design still forced a big
+single-step downscale of the renderer's fine repeating detail (thin
+per-stitch highlight lines, alternating shading), which visibly aliases
+even with good interpolation; no resampling algorithm fully recovers
+thin, high-frequency strokes lost to a large enough reduction.
+
+`StitchCanvasView` now renders the preview at a resolution matched to
+its actual current on-screen size and zoom level (`desiredPixelsPerMM`,
+retina-aware, clamped to a sane range) instead of a fixed value,
+re-rendering when the canvas resizes or the zoom level settles (not on
+every frame of an in-progress pinch) or the target drifts more than
+~25% from what's already rendered. Verified this resolution range lines
+up with the same file's directly-exported render (already confirmed
+clean via `StitchRenderer.renderPNGData` bypassing the canvas entirely).
+
 ## Fixed: fine satin detail looked jagged/illegible in the canvas preview even though the actual digitized data was correct
 
 After the Finished Size and stitch-reclassification fixes below, a design
