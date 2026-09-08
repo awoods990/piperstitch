@@ -4,6 +4,18 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: rubber-band selection now requires an object to be fully inside the box, not just touching it
+
+Dragging a selection box previously selected any object whose bounding
+box merely overlapped it -- a shape the box only grazed at the edge got
+swept in along with the ones actually meant to be selected, which
+mattered more once selection started driving real edits (merge, delete,
+replace with lettering) rather than only highlighting. Now only objects
+entirely within the dragged box are selected, matching the "drag fully
+around what you want" convention. `BoundingBox` gained a `contains(_:)`
+method for this (an edge flush with the selection box's own edge still
+counts as enclosed, not excluded).
+
 ## Added: Add Lettering can replace the objects it's meant to replace, not just add alongside them
 
 If the user already had objects selected (e.g. the illegible raster-

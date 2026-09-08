@@ -365,7 +365,7 @@ struct StitchCanvasView: View {
         let selectionBox = BoundingBox(minX: min(corner1.x, corner2.x), minY: min(corner1.y, corner2.y),
                                         maxX: max(corner1.x, corner2.x), maxY: max(corner1.y, corner2.y))
         var hits: Set<EmbroideryObject.ID> = []
-        for object in document.objects where boxesIntersect(object.shape.boundingBox, selectionBox) {
+        for object in document.objects where selectionBox.contains(object.shape.boundingBox) {
             hits.insert(object.id)
         }
         // A drag too small to plausibly be an intentional rubber band (a
@@ -373,10 +373,6 @@ struct StitchCanvasView: View {
         // nothing rather than everything under a 1x1 box at the pointer.
         guard rect.width > 2 || rect.height > 2 else { return }
         onSelectionChange(NSEvent.modifierFlags.contains(.shift) ? selectedObjectIDs.union(hits) : hits)
-    }
-
-    private func boxesIntersect(_ a: BoundingBox, _ b: BoundingBox) -> Bool {
-        a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
     }
 
     private func clampZoom(_ value: CGFloat) -> CGFloat { min(max(value, 1.0), 8.0) }

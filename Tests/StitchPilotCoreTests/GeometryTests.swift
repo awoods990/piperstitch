@@ -22,6 +22,37 @@ struct GeometryTests {
         #expect(box.center == Point2D(10, 20))
     }
 
+    @Test func boundingBoxContainsAFullyEnclosedBox() {
+        let outer = BoundingBox(minX: 0, minY: 0, maxX: 100, maxY: 100)
+        let inner = BoundingBox(minX: 10, minY: 10, maxX: 20, maxY: 20)
+        #expect(outer.contains(inner))
+        #expect(!inner.contains(outer))
+    }
+
+    /// A box that merely overlaps (rubber-band selection uses this
+    /// distinction directly: a shape the drag only grazes should not be
+    /// selected, only one it fully encloses).
+    @Test func boundingBoxDoesNotContainAMerelyOverlappingBox() {
+        let a = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 10)
+        let b = BoundingBox(minX: 5, minY: 5, maxX: 15, maxY: 15)
+        #expect(!a.contains(b))
+        #expect(!b.contains(a))
+    }
+
+    @Test func boundingBoxContainsItselfAndTouchingEdgesCount() {
+        let box = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 10)
+        #expect(box.contains(box))
+        // Exactly touching the outer box's own edge still counts as fully
+        // enclosed, not excluded for merely brushing the boundary.
+        let flushWithEdge = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 5)
+        #expect(box.contains(flushWithEdge))
+    }
+
+    @Test func emptyBoxIsNeverContained() {
+        let box = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 10)
+        #expect(!box.contains(.empty))
+    }
+
     @Test func subPathLengthOpenVsClosed() {
         let open = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 10)], closed: false)
         #expect(abs(open.length - 20) <= 0.0001)

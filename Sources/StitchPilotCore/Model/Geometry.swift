@@ -98,4 +98,14 @@ public struct BoundingBox: Codable, Hashable, Sendable {
         return BoundingBox(minX: min(minX, other.minX), minY: min(minY, other.minY),
                             maxX: max(maxX, other.maxX), maxY: max(maxY, other.maxY))
     }
+
+    /// True when `other` lies entirely within `self` -- every edge of
+    /// `other` at or inside every edge of `self`, not just overlapping it.
+    /// A canvas rubber-band selection uses this (rather than mere
+    /// intersection) so dragging a box around several objects only picks
+    /// up the ones fully inside it, not everything the box merely grazes.
+    public func contains(_ other: BoundingBox) -> Bool {
+        guard !other.isEmpty else { return false }
+        return other.minX >= minX && other.maxX <= maxX && other.minY >= minY && other.maxY <= maxY
+    }
 }
