@@ -133,8 +133,66 @@ public enum ImageImporter {
                 }
             }
         }
+        removeHolesCoveredByAnotherShape(&shapes, fillColors: fillColors)
+
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
         return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height)
+    }
+
+    /// A hole traced above reads, at the pixel level, identically whether
+    /// it's a genuine letterform counter (nothing else there -- the inside
+    /// of an "O") or a differently-colored shape overlaid on top of a
+    /// solid background (text sitting on a banner, a logo mark on a
+    /// solid field). Those two cases need opposite treatment: a real
+    /// counter must stay an actual gap in the stitching; an overlay should
+    /// leave the *underlying* shape solid, exactly like professional
+    /// digitizing practice -- sew the background solid, then sew the
+    /// overlay on top of it in its own thread, never leave an actual hole
+    /// in the fabric for text that's meant to simply be covered. Left
+    /// unhandled, the underlying shape's hole is a real gap that only
+    /// looks correct as long as the overlay covers it exactly -- edit,
+    /// resize, or delete the overlay (including replacing raster-traced
+    /// text with generated Lettering, a real workflow this engine now
+    /// supports) and the hole is left showing through as bare fabric,
+    /// found directly against a real banner-with-lettering design (see
+    /// CHANGELOG.md).
+    ///
+    /// Distinguished the same way the two cases are geometrically
+    /// different: a genuine counter has no other traced shape anywhere
+    /// near its own extent; an overlay's hole is, by construction, almost
+    /// exactly covered by the differently-colored shape traced from those
+    /// same source pixels. `boxesNearlyMatch` catches that without needing
+    /// exact polygon equality (simplification/regularization can shift a
+    /// few points between the hole and the overlay's own outer boundary).
+    private static func removeHolesCoveredByAnotherShape(_ shapes: inout [VectorShape], fillColors: [RGBColor?]) {
+        for i in shapes.indices {
+            guard shapes[i].subPaths.count > 1 else { continue }
+            let outer = shapes[i].subPaths[0]
+            let survivingHoles = shapes[i].subPaths.dropFirst().filter { hole in
+                let holeBox = hole.boundingBox
+                let isCoveredByAnotherShape = shapes.indices.contains { j in
+                    guard j != i, fillColors[j] != fillColors[i] else { return false }
+                    return boxesNearlyMatch(holeBox, shapes[j].boundingBox)
+                }
+                return !isCoveredByAnotherShape
+            }
+            shapes[i].subPaths = [outer] + survivingHoles
+        }
+    }
+
+    /// True when each box covers most of their mutual overlap -- "these
+    /// are essentially the same region," not just "these two shapes
+    /// happen to overlap somewhat." Both directions matter: checking only
+    /// one would let a hole that's merely a small corner of a much larger,
+    /// unrelated shape count as "covered."
+    private static func boxesNearlyMatch(_ a: BoundingBox, _ b: BoundingBox) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        let ix = max(0, min(a.maxX, b.maxX) - max(a.minX, b.minX))
+        let iy = max(0, min(a.maxY, b.maxY) - max(a.minY, b.minY))
+        let intersection = ix * iy
+        let aArea = a.width * a.height, bArea = b.width * b.height
+        guard aArea > 0, bArea > 0 else { return false }
+        return intersection / aArea > 0.7 && intersection / bArea > 0.7
     }
 
     /// Finds background-colored regions fully enclosed within

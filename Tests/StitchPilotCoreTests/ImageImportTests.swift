@@ -245,6 +245,73 @@ struct ImageImportTests {
                 "the ring's own center should be outside the shape (inside the hole), not solid fill")
     }
 
+    /// A shape (a genuine letterform counter, traced via `.clear` above)
+    /// reads at the pixel level *identically* to a differently-colored
+    /// shape simply overlaid on top of a solid background (text on a
+    /// banner, a logo mark on a solid field) -- both are "an enclosed
+    /// region of a different color within a larger shape." But they need
+    /// opposite treatment: a real counter must stay an actual gap in the
+    /// underlying shape's own stitching; an overlay's covered region
+    /// should leave the *underlying* shape solid, since the overlay will
+    /// stitch fully opaque over it in its own thread regardless --
+    /// professional digitizing practice sews the background solid and
+    /// layers text/logos on top, never leaves an actual hole in the
+    /// fabric for something meant to simply be covered. Left unhandled,
+    /// deleting or replacing the overlay (including using Detected Text
+    /// to swap raster-traced lettering for generated Lettering, a real
+    /// workflow) reveals a hole where the overlay used to sit -- found
+    /// directly against a real banner-with-lettering design (see
+    /// CHANGELOG.md).
+    @Test func overlaidDifferentlyColoredShapeLeavesTheUnderlyingShapeSolid() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 100
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        // The "banner": a big blue rectangle.
+        context.setFillColor(deviceColor(0.2, 0.4, 0.9, in: colorSpace))
+        context.fill(CGRect(x: 5, y: 5, width: 90, height: 90))
+        // The "lettering": a smaller navy rectangle painted on top, not
+        // cleared -- a genuinely different color occupying real pixels,
+        // exactly like text drawn over a banner.
+        context.setFillColor(deviceColor(0.02, 0.05, 0.3, in: colorSpace))
+        context.fill(CGRect(x: 30, y: 30, width: 40, height: 40))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!), maxColors: 8)
+        let banner = try #require(result.shapes.max(by: { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }))
+        #expect(banner.subPaths.count == 1, "the banner should be solid underneath the overlay, not have a hole cut where the overlay sits")
+
+        // Sanity: the overlay itself still imported as its own separate,
+        // real object -- this isn't passing merely because nothing was
+        // traced for it.
+        #expect(result.shapes.count == 2)
+    }
+
+    /// The counter-vs-overlay distinction above must not remove a genuine
+    /// hole just because *some* other shape in the image happens to share
+    /// a similar bounding box by coincidence -- only one that's the same
+    /// color-distinct region traced from literally the same pixels should
+    /// qualify. Two separate, small, unrelated shapes elsewhere in the
+    /// image (not overlapping the ring at all) must not cause the ring's
+    /// own genuine hole to be stripped.
+    @Test func unrelatedShapesElsewhereDoNotAffectAGenuineHole() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 100
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(13.0 / 255, 43.0 / 255, 86.0 / 255, in: colorSpace))
+        context.fillEllipse(in: CGRect(x: 5, y: 5, width: 60, height: 60))
+        context.setBlendMode(.clear)
+        context.fillEllipse(in: CGRect(x: 20, y: 20, width: 30, height: 30))
+        context.setBlendMode(.normal)
+        // An unrelated small shape well away from the ring.
+        context.setFillColor(deviceColor(0.9, 0.1, 0.1, in: colorSpace))
+        context.fill(CGRect(x: 75, y: 75, width: 15, height: 15))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!), maxColors: 8)
+        let ring = try #require(result.shapes.max(by: { $0.boundingBox.width < $1.boundingBox.width }))
+        #expect(ring.subPaths.count == 2, "an unrelated shape elsewhere must not strip a genuine hole")
+    }
+
     /// Three separate, distinctly-colored squares on a white background:
     /// the multi-color segmentation path (spec §8) should recover all three
     /// regions with their correct colors, not merge them into one region

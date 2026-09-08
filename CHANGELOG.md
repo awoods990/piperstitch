@@ -4,6 +4,42 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: raster-imported shapes had real holes cut wherever a different-colored shape was overlaid on top
+
+A shape with text or a logo mark overlaid on a solid background (a
+banner with lettering, a badge with an emblem) imported with a literal
+hole cut into the *background* shape everywhere the overlay sat -- not
+cosmetic, an actual gap in that shape's own fill stitching. At the pixel
+level this reads identically to a genuine letterform counter (the inside
+of an "O"): both are "an enclosed region of a different color within a
+larger shape," and the existing hole-tracing logic (correctly fixed
+earlier this session for real counters) couldn't tell them apart. The
+two need opposite treatment -- a real counter must stay open; an
+overlay's covered area should leave the underlying shape solid, since
+the overlay stitches fully opaque over it in its own thread regardless.
+Professional digitizing practice sews the background solid and layers
+text/logos on top; it never leaves an actual hole in the fabric for
+something meant to simply be covered.
+
+Found directly against a real banner-with-lettering design: deleting the
+(illegible, raster-traced) lettering revealed a hole where it had been,
+rather than the solid banner underneath a real digitizer would produce.
+This also affects the new Lettering/Detected Text workflow directly --
+replacing raster-traced text with generated lettering only adds the new
+letters, it was never responsible for patching a hole baked into a
+*different* object's geometry from the original import.
+
+`ImageImporter` now distinguishes the two cases the same way they're
+geometrically different: a genuine counter has no other traced shape
+anywhere near its own extent; an overlay's hole is, by construction,
+almost exactly covered by the differently-colored shape traced from
+those same source pixels (`boxesNearlyMatch`, a bounding-box overlap
+check in both directions, tolerant of small simplification differences
+between the hole and the overlay's own outer boundary). A hole that
+matches gets removed, leaving the underlying shape solid; an
+unmatched hole (or one merely near an unrelated shape elsewhere in the
+image) stays exactly as before.
+
 ## Added: Detected Text -- OCR-assisted suggestions to replace raster-traced text with Lettering (Phase 2)
 
 Phase 1 (Lettering, above) fixed text quality once the user retypes it.
