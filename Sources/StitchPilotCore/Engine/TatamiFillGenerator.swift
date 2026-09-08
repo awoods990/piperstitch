@@ -61,8 +61,7 @@ public enum TatamiFillGenerator {
 
         // Pull compensation (spec §17): grow the outer boundary outward
         // before scanning, so the fill sews at its intended size after
-        // fabric pulls it in. Holes are left as digitized for now (shrinking
-        // them to compensate too is a follow-up — see DIGITIZING_ENGINE.md).
+        // fabric pulls it in.
         let compensation = parameters.pullCompensationMM
             ?? PullCompensationCalculator.estimate(stitchType: .tatamiFill, densityMM: parameters.fillSpacingMM, objectWidthMM: box.height)
         // Skip compensation on a shape too small relative to it: growing a
@@ -73,6 +72,22 @@ public enum TatamiFillGenerator {
         // this generator from doing something clearly wrong in the meantime.
         if compensation > 0, box.height > compensation * 4, !rotatedPolygons.isEmpty {
             rotatedPolygons[0] = PolygonGeometry.offsetPolygon(rotatedPolygons[0], by: -compensation)
+            // Pull pulls fabric together at a hole's own edge too, the
+            // same way it does at the outer boundary -- the stitched fill
+            // right around a hole pulls away from the opening, which
+            // tends to sew the hole LARGER than digitized unless
+            // compensated. That's the opposite direction from the outer
+            // boundary's own compensation: grow the *stitched* area
+            // there, i.e. shrink the hole polygon itself (positive
+            // `offsetPolygon` offset), rather than leaving it as-digitized.
+            // Guarded the same way as the outer boundary, per-hole, so a
+            // hole too small relative to the compensation amount doesn't
+            // get offset into a collapsed/self-intersecting polygon.
+            for i in 1..<rotatedPolygons.count {
+                let holeBox = BoundingBox(points: rotatedPolygons[i])
+                guard holeBox.height > compensation * 4, holeBox.width > compensation * 4 else { continue }
+                rotatedPolygons[i] = PolygonGeometry.offsetPolygon(rotatedPolygons[i], by: compensation)
+            }
             box = BoundingBox.empty
             for poly in rotatedPolygons { box = box.union(BoundingBox(points: poly)) }
         }

@@ -39,14 +39,11 @@ public enum SatinGenerationError: Error, LocalizedError {
 /// centerline/skeleton-based detection for arbitrary geometry is a
 /// follow-up (see DIGITIZING_ENGINE.md).
 ///
-/// Known limitation: both rails share a single point at each end cap, so
-/// width always tapers to exactly 0 at the very tip. That's correct for a
-/// genuinely pointed end (a star point, a leaf tip) but is an approximation
-/// for a flat/square-capped column (e.g. a plain rectangle) — real
-/// digitizing software typically sews a full-width closing stitch straight
-/// across a square end instead of tapering into it. Distinguishing "this
-/// end cap is a point" from "this end cap is a flat edge that needs a
-/// squared crossing" is a follow-up refinement.
+/// An end cap either tapers to a single shared point (a genuinely pointed
+/// end -- a star point, a leaf tip) or squares off across the full width
+/// at once (a flat end -- a plain rectangle, most letter strokes' actual
+/// top/bottom), decided per end from the end-cap edge's own length (see
+/// `squareCapMinEdgeLengthMM`) rather than always tapering.
 public enum SatinColumnGenerator {
     /// Splits a shape's outer boundary into two rails — see the type-level
     /// doc comment for the PCA + edge-based end-cap algorithm. Exposed
@@ -85,13 +82,51 @@ public enum SatinColumnGenerator {
         }
 
         let n = polygon.count
-        let startMid = midpoint(polygon[startEdge], polygon[(startEdge + 1) % n])
-        let endMid = midpoint(polygon[endEdge], polygon[(endEdge + 1) % n])
-
         let railACore = walkForward(polygon, from: (startEdge + 1) % n, to: endEdge)
         let railBCore = Array(walkForward(polygon, from: (endEdge + 1) % n, to: startEdge).reversed())
-        return ([startMid] + railACore + [endMid], [startMid] + railBCore + [endMid])
+
+        // `railACore`/`railBCore` already start and end at the end-cap
+        // edges' own two corner vertices -- for a genuinely FLAT end (the
+        // edge itself is a real, meaningful length, not a near-coincident
+        // point), those two corners ARE the squared crossing: railACore's
+        // end starts at one corner, railBCore's at the other, giving full
+        // column width right at the tip instead of tapering into it. Only
+        // a genuinely POINTED end (the edge's two corners are essentially
+        // the same point, as a flattened bezier's true tip is) needs the
+        // shared midpoint prepended/appended to taper to zero width.
+        let startEdgeLengthMM = polygon[startEdge].distance(to: polygon[(startEdge + 1) % n])
+        let endEdgeLengthMM = polygon[endEdge].distance(to: polygon[(endEdge + 1) % n])
+        let startIsSquare = startEdgeLengthMM >= squareCapMinEdgeLengthMM
+        let endIsSquare = endEdgeLengthMM >= squareCapMinEdgeLengthMM
+
+        let startMid = startIsSquare ? nil : midpoint(polygon[startEdge], polygon[(startEdge + 1) % n])
+        let endMid = endIsSquare ? nil : midpoint(polygon[endEdge], polygon[(endEdge + 1) % n])
+
+        let railA = [startMid].compactMap { $0 } + railACore + [endMid].compactMap { $0 }
+        let railB = [startMid].compactMap { $0 } + railBCore + [endMid].compactMap { $0 }
+        return (railA, railB)
     }
+
+    /// Below this end-cap edge length, an end is treated as a genuine
+    /// point (tapered) rather than squared -- a flattened bezier's true
+    /// tip has its two "corner" vertices essentially coincident (a
+    /// fraction of a mm apart at most), while a real flat end (a plain
+    /// rectangle's short side, most letter strokes' top/bottom) has an
+    /// edge length that's a meaningful fraction of the column's own
+    /// width, generally at least a few tenths of a mm even for a fine
+    /// stroke.
+    private static let squareCapMinEdgeLengthMM = 0.5
+
+    /// How strongly `computeCrossings` packs extra crossings into a tight
+    /// curve -- see `PolygonGeometry.curvatureWeightedSegmentLengths`'s doc
+    /// comment for the exact formula. At a curve whose radius equals the
+    /// column's own crossing spacing (`satinDensityMM`), this roughly
+    /// triples the local crossing density; a gentle curve (radius large
+    /// relative to crossing spacing) is barely affected. Chosen as a
+    /// moderate default -- strong enough to visibly fix a small round
+    /// letter's faceted outer edge, not so strong that an ordinary curve
+    /// balloons in stitch count for no visible benefit.
+    private static let curvatureDensityWeight = 3.0
 
     /// How many angles `computeRingRails` samples around the full circle --
     /// dense enough to faithfully represent a typical letterform counter's
@@ -228,15 +263,58 @@ public enum SatinColumnGenerator {
 
     /// The crossing-index range excluded from natural end-cap tapering —
     /// both `generate`'s strict narrow check and `generatePartial`'s
-    /// narrow-run detection only look here, since every column's width
-    /// tapers toward zero at its very tips by construction (both rails
-    /// share a single point at each end cap), which would otherwise make
-    /// every column look "too narrow" right where it's supposed to. Mirrors
-    /// the margin used by `SatinColumnGeneratorTests` to exclude the same
-    /// zone when checking width against an expected value.
+    /// narrow-run detection only look here, since a genuinely POINTED
+    /// column's width tapers toward zero at its very tips by construction
+    /// (both rails share a single point at that end cap), which would
+    /// otherwise make every such column look "too narrow" right where it's
+    /// supposed to. A SQUARED end cap (see `squareCapMinEdgeLengthMM`)
+    /// doesn't actually taper, so excluding this same margin there is
+    /// simply a slightly wider safety margin than strictly needed, not
+    /// incorrect -- not worth branching the two cases apart just for that.
+    /// Mirrors the margin used by `SatinColumnGeneratorTests` to exclude
+    /// the same zone when checking width against an expected value.
     private static func interiorRange(count: Int) -> Range<Int> {
         let margin = min(count / 2, max(2, count / 10))
         return margin..<(count - margin)
+    }
+
+    /// True when any two ADJACENT crossings, within the column's interior
+    /// (see `interiorRange`, which excludes natural end-cap tapering near
+    /// the tips), geometrically cross each other as line segments -- the
+    /// direct, literal version of the visible defect this guards against
+    /// (a satin column whose zigzag crosses over itself, rendering as a
+    /// tangled mess rather than a smooth column). This can happen even
+    /// when the crossing *direction* only changes moderately from one to
+    /// the next (checking for an outright >90° reversal missed real
+    /// cases, e.g. a real "H" glyph, where the two rails don't visibly
+    /// reverse but still pinch through each other) -- an actual segment
+    /// intersection test catches it regardless of how gradually or
+    /// sharply the crossing rotates.
+    private static func isTwisted(_ resampledA: [Point2D], _ resampledB: [Point2D]) -> Bool {
+        let count = resampledA.count
+        guard count > 2 else { return false }
+        let interior = interiorRange(count: count)
+        guard interior.count > 1 else { return false }
+
+        for i in interior where i + 1 < count {
+            if segmentsIntersect(resampledA[i], resampledB[i], resampledA[i + 1], resampledB[i + 1]) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Standard strict segment/segment intersection test via orientation
+    /// signs (cross products) -- true only for a genuine crossing, not
+    /// segments that merely touch at a shared endpoint or run collinear.
+    private static func segmentsIntersect(_ p1: Point2D, _ p2: Point2D, _ p3: Point2D, _ p4: Point2D) -> Bool {
+        func cross(_ o: Point2D, _ a: Point2D, _ b: Point2D) -> Double {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        let d1 = cross(p3, p4, p1), d2 = cross(p3, p4, p2)
+        let d3 = cross(p1, p2, p3), d4 = cross(p1, p2, p4)
+        return ((d1 > 0) != (d2 > 0)) && (d1 != 0) && (d2 != 0)
+            && ((d3 > 0) != (d4 > 0)) && (d3 != 0) && (d4 != 0)
     }
 
     /// Resampled, compensated rail crossings shared by `generate` and
@@ -254,11 +332,41 @@ public enum SatinColumnGenerator {
         let isClosedRing = railA.count > 1 && railA.first == railA.last
 
         let density = max(parameters.satinDensityMM, 0.1)
+        // `approxLength` (the real, unweighted path length) still drives
+        // push compensation below -- that's a physical-length quantity,
+        // not something that should shift with how curvy the column
+        // happens to be.
         let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
-        let crossingCount = max(2, Int((approxLength / density).rounded()))
+        // The crossing *count*, though, is sized from a curvature-weighted
+        // length: a tight curve (e.g. a small "O"'s round stroke) needs
+        // denser crossings than a straight run at the same
+        // `satinDensityMM` to avoid a faceted, gap-toothed outer edge.
+        // Weighting the length this way grows the crossing budget to
+        // cover that, rather than just redistributing the same fixed
+        // count across the column -- which would starve straight sections
+        // of their own chosen density to pay for the curve.
+        let weightedLength = max(
+            PolygonGeometry.weightedPathLength(railA, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight),
+            PolygonGeometry.weightedPathLength(railB, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        )
+        let crossingCount = max(2, Int((weightedLength / density).rounded()))
 
-        let resampledA = PolygonGeometry.resampleByCount(railA, count: crossingCount)
-        let resampledB = PolygonGeometry.resampleByCount(railB, count: crossingCount)
+        let resampledA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        let resampledB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+
+        // The single-global-axis end-cap algorithm above (see this type's
+        // own doc comment) is built for a single "sausage" -- a shape that
+        // genuinely branches (e.g. "H"'s two separate stems joined by a
+        // crossbar, which has no single pair of end-cap edges that
+        // correspond to two sensible parallel rails) can make it walk the
+        // boundary in an order that doesn't correspond to a real column at
+        // all, producing rails whose crossings visibly cross and re-cross
+        // each other rather than sweeping smoothly along the shape. Ring
+        // columns are exempt -- their rails come from angular ray-casting
+        // (`computeRingRails`), which can't twist this way by construction.
+        if !isClosedRing, isTwisted(resampledA, resampledB) {
+            throw SatinGenerationError.shapeNotSuitable("this outline branches into more than one column and can't be represented as a single satin column")
+        }
 
         var lo = 0, hi = crossingCount
         // Push compensation: fabric pushes apart *along* the stitching

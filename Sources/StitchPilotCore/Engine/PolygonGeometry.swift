@@ -121,6 +121,81 @@ public enum PolygonGeometry {
         return result
     }
 
+    /// Per-segment lengths of `points`, each scaled up by a curvature
+    /// weight based on the turning angle at that segment's trailing
+    /// vertex -- shared by `weightedPathLength` and
+    /// `resampleByCountCurvatureWeighted`. `curvature ≈ turn / segLength`
+    /// (radians per mm) is the standard discretized-curve approximation of
+    /// true geometric curvature, and stays roughly independent of how
+    /// finely the polyline happens to be flattened (both `turn` and
+    /// `segLength` shrink together as flattening gets finer, keeping their
+    /// ratio stable). `referenceLengthMM` turns that into a dimensionless
+    /// "how tight is this curve relative to how far apart samples
+    /// normally are" factor -- in practice, a satin column's own crossing
+    /// spacing.
+    private static func curvatureWeightedSegmentLengths(_ points: [Point2D], referenceLengthMM: Double, curvatureWeight: Double) -> [Double] {
+        guard points.count > 1 else { return [] }
+        var lengths: [Double] = []
+        for i in 0..<(points.count - 1) {
+            let segLength = points[i].distance(to: points[i + 1])
+            var weight = 1.0
+            if segLength > 1e-6, i + 2 < points.count, referenceLengthMM > 0 {
+                let d1x = points[i + 1].x - points[i].x, d1y = points[i + 1].y - points[i].y
+                let d2x = points[i + 2].x - points[i + 1].x, d2y = points[i + 2].y - points[i + 1].y
+                let len1 = (d1x * d1x + d1y * d1y).squareRoot(), len2 = (d2x * d2x + d2y * d2y).squareRoot()
+                if len1 > 1e-9, len2 > 1e-9 {
+                    let cosAngle = max(-1, min(1, (d1x * d2x + d1y * d2y) / (len1 * len2)))
+                    let turn = acos(cosAngle)
+                    let curvature = turn / segLength
+                    weight = 1 + curvatureWeight * curvature * referenceLengthMM
+                }
+            }
+            lengths.append(segLength * weight)
+        }
+        return lengths
+    }
+
+    /// The curvature-weighted total length `resampleByCountCurvatureWeighted`
+    /// would resample over -- used to size the crossing *count* itself (not
+    /// just redistribute a fixed count) so a design with a tight curve gets
+    /// genuinely denser coverage there instead of stealing density from its
+    /// straight sections to pay for it.
+    public static func weightedPathLength(_ points: [Point2D], referenceLengthMM: Double, curvatureWeight: Double) -> Double {
+        curvatureWeightedSegmentLengths(points, referenceLengthMM: referenceLengthMM, curvatureWeight: curvatureWeight).reduce(0, +)
+    }
+
+    /// Like `resampleByCount`, but weights denser sampling toward regions
+    /// of higher local curvature (a sharper turning angle between
+    /// consecutive segments) rather than pure even arc length -- a satin
+    /// column's crossings need to pack tighter on a tight curve (e.g. a
+    /// small "O"'s round stroke) to avoid a faceted, gap-toothed look on
+    /// the outside of the curve; pure arc-length spacing treats a tight
+    /// curve exactly like a straight run. Falls back to `resampleByCount`
+    /// for a too-short polyline (curvature needs at least 3 points to
+    /// measure a turning angle at all).
+    public static func resampleByCountCurvatureWeighted(_ points: [Point2D], count: Int, referenceLengthMM: Double, curvatureWeight: Double) -> [Point2D] {
+        guard points.count > 2, count > 0 else { return resampleByCount(points, count: count) }
+        let weightedLengths = curvatureWeightedSegmentLengths(points, referenceLengthMM: referenceLengthMM, curvatureWeight: curvatureWeight)
+        let weightedTotal = weightedLengths.reduce(0, +)
+        guard weightedTotal > 0 else { return Array(repeating: points[0], count: count + 1) }
+
+        var result: [Point2D] = []
+        var segIndex = 0
+        var weightedCoveredBeforeSeg = 0.0
+        for step in 0...count {
+            let targetWeighted = weightedTotal * Double(step) / Double(count)
+            while weightedCoveredBeforeSeg + weightedLengths[segIndex] < targetWeighted, segIndex < weightedLengths.count - 1 {
+                weightedCoveredBeforeSeg += weightedLengths[segIndex]
+                segIndex += 1
+            }
+            let segWeighted = weightedLengths[segIndex]
+            let t = segWeighted > 0 ? min(1, max(0, (targetWeighted - weightedCoveredBeforeSeg) / segWeighted)) : 0
+            let a = points[segIndex], b = points[segIndex + 1]
+            result.append(Point2D(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t))
+        }
+        return result
+    }
+
     /// Naive per-vertex polygon offset: moves each vertex along the average
     /// of its two adjacent edges' inward normals, scaled by `offsetMM`.
     /// Positive shrinks the polygon (used by underlay's edge-run inset),

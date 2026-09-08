@@ -105,6 +105,35 @@ struct TatamiFillGeneratorTests {
         #expect(!solidPointsInHoleRegion.isEmpty)
     }
 
+    /// Pull compensation grows the outer boundary outward
+    /// (`pullCompensationGrowsFillOutward`) -- a hole needs the OPPOSITE
+    /// treatment: the stitched fill right around a hole pulls fabric away
+    /// from the opening the same way it pulls the outer edge inward, which
+    /// tends to sew a hole LARGER than digitized unless the hole itself is
+    /// shrunk to compensate. Confirms fill now reaches into a strip just
+    /// inside the hole's ORIGINAL boundary (forbidden territory per
+    /// `holeIsRespected` when compensation is off), while the shrunk
+    /// hole's own remaining interior is still empty.
+    @Test func pullCompensationShrinksTheHoleToo() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(30, 0), Point2D(30, 30), Point2D(0, 30)], closed: true)
+        let hole = SubPath(points: [Point2D(10, 10), Point2D(20, 10), Point2D(20, 20), Point2D(10, 20)], closed: true)
+        let shapeWithHole = VectorShape(subPaths: [outer, hole])
+
+        var compensated = squareParams(spacing: 0.5)
+        compensated.pullCompensationMM = 0.8
+
+        let points = TatamiFillGenerator.generate(for: shapeWithHole, parameters: compensated)
+        #expect(!points.isEmpty)
+
+        let margin = 0.3
+        let pointsNearOriginalHoleEdge = points.filter { $0.x > 10 + margin && $0.x < 10.7 && $0.y > 14 && $0.y < 16 }
+        #expect(!pointsNearOriginalHoleEdge.isEmpty,
+                "compensated fill should reach past the hole's original left edge, into where the (now-shrunk) hole no longer covers")
+
+        let pointsDeepInsideHole = points.filter { $0.x > 13 && $0.x < 17 && $0.y > 13 && $0.y < 17 }
+        #expect(pointsDeepInsideHole.isEmpty, "the hole's own (shrunk) interior should still have no fill stitches")
+    }
+
     /// `holeIsRespected` above only checks that no fill *point* lands
     /// inside the hole -- it doesn't check the *segments between*
     /// consecutive points, so it couldn't catch a real bug: every row that

@@ -4,6 +4,85 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: three more industry-standard digitizing techniques (curvature-adaptive satin density, squared end caps, fill compensation on holes)
+
+Following up on a gap analysis against documented commercial digitizing
+practice:
+
+**Curvature-adaptive satin density** -- a satin column's crossings used to
+space evenly by real arc length regardless of how tight a curve was, the
+same as a straight run. A tight curve (a small round letter's own stroke,
+e.g. "O" or "S") needs denser crossings on a curve to avoid a faceted,
+gap-toothed outer edge -- standard practice for auto-digitizing software.
+`PolygonGeometry` gained `resampleByCountCurvatureWeighted`/
+`weightedPathLength`, which weight a rail's length by local curvature
+(turning angle per unit length, independent of how finely the source
+outline happens to be flattened) before resampling; `SatinColumnGenerator`
+now sizes AND places crossings from this weighted length instead of the
+raw one, so a curved section gets genuinely denser coverage rather than
+stealing density from the column's straight sections to pay for it.
+
+**Squared satin end caps** -- every satin column tapered to a single
+shared point at both ends, correct for a genuinely pointed tip (a star
+point) but wrong for a flat end (a plain rectangle, most letter strokes'
+actual top/bottom), which real digitizing software sews as a full-width
+closing stitch instead. `computeRails` now decides per end, from that end
+cap edge's own length, whether to taper (a near-coincident edge, the way a
+flattened bezier's true point looks) or square off at full width
+immediately (a real, meaningful edge length) -- independently per end, so
+a shape with one pointed tip and one flat end (a teardrop, a flag shape)
+gets both treated correctly.
+
+**Fill pull compensation on holes** -- pull compensation grew a tatami
+fill's outer boundary outward to counteract fabric pulling it in, but left
+every hole boundary untouched. The stitched fill right around a hole pulls
+fabric away from the opening the same way it pulls the outer edge inward,
+which tends to sew a hole larger than digitized unless compensated in the
+opposite direction. `TatamiFillGenerator` now shrinks each hole boundary
+by the same compensation amount (guarded per-hole against a hole too small
+relative to the compensation to offset safely, mirroring the existing
+guard on the outer boundary), so a hole ends up its intended size instead
+of enlarged.
+
+Still not integrated from that same gap analysis (unchanged, tracked for a
+future pass): needle-penetration/density limits where object outlines
+overlap, zigzag/contour underlay for large tatami-fill areas (currently
+edge-run only), automatic fill-angle variation across a large region,
+motif/pattern or E-stitch fills, an applique workflow, and fabric-type-
+aware density/compensation defaults.
+
+## Fixed: a genuinely branching letter (H and similar) rendered as a self-crossing tangle instead of falling back cleanly
+
+Found by directly rendering real font glyphs (the new `--lettering-preview`
+diagnostic) rather than only synthetic test shapes: a letter whose outline
+truly branches -- "H"'s two parallel stems joined by a crossbar, which has
+no single pair of end-cap edges that correspond to two sensible parallel
+rails -- made `SatinColumnGenerator`'s single-global-axis rail algorithm
+walk the boundary in an order that crossed itself repeatedly. The previous
+per-glyph classifier (before the whole-run-consistency change) happened to
+route this case away from satin via its own width-uniformity check; the
+run-consistency change removed that per-glyph check in favor of one
+decision for the whole run, which meant a genuinely branching letter now
+attempted satin regardless and rendered as visible garbage -- worse than
+the inconsistency that fix was solving.
+
+`SatinColumnGenerator` now detects this directly and structurally: after
+computing a column's crossings, it checks whether any two adjacent
+crossings geometrically intersect as line segments (excluding the natural
+end-cap tapering margin) -- the literal, direct version of the visible
+defect, more reliable than an indirect proxy like width uniformity or
+direction-reversal (both tried first and missed real cases). A shape that
+fails this check throws the same `shapeNotSuitable` error already used for
+other geometrically-unsuitable satin shapes, so it falls back through the
+existing, already-tested running-stitch path -- a clean, thin, but
+correctly-shaped outline instead of a tangle. In practice this affects
+several common capital letters whose structure genuinely branches (found:
+H, E, F, K, M, N, W, X, Y at typical letter sizes in Helvetica Bold) --
+they now render as a light outline rather than matching their neighbors'
+satin boldness, an honest trade against literally broken-looking output.
+The real fix (splitting a branching glyph into multiple locally-correct
+satin segments) remains a larger, separate undertaking.
+
 ## Added: satin can now sew a genuine ring around a single hole -- O, P, R, A, D, Q no longer forced to fill
 
 Previously ANY shape with a hole was structurally impossible to satin --

@@ -25,6 +25,38 @@ struct SatinColumnGeneratorTests {
         #expect(plan.stitchCount > 0, "should fall back to a real (running-stitch) result, not silently produce nothing")
     }
 
+    /// A synthetic "H" -- two parallel vertical stems joined by a
+    /// crossbar -- the shape whose real font glyph exposed this exact
+    /// failure via visual testing against Helvetica-Bold (see
+    /// CHANGELOG.md). A shape that genuinely branches has no single pair
+    /// of end-cap edges that correspond to two sensible parallel rails
+    /// (H's "top" and "bottom" are each split into two disconnected
+    /// edges, one per stem), so the single-global-axis rail algorithm
+    /// walks the boundary in an order that crosses itself repeatedly
+    /// instead of tracing a real column. Must be detected and rejected
+    /// (`shapeNotSuitable`) rather than silently returning self-crossing
+    /// rails that render as visible garbage.
+    @Test func branchingHShapeIsRejectedRatherThanProducingTwistedRails() throws {
+        let hShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(3, 0), Point2D(3, 8.5), Point2D(12, 8.5), Point2D(12, 0),
+            Point2D(15, 0), Point2D(15, 20), Point2D(12, 20), Point2D(12, 11.5), Point2D(3, 11.5),
+            Point2D(3, 20), Point2D(0, 20),
+        ], closed: true)])
+
+        #expect(throws: SatinGenerationError.self) {
+            _ = try SatinColumnGenerator.generatePartial(for: hShape, parameters: params())
+        }
+
+        // The pipeline must still produce real output for this object --
+        // falling back to a running-stitch outline (the same fallback any
+        // other geometrically-unsuitable satin shape already gets), not
+        // aborting the whole document's digitize.
+        let object = EmbroideryObject(name: "H", shape: hShape, stitchType: .satin,
+                                       threadColor: .generic(RGBColor(hex: 0x000000)), parameters: params())
+        let doc = StitchDocument(name: "BranchingH", physicalWidthMM: 15, physicalHeightMM: 20, objects: [object])
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 0)
+    }
 
     /// Pull and push compensation default to off here so these tests check
     /// pure satin geometry against exact bounds; `pullCompensationWidensColumn`
@@ -85,23 +117,38 @@ struct SatinColumnGeneratorTests {
         #expect(stitches.count > 100, "30mm / 0.4mm density should produce ~75 crossings = 150 stitches")
         #expect(stitches.count % 2 == 0, "satin alternates rail A / rail B, so the count must be even")
 
-        // Crossings in the middle of the column should be close to width
-        // 4mm (the rectangle's short side). Crossings very near either end
-        // are excluded deliberately: both rails share a single endpoint at
-        // each detected end-cap edge (see SatinColumnGenerator's doc
-        // comment), which tapers width to exactly 0 at the very tip --
-        // correct for a pointed end (a star tip), but a known, documented
-        // approximation for a flat/square-capped end like this rectangle's.
-        let crossingCount = stitches.count / 2
-        let margin = max(2, crossingCount / 10)
-        for i in stride(from: margin * 2, to: stitches.count - margin * 2, by: 2) {
+        // A plain rectangle's short sides are genuinely FLAT end caps, not
+        // points -- every crossing should read close to the rectangle's
+        // own 4mm width, including right at the very first/last crossing
+        // (a squared end caps at full width immediately, unlike a
+        // genuinely pointed end which tapers to 0 -- see
+        // `squareCapMinEdgeLengthMM`'s doc comment).
+        for i in stride(from: 0, to: stitches.count, by: 2) {
             let width = stitches[i].distance(to: stitches[i + 1])
-            #expect(abs(width - 4.0) <= 0.5)
+            #expect(abs(width - 4.0) <= 0.5, "crossing \(i / 2) width \(width) should stay close to 4mm across the whole column, including its squared ends")
         }
 
         let box = BoundingBox(points: stitches)
         #expect(box.minX >= -0.1 && box.maxX <= 30.1)
         #expect(box.minY >= -0.1 && box.maxY <= 4.1)
+    }
+
+    /// A shape with ONE genuinely pointed end and one genuinely flat end --
+    /// a thin triangle-like sliver, point at x=0 (its two "corner" points
+    /// nearly coincident, the way a flattened bezier's true tip would be)
+    /// and a flat 3mm base at x=20. Confirms `squareCapMinEdgeLengthMM`
+    /// correctly tells the two ends apart *independently*, not just always
+    /// squaring (or always tapering) every column.
+    @Test func onePointedEndAndOneFlatEndAreHandledIndependently() throws {
+        let points: [Point2D] = [Point2D(0, 0), Point2D(0, 0.05), Point2D(20, 3), Point2D(20, 0)]
+        let sliver = VectorShape(subPaths: [SubPath(points: points, closed: true)])
+
+        let stitches = try SatinColumnGenerator.generatePartial(for: sliver, parameters: params(density: 0.5))
+        #expect(stitches.count > 4)
+        let firstWidth = stitches[0].distance(to: stitches[1])
+        let lastWidth = stitches[stitches.count - 2].distance(to: stitches[stitches.count - 1])
+        #expect(firstWidth < 0.3, "the pointed tip (x=0) should still taper to near-zero width, not square off")
+        #expect(abs(lastWidth - 3.0) <= 0.3, "the flat base (x=20) should square off at ~3mm width, not taper to a point")
     }
 
     @Test func columnTooWideThrows() throws {
