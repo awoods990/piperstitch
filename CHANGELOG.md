@@ -4,6 +4,24 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: hidden-travel bridging left visible diagonal scratches across textured fills
+
+`HiddenTravelRouter`'s "bury a same-color travel gap as running stitch
+instead of trimming" optimization only checked that the straight-line
+path landed *geometrically inside* the next object's own polygon --
+enough for satin (crossings run 0.3-0.5mm apart, dense enough to read as
+solid regardless of crossing angle) but not for tatami fill's "Rows"
+texture (or Cross-Hatch/Basket Weave, built the same way), which has
+real, intentional negative space between rows. A bridge stitch cutting
+diagonally across that texture, rather than running along one row,
+landed in the gaps and stayed visibly exposed -- reproduced directly
+against real lettering (`--lettering-preview "INCHANNEL" Helvetica-Bold`),
+where a same-color bridge between non-adjacent letters cut a visible
+diagonal scratch across several letters in between. Bridging now only
+fires when the next object is `.satin`; every other stitch type falls
+back to a plain trim-and-restart, which is what a real embroidery
+machine should be doing there anyway.
+
 ## Changed: a round of interface changes -- layout, a two-row toolbar, and a digitizing-terms glossary
 
 - A fresh window now opens at 80% of the current display (`NSScreen.main`'s

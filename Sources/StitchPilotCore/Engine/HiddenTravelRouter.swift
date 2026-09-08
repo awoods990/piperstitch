@@ -9,13 +9,16 @@ import Foundation
 /// This implements the single case that's provably safe without reasoning
 /// about the whole document: a same-color pair `(A, B)` adjacent in sewing
 /// order, where the straight path from A's exit point to B's entry point
-/// lies entirely inside B's *own* shape. Since B is sewn immediately
-/// afterward, its own stitching (fill scanlines, satin crossings) is
-/// guaranteed to cover that exact area moments later — no assumption about
-/// any other, later object is needed. The general case (any later object,
-/// not just the immediate next one, potentially even a different color if
-/// it's opaque enough) is real, unscoped design work — see
-/// `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements."
+/// lies entirely inside B's *own* shape, AND `B` is genuinely opaque along
+/// that path -- see `nextObjectCanHideATravelPath`'s own doc comment for
+/// why "inside the polygon" alone isn't actually enough. Since B is sewn
+/// immediately afterward, its own stitching (satin crossings, dense
+/// enough to read as solid) is guaranteed to cover that exact area
+/// moments later — no assumption about any other, later object is needed.
+/// The general case (any later object, not just the immediate next one,
+/// potentially even a different color if it's opaque enough) is real,
+/// unscoped design work — see `EMBROIDERY_ALGORITHM_REFERENCE.md`'s
+/// "recommended next improvements."
 ///
 /// Only worth doing when the plain alternative would have cost a trim: a
 /// same-color jump under `maxJumpWithoutTrimMM` already gets sewn as an
@@ -47,7 +50,8 @@ public enum HiddenTravelRouter {
             let next = result[i]
             guard previous.object.threadColor.rgb == next.object.threadColor.rgb,
                   let exit = previous.runs.last?.last, let entry = next.runs.first?.first,
-                  exit.distance(to: entry) > thresholdMM else { continue }
+                  exit.distance(to: entry) > thresholdMM,
+                  nextObjectCanHideATravelPath(next.object) else { continue }
 
             guard pathIsCoveredByShape(from: exit, to: entry, shape: next.object.shape) else { continue }
 
@@ -67,6 +71,26 @@ public enum HiddenTravelRouter {
             result[i].runs[0] = bridgePoints + next.runs[0]
         }
         return result
+    }
+
+    /// "The path lands geometrically inside the next object's polygon" is
+    /// necessary but NOT sufficient for a buried travel stitch to actually
+    /// stay hidden -- it also needs the covering object's own stitching to
+    /// be dense enough, along that exact path, to visually swallow it.
+    /// Satin qualifies: crossings typically run 0.3-0.5mm apart, tight
+    /// enough to read as one continuous solid column regardless of which
+    /// direction a buried stitch happens to cross it. Tatami fill (and
+    /// Cross-Hatch/Basket Weave, both built from the same row generation)
+    /// does NOT: "Rows" texture is only rows in the first place because
+    /// there's real, intentional negative space between them -- a bridge
+    /// stitch cutting diagonally across that texture, rather than running
+    /// along one row, lands in the gaps and stays visibly exposed. Found
+    /// directly against real lettering (an all-tatami-fill word, "N" and
+    /// "H"'s own row spacing wide enough that a same-color bridge between
+    /// two non-adjacent letters cut a visible diagonal scratch across
+    /// several letters in between) -- see CHANGELOG.md.
+    private static func nextObjectCanHideATravelPath(_ object: EmbroideryObject) -> Bool {
+        object.stitchType == .satin
     }
 
     private static func pathIsCoveredByShape(from a: Point2D, to b: Point2D, shape: VectorShape) -> Bool {
