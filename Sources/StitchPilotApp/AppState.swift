@@ -27,6 +27,13 @@ final class AppState: ObservableObject {
     @Published var physicalHeightMM: Double = 100
     @Published var lockAspectRatio: Bool = true
     private var sourceAspectRatio: Double = 1
+    /// Text `TextDetector` found in the most recent raster import, still
+    /// unresolved -- each entry disappears once the user replaces it with
+    /// generated Lettering (`replaceDetectedText`) or the sheet reviewing
+    /// them is dismissed without acting on it. Empty for an SVG import
+    /// (already vector, nothing to detect) or when detection finds
+    /// nothing above its confidence floor.
+    @Published var detectedTextRegions: [DetectedTextRegion] = []
 
     /// Only affects raster import (spec §8) — vector artwork already has
     /// discrete fill colors, nothing to quantize. Changing this re-imports
@@ -362,6 +369,92 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Converts a `TextDetector`-found region's pixel-space bounding box
+    /// into the same mm-space every current object already lives in --
+    /// the identical scale-and-center math `VectorShape.fitToPhysicalSize`
+    /// applies to the original raw import, so a detected region's box
+    /// lines up with whichever traced objects actually occupy that same
+    /// area of the design. `nil` when there's no raw-import geometry to
+    /// map against (a loaded project, or lettering-only document).
+    private func mmBoundingBox(forPixelBox pixelBox: BoundingBox) -> BoundingBox? {
+        guard !lastCombinedBounds.isEmpty, lastCombinedBounds.width > 0, lastCombinedBounds.height > 0 else { return nil }
+        let scale = min(physicalWidthMM / lastCombinedBounds.width, physicalHeightMM / lastCombinedBounds.height)
+        let offsetX = -lastCombinedBounds.minX * scale + (physicalWidthMM - lastCombinedBounds.width * scale) / 2
+        let offsetY = -lastCombinedBounds.minY * scale + (physicalHeightMM - lastCombinedBounds.height * scale) / 2
+        return BoundingBox(minX: pixelBox.minX * scale + offsetX, minY: pixelBox.minY * scale + offsetY,
+                            maxX: pixelBox.maxX * scale + offsetX, maxY: pixelBox.maxY * scale + offsetY)
+    }
+
+    /// A reasonable starting letter height (in mm) for a detected text
+    /// region -- its own pixel height mapped through the same scale
+    /// `mmBoundingBox` uses. Approximate (a region's box typically spans
+    /// ascenders/descenders, not just cap height), meant as a starting
+    /// point in the review UI, not a precise measurement.
+    func suggestedLetterHeightMM(for region: DetectedTextRegion) -> Double {
+        guard lastCombinedBounds.width > 0, lastCombinedBounds.height > 0 else { return 10 }
+        let scale = min(physicalWidthMM / lastCombinedBounds.width, physicalHeightMM / lastCombinedBounds.height)
+        return max(2, region.boundingBoxPixels.height * scale)
+    }
+
+    /// Replaces whichever existing objects occupy a detected text
+    /// region's own area with real generated lettering (`LetteringGenerator`)
+    /// positioned to match that same spot -- the actual fix for text
+    /// raster tracing left illegible, applied directly to the region it
+    /// came from rather than requiring the user to delete the old
+    /// fragments and re-add lettering by hand.
+    func replaceDetectedText(_ region: DetectedTextRegion, spec: LetteringSpec, threadColor: ThreadColor) {
+        guard let current = document else { return }
+        do {
+            let shapes = try LetteringGenerator.generateShapes(spec: spec)
+            commitImmediateUndoSnapshot()
+
+            var combined = BoundingBox.empty
+            for shape in shapes { combined = combined.union(shape.boundingBox) }
+
+            let mmBox = mmBoundingBox(forPixelBox: region.boundingBoxPixels)
+            let targetCenter = mmBox?.center ?? Point2D(physicalWidthMM / 2, physicalHeightMM / 2)
+            let offsetX = targetCenter.x - (combined.minX + combined.width / 2)
+            let offsetY = targetCenter.y - (combined.minY + combined.height / 2)
+
+            let newObjects = shapes.enumerated().map { i, shape -> EmbroideryObject in
+                let translated = VectorShape(subPaths: shape.subPaths.map { sp in
+                    SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed)
+                })
+                let parameters = StitchGenerationParameters()
+                let stitchType = StitchTypeClassifier.classify(shape: translated, parameters: parameters)
+                return EmbroideryObject(name: "Letter \(i + 1)", shape: translated, stitchType: stitchType,
+                                         threadColor: threadColor, parameters: parameters)
+            }
+
+            var updated = current
+            if let mmBox {
+                // An object counts as "part of" this detected region (and
+                // gets removed in favor of the new lettering) once at
+                // least a third of its own area falls inside the region's
+                // box -- close enough to catch the actual raster-traced
+                // fragments this text produced without also sweeping up
+                // an unrelated object that merely brushes the edge.
+                let overlapFraction = 0.3
+                updated.objects.removeAll { object in
+                    let objBox = object.shape.boundingBox
+                    let objArea = objBox.width * objBox.height
+                    guard objArea > 0 else { return false }
+                    let ix = max(0, min(objBox.maxX, mmBox.maxX) - max(objBox.minX, mmBox.minX))
+                    let iy = max(0, min(objBox.maxY, mmBox.maxY) - max(objBox.minY, mmBox.minY))
+                    return (ix * iy) / objArea > overlapFraction
+                }
+            }
+            updated.objects.append(contentsOf: newObjects)
+            document = updated
+            selectedObjectIDs = Set(newObjects.map { $0.id })
+            detectedTextRegions.removeAll { $0.id == region.id }
+            scheduleLiveRegenerate()
+            statusMessage = "Replaced \"\(region.text)\" with \(newObjects.count) lettering object(s)."
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
     // MARK: - Undo
 
     /// Snapshots only what a user-visible edit can actually change: the
@@ -522,6 +615,7 @@ final class AppState: ObservableObject {
             var rawShapes: [VectorShape]
             var fillColors: [StitchPilotCore.RGBColor?]
 
+            detectedTextRegions = []
             if !isRasterURL(url) {
                 let result = try SVGImporter.importShapes(from: data)
                 rawShapes = result.shapes
@@ -530,6 +624,14 @@ final class AppState: ObservableObject {
                 let result = try ImageImporter.importShapes(from: data, maxColors: colorPreset.defaultMaxColors)
                 rawShapes = result.shapes
                 fillColors = result.fillColors
+                // Best-effort: text detection failing (or finding nothing)
+                // should never block the import itself -- it's an
+                // enhancement on top of raster tracing, not a requirement
+                // for it. Only text Vision is genuinely confident about is
+                // worth surfacing; see TextDetector's own doc comment on
+                // why curved ring text and precise font matching are
+                // deliberately out of scope rather than guessed at.
+                detectedTextRegions = (try? TextDetector.detectTextRegions(from: data, minConfidence: 0.7)) ?? []
             }
 
             guard !rawShapes.isEmpty else {

@@ -39,6 +39,7 @@ struct ContentView: View {
     @State private var showingMergeColors = false
     @State private var showingThreadLibrary = false
     @State private var showingAddLettering = false
+    @State private var showingDetectedText = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -172,6 +173,16 @@ struct ContentView: View {
                 }
                 .help("Type text and pick a font -- generates clean satin letters directly from the font's own outline, instead of tracing a raster image of text (which can never be sharper than the source image's own resolution).")
 
+                if !app.detectedTextRegions.isEmpty {
+                    Button {
+                        showingDetectedText = true
+                    } label: {
+                        Label("Detected Text (\(app.detectedTextRegions.count))", systemImage: "text.viewfinder")
+                    }
+                    .tint(.orange)
+                    .help("This import appears to contain text -- review it and optionally replace the raster-traced version with clean generated lettering.")
+                }
+
                 Button {
                     app.mergeSelectedShapesIntoOneObject()
                 } label: {
@@ -228,6 +239,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingMergeColors) { MergeColorsSheet() }
         .sheet(isPresented: $showingThreadLibrary) { ThreadLibrarySheet() }
         .sheet(isPresented: $showingAddLettering) { AddLetteringSheet() }
+        .sheet(isPresented: $showingDetectedText) { DetectedTextSheet() }
         .safeAreaInset(edge: .bottom) {
             statusBar
         }
@@ -867,6 +879,102 @@ private struct AddLetteringSheet: View {
             if fonts.isEmpty {
                 fonts = AppState.availableLetteringFonts()
                 selectedFontPostScriptName = fonts.first { $0.displayName == "Helvetica" }?.postScriptName ?? fonts.first?.postScriptName ?? ""
+            }
+        }
+    }
+}
+
+/// Reviews text `TextDetector` found in the just-imported image, letting
+/// the user replace the raster-traced version of each piece with real
+/// generated lettering (`AppState.replaceDetectedText`) -- the transcription
+/// and bold/regular weight are Vision's and a pixel-density heuristic's
+/// best guess respectively, never presented as a guaranteed match, so
+/// every field here stays editable before anything is replaced.
+private struct DetectedTextSheet: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    private struct Draft: Identifiable {
+        var id: UUID
+        var region: DetectedTextRegion
+        var text: String
+        var fontPostScriptName: String
+        var color: Color
+    }
+
+    @State private var drafts: [Draft] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Detected Text").font(.title3).fontWeight(.semibold).padding()
+            Divider()
+
+            Text("Vision found this text in the imported image. Review and edit before replacing -- this is a starting suggestion, not a guaranteed match, especially for tightly curved text.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+            List {
+                ForEach($drafts) { $draft in
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("Text", text: $draft.text)
+                            .textFieldStyle(.roundedBorder)
+                        if abs(draft.region.rotationDegrees) > 5 {
+                            Label("This looks tilted or curved -- Add Lettering's curve option may fit better than a straight replacement.",
+                                  systemImage: "exclamationmark.triangle")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                        HStack {
+                            Picker("Font", selection: $draft.fontPostScriptName) {
+                                Text("Helvetica Bold").tag("Helvetica-Bold")
+                                Text("Helvetica").tag("Helvetica")
+                            }
+                            .labelsHidden()
+                            .frame(width: 160)
+                            ColorPicker("", selection: $draft.color, supportsOpacity: false)
+                                .labelsHidden()
+                            Text("\(Int(draft.region.confidence * 100))% confident")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Ignore") {
+                                app.detectedTextRegions.removeAll { $0.id == draft.region.id }
+                                drafts.removeAll { $0.id == draft.id }
+                            }
+                            Button("Replace") {
+                                let spec = LetteringSpec(text: draft.text, fontPostScriptName: draft.fontPostScriptName,
+                                                          fontSizeMM: app.suggestedLetterHeightMM(for: draft.region))
+                                let rgb = rgbColor(from: draft.color)
+                                let threadColor: ThreadColor = app.matchToThreadLibrary
+                                    ? (ThreadLibrary.nearestMatch(to: rgb, in: app.effectivePalette) ?? .generic(rgb, name: "Lettering Color"))
+                                    : .generic(rgb, name: "Lettering Color")
+                                app.replaceDetectedText(draft.region, spec: spec, threadColor: threadColor)
+                                drafts.removeAll { $0.id == draft.id }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .frame(minHeight: 260)
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            .padding()
+        }
+        .frame(width: 540, height: 460)
+        .onAppear {
+            drafts = app.detectedTextRegions.map { region in
+                Draft(id: region.id, region: region, text: region.text,
+                      fontPostScriptName: region.suggestedWeight == .bold ? "Helvetica-Bold" : "Helvetica",
+                      color: .black)
             }
         }
     }

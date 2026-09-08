@@ -4,6 +4,44 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: Detected Text -- OCR-assisted suggestions to replace raster-traced text with Lettering (Phase 2)
+
+Phase 1 (Lettering, above) fixed text quality once the user retypes it.
+This closes the gap Phase 1 left open: a raster import already contains
+text the user shouldn't have to notice is illegible and transcribe by
+hand. New `TextDetector` (`Sources/StitchPilotCore/Engine/`) runs
+Vision's `VNRecognizeTextRequest` on every raster import and surfaces
+what it finds via a new "Detected Text" toolbar button (shown only when
+something's found), pre-filling text, a rough bold/regular weight guess
+(ink-density within the detected region, not a real font match), and
+position/size to open directly into a replace-or-ignore review -- editable
+before anything happens, never applied automatically.
+
+Verified directly against the real Sarasota crest PNG used throughout
+this session's other fixes: Vision transcribed "SARASOTA MILITARY
+ACADEMY" and its tagline at 100% confidence (both correctly suggested
+bold/regular to match their actual weights), while a handful of low-
+confidence noise (the four stars misread as asterisks, "HONOR" partially
+misread from the small ring banner) stayed below the review threshold
+and was never surfaced -- exactly the intended behavior: confident,
+reliable detections offered, unreliable ones silently skipped rather
+than shown as false suggestions.
+
+Two things this deliberately does not attempt, matching what was scoped
+before starting: **curved text** (Vision's OCR is tuned for straight or
+gently rotated lines; a region Vision does detect but reports as tilted
+surfaces a hint toward the Lettering tool's curve option instead of
+guessing an arc) and **font identification** (matching the exact source
+typeface is essentially unsolved in general even for dedicated
+commercial services -- the bold/regular guess is offered as a starting
+point, not a claimed match).
+
+"Replace" (`AppState.replaceDetectedText`) maps the detected region's
+pixel-space position back into the document's own mm-space using the
+same scale-and-center math `fitToPhysicalSize` already applies to the
+original import, removes whichever existing objects substantially
+overlap that area, and adds the newly generated lettering in their place.
+
 ## Added: Lettering -- generate clean text directly from a font's outline instead of tracing a raster image of it
 
 Every fix so far to a real team-crest PNG's fine text (bigger initial

@@ -62,6 +62,19 @@ if args.count >= 3, args[1] == "--recommend-size" {
     exit(0)
 }
 
+if args.count >= 3, args[1] == "--detect-text" {
+    // Diagnostic: what TextDetector finds in a real raster file, without
+    // driving the GUI's Add Lettering / review flow.
+    let inputURL = URL(fileURLWithPath: args[2])
+    let data = try Data(contentsOf: inputURL)
+    let regions = try TextDetector.detectTextRegions(from: data)
+    print("\(regions.count) text region(s) found in \(inputURL.lastPathComponent):")
+    for region in regions {
+        print("  \"\(region.text)\" confidence=\(String(format: "%.2f", region.confidence)) rotation=\(String(format: "%.1f", region.rotationDegrees))deg weight=\(region.suggestedWeight) box=(\(Int(region.boundingBoxPixels.minX)),\(Int(region.boundingBoxPixels.minY)))-(\(Int(region.boundingBoxPixels.maxX)),\(Int(region.boundingBoxPixels.maxY)))")
+    }
+    exit(0)
+}
+
 guard args.count >= 3 else {
     print("Usage: DigitizeCLI <input> <output.png> [widthMM=100] [heightMM=100] [maxColors=8] [pixelsPerMM=12]")
     print("       DigitizeCLI --recommend-size <input>")
