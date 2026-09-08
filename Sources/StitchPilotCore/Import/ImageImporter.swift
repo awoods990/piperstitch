@@ -133,6 +133,15 @@ public enum ImageImporter {
                 }
             }
         }
+        // Order matters: merging a small same-color island into its main
+        // shape first grows that shape's own bounding box well past the
+        // island's own tiny one -- so when hole-removal runs next, a
+        // *different*-colored shape's genuine hole (a letter's own
+        // counter) no longer spuriously "nearly matches" the now-much-
+        // larger merged shape's box, and stays correctly preserved as a
+        // real hole. Reversing this order would risk stripping exactly
+        // the hole this pass exists to protect.
+        mergeColorIslandsIntoLargestSameColorShape(&shapes, fillColors: &fillColors)
         removeHolesCoveredByAnotherShape(&shapes, fillColors: fillColors)
 
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
@@ -168,15 +177,36 @@ public enum ImageImporter {
         for i in shapes.indices {
             guard shapes[i].subPaths.count > 1 else { continue }
             let outer = shapes[i].subPaths[0]
-            let survivingHoles = shapes[i].subPaths.dropFirst().filter { hole in
-                let holeBox = hole.boundingBox
+
+            var strippedHoleBoxes: [BoundingBox] = []
+            var keptSubPaths: [SubPath] = []
+            for subPath in shapes[i].subPaths.dropFirst() {
+                let box = subPath.boundingBox
                 let isCoveredByAnotherShape = shapes.indices.contains { j in
                     guard j != i, fillColors[j] != fillColors[i] else { return false }
-                    return boxesNearlyMatch(holeBox, shapes[j].boundingBox)
+                    return boxesNearlyMatch(box, shapes[j].boundingBox)
                 }
-                return !isCoveredByAnotherShape
+                if isCoveredByAnotherShape {
+                    strippedHoleBoxes.append(box)
+                } else {
+                    keptSubPaths.append(subPath)
+                }
             }
-            shapes[i].subPaths = [outer] + survivingHoles
+            // A kept subpath can only be one of this shape's own genuine
+            // holes, or a same-color island `mergeColorIslandsIntoLargestSameColorShape`
+            // merged in earlier -- an island is never itself a hole. If a
+            // hole just above got stripped (this shape is now solid
+            // across that whole area, via its own outer boundary), any
+            // island that falls entirely inside that same now-solid area
+            // is redundant: leaving it in would add a second boundary
+            // crossing there, flipping already-solid fill back into an
+            // unwanted hole under the even-odd rule. Removing it is safe
+            // either way -- the area was already going to render solid.
+            keptSubPaths.removeAll { subPath in
+                let box = subPath.boundingBox
+                return strippedHoleBoxes.contains { $0.contains(box) }
+            }
+            shapes[i].subPaths = [outer] + keptSubPaths
         }
     }
 
@@ -193,6 +223,62 @@ public enum ImageImporter {
         let aArea = a.width * a.height, bArea = b.width * b.height
         guard aArea > 0, bArea > 0 else { return false }
         return intersection / aArea > 0.7 && intersection / bArea > 0.7
+    }
+
+    /// A same-colored region that's small and disconnected from its own
+    /// color's largest traced shape, but sits well inside that shape's
+    /// overall extent, is the *same background layer* -- not a separate
+    /// design element -- it only reads as disconnected because something
+    /// a different color (a letter's own counter, a logo mark) sits
+    /// directly on top of and around it in the source image, splitting
+    /// the connected-component pass into pieces. Found directly against a
+    /// real circular badge: a letter's own two counters, each still the
+    /// badge's background color showing through underneath, imported as
+    /// two extra tiny separate objects instead of being part of the one
+    /// background layer -- visible as a stitching-direction seam where
+    /// the small piece meets the rest (each object gets its own
+    /// independently-chosen fill angle), and as clutter in the object
+    /// list. Merging them into one shape gives the fill generator one
+    /// continuous region to work from, producing consistent stitching
+    /// instead of a visibly separate patch (see CHANGELOG.md).
+    ///
+    /// Conservative on purpose: only merges a fragment genuinely smaller
+    /// than (not just any overlap with) the main shape, and only when its
+    /// entire extent sits inside the main shape's own bounding box -- two
+    /// separate, comparably-sized shapes that happen to share a color (a
+    /// legitimate multi-part design) are left untouched.
+    private static func mergeColorIslandsIntoLargestSameColorShape(_ shapes: inout [VectorShape], fillColors: inout [RGBColor?]) {
+        var indicesByColor: [RGBColor: [Int]] = [:]
+        for (i, color) in fillColors.enumerated() {
+            guard let color else { continue }
+            indicesByColor[color, default: []].append(i)
+        }
+
+        func boxArea(_ box: BoundingBox) -> Double { box.width * box.height }
+
+        var indicesToRemove = Set<Int>()
+        for indices in indicesByColor.values where indices.count > 1 {
+            guard let mainIndex = indices.max(by: { boxArea(shapes[$0].boundingBox) < boxArea(shapes[$1].boundingBox) }) else { continue }
+            let mainBox = shapes[mainIndex].boundingBox
+            let mainArea = boxArea(mainBox)
+            guard mainArea > 0 else { continue }
+            for i in indices where i != mainIndex {
+                let box = shapes[i].boundingBox
+                guard boxArea(box) < mainArea * 0.5, mainBox.contains(box) else { continue }
+                shapes[mainIndex].subPaths.append(contentsOf: shapes[i].subPaths)
+                indicesToRemove.insert(i)
+            }
+        }
+        guard !indicesToRemove.isEmpty else { return }
+
+        var newShapes: [VectorShape] = []
+        var newColors: [RGBColor?] = []
+        for i in shapes.indices where !indicesToRemove.contains(i) {
+            newShapes.append(shapes[i])
+            newColors.append(fillColors[i])
+        }
+        shapes = newShapes
+        fillColors = newColors
     }
 
     /// Finds background-colored regions fully enclosed within

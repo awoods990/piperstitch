@@ -252,6 +252,12 @@ struct StitchCanvasView: View {
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(.thinMaterial, in: Capsule())
                     .padding(.top, 44)
+            } else if zoomScale > 1.01, !isPaintMode {
+                Text("Drag to select \u{2022} Option-drag to pan")
+                    .font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.top, 44)
             }
         }
         .onAppear { regenerateRealisticImageIfNeeded() }
@@ -338,9 +344,17 @@ struct StitchCanvasView: View {
             currentStrokePoints.append(docPoint(from: value.location, document: document, transform: transform))
             return
         }
-        if zoomScale > 1.01 {
+        // Plain drag always rubber-band selects, at any zoom level -- Option
+        // is the pan modifier instead (checked live, every call, so it
+        // still works correctly if the key is pressed or released partway
+        // through a drag). Previously a drag panned whenever zoomed in at
+        // all, which left no way to rubber-band select once zoomed --
+        // exactly the situation selecting several small, now-close-together
+        // objects (to merge or replace with lettering) most needs zoom for.
+        if NSEvent.modifierFlags.contains(.option) {
             panOffset = CGSize(width: lastPanOffset.width + value.translation.width,
                                 height: lastPanOffset.height + value.translation.height)
+            rubberBandRect = nil
         } else {
             rubberBandRect = CGRect(x: min(value.startLocation.x, value.location.x), y: min(value.startLocation.y, value.location.y),
                                      width: abs(value.location.x - value.startLocation.x), height: abs(value.location.y - value.startLocation.y))
@@ -354,7 +368,9 @@ struct StitchCanvasView: View {
             currentStrokePoints = []
             return
         }
-        if zoomScale > 1.01 {
+        // `rubberBandRect` is nil exactly when the drag ended in pan mode
+        // (Option held) -- `handleDragChanged` clears it there every call.
+        guard rubberBandRect != nil else {
             lastPanOffset = panOffset
             return
         }

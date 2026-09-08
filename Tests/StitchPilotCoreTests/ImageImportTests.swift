@@ -312,6 +312,61 @@ struct ImageImportTests {
         #expect(ring.subPaths.count == 2, "an unrelated shape elsewhere must not strip a genuine hole")
     }
 
+    /// A same-colored region that's small, disconnected from its own
+    /// color's main shape (because a differently-colored ring fully
+    /// encircles it), but sits well inside that main shape's extent, is
+    /// the same background layer showing through -- not a separate design
+    /// element. This exercises the actual interaction that matters: once
+    /// the ring's OWN background-facing hole gets stripped (making the
+    /// ring's underlying shape solid across that whole area, the ordinary
+    /// "overlay on solid background" fix), the ring's own *counter* --
+    /// where the same background color the ring sits on shows back through
+    /// again in the very center -- must both merge into the main
+    /// background shape AND still read as solid there, not accidentally
+    /// re-punch a hole via a redundant leftover subpath (found directly
+    /// against exactly this ring/counter interaction -- see CHANGELOG.md).
+    @Test func colorIslandInsideARingsCounterMergesAndStaysSolid() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 200
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        // Background layer, margined off the canvas edges so it reads as
+        // real foreground content rather than the page's own background.
+        let navy = deviceColor(0.05, 0.1, 0.4, in: colorSpace)
+        context.setFillColor(navy)
+        context.fill(CGRect(x: 15, y: 15, width: 170, height: 170))
+        // A red ring sitting on the navy background, with its own counter
+        // punched back to the same navy -- the counter is fully enclosed
+        // by the red ring and disconnected from the main navy region.
+        context.setFillColor(deviceColor(0.85, 0.1, 0.1, in: colorSpace))
+        context.fillEllipse(in: CGRect(x: 60, y: 60, width: 80, height: 80))
+        context.setFillColor(navy)
+        context.fillEllipse(in: CGRect(x: 87, y: 87, width: 26, height: 26))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!), maxColors: 8)
+        #expect(result.shapes.count == 2, "the navy island should merge into the main navy shape, not remain a third separate object")
+
+        func area(_ shape: VectorShape) -> Double { shape.boundingBox.width * shape.boundingBox.height }
+        let navyShape = try #require(result.shapes.max(by: { area($0) < area($1) }), "the navy background should be the larger of the two shapes")
+        let ringShape = try #require(result.shapes.min(by: { area($0) < area($1) }), "the red ring should be the smaller of the two shapes")
+
+        // The counter's own center must read as *inside* the navy shape
+        // under the even-odd rule (solid, matching the surrounding
+        // background) -- this is the exact regression: a leftover
+        // redundant subpath there would flip it back to a hole instead.
+        let counterCenter = Point2D(100, 100)
+        let navyPolygons = navyShape.subPaths.map { $0.points }
+        #expect(PolygonGeometry.pointInPolygons(counterCenter, polygons: navyPolygons),
+                "the ring's own counter should read as solid, merged background -- not a hole")
+
+        // The ring itself must still have a real hole at its own counter
+        // (it must not have become a solid disc).
+        #expect(ringShape.subPaths.count == 2, "the ring must keep its own hole, not become a solid disc")
+        let ringPolygons = ringShape.subPaths.map { $0.points }
+        #expect(!PolygonGeometry.pointInPolygons(counterCenter, polygons: ringPolygons),
+                "the ring's own fill must not cover its counter")
+    }
+
     /// Three separate, distinctly-colored squares on a white background:
     /// the multi-color segmentation path (spec §8) should recover all three
     /// regions with their correct colors, not merge them into one region

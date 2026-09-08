@@ -4,6 +4,51 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: rubber-band selection now works at any zoom level
+
+Dragging previously panned the canvas whenever zoomed in at all, leaving
+no way to rubber-band select once zoomed -- exactly the situation
+selecting several small, close-together objects (to merge, delete, or
+replace with lettering) most needs zoom for. A plain drag now always
+rubber-band selects regardless of zoom; Option-drag pans instead
+(checked live, so switching mid-drag works correctly). A hint ("Drag to
+select • Option-drag to pan") appears over the canvas while zoomed in,
+since this trades a previously-implicit behavior for a modifier-key one
+that needs to be discoverable.
+
+## Fixed: a background color split into disconnected fragments by an overlay imported as extra separate objects instead of one layer
+
+Text or a logo mark sitting on a solid background can enclose a piece of
+that same background color entirely on its own (a letter's own counter,
+a ring's own hole) -- disconnected from the rest of the background only
+because the overlay's own shape fully surrounds it in the source image,
+not because it's actually a separate design element. Raster import
+traced this fragment as its own tiny separate object, identically
+colored to but disconnected from the real background layer. Visually
+this showed up as a stitching-direction seam exactly where the small
+fragment met the rest of the background (each object gets its own
+independently-chosen fill angle) and as clutter in the object list --
+found directly against a real circular badge, where a letter's two
+counters each showed the badge's own background color, but as their own
+separate objects rather than being part of the one background layer.
+
+`ImageImporter` now merges a same-colored fragment into its color's
+largest shape when the fragment is genuinely smaller and its entire
+extent sits inside that shape's own bounding box (a legitimate separate
+design element sharing a color, not enclosed by anything, is left
+alone) -- giving the fill generator one continuous region to work from
+instead of a visibly separate patch.
+
+This interacts with the earlier hole-coverage fix in a way that needed
+its own correction: merging a fragment in, then separately stripping a
+hole in a *different* overlay shape that happens to cover the same
+area, can leave the merged fragment as a redundant leftover subpath --
+double-toggling that area under the even-odd rule and turning solid
+fill back into an unwanted hole. Fixed by having hole-removal also drop
+any of a shape's own subpaths that fall entirely inside a hole it just
+stripped, since that area is already solid via the outer boundary once
+the hole is gone.
+
 ## Changed: rubber-band selection now requires an object to be fully inside the box, not just touching it
 
 Dragging a selection box previously selected any object whose bounding
