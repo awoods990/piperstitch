@@ -4,6 +4,23 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: a dropped file that failed to load silently left the old design on screen
+
+Drag-and-drop had two gaps that together could make a failed import look
+like "the app brought back my old artwork": `ContentView.handleDrop`
+discarded `NSItemProvider.loadObject`'s error entirely (`guard let url
+else { return }`, no feedback at all on a resolve failure), and any file
+extension other than `.svg` was handed straight to the raster image
+importer regardless of what it actually was -- including this app's own
+`.stitchpilot` project format, easy to reach for by mistake since it can
+sit right next to the real artwork under a near-identical name. Either
+failure left whatever was already open completely untouched with no
+explanation, which reads as a revert rather than a no-op. Drops now route
+through `AppState.openDroppedFile`: a `.stitchpilot` file opens as a
+project, a recognized image/SVG extension imports as artwork, anything
+else is rejected by name up front, and a failed URL resolution now
+surfaces an actual alert instead of silently doing nothing.
+
 ## Added: a delete pen, text-only projects, and a more honest live preview
 
 - **Preview staleness is now tracked explicitly instead of guessed at.**

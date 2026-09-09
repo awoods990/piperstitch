@@ -864,6 +864,40 @@ final class AppState: ObservableObject {
 
     private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
 
+    /// The file extensions `importFile` can actually make sense of --
+    /// checked up front so a file of some other type gets a clear,
+    /// specific rejection instead of either a cryptic image-decode
+    /// failure or (worse) no feedback at all.
+    private static let supportedArtworkExtensions: Set<String> = ["svg", "png", "jpg", "jpeg", "tiff", "tif", "bmp", "gif", "webp"]
+
+    /// Routes a drag-and-dropped file to whichever "open" actually applies
+    /// to it -- this app's own `.stitchpilot` project format opens as a
+    /// project (`openProject`), a recognized image/SVG extension imports
+    /// as artwork (`importFile`), and anything else is rejected up front
+    /// by name rather than silently falling through to `ImageImporter`
+    /// and failing there with a less specific message. The dedicated
+    /// "Open" menu's own Artwork/Project pickers already filter by
+    /// `allowedContentTypes`, so a user can't hand either the wrong kind
+    /// of file there in the first place -- drag-and-drop has no such
+    /// gate, and previously had no rejection message at all: dropping a
+    /// `.stitchpilot` file (easy to reach for by mistake -- it's this
+    /// app's own save format, and can sit right next to the actual
+    /// artwork under a near-identical name) silently left whatever was
+    /// already open on screen untouched, which reads as "it just brought
+    /// back old content" rather than "that drop didn't do anything."
+    func openDroppedFile(url: URL) {
+        let ext = url.pathExtension.lowercased()
+        if ext == ProjectFile.fileExtension.lowercased() {
+            openProject(url: url)
+            return
+        }
+        guard Self.supportedArtworkExtensions.contains(ext) else {
+            errorMessage = "\u{201C}\(url.lastPathComponent)\u{201D} isn\u{2019}t a supported file type. Drop an image (PNG, JPEG, etc.) or an SVG file here, or use Open > Open Project for a .\(ProjectFile.fileExtension) project."
+            return
+        }
+        importFile(url: url)
+    }
+
     func openArtworkWithPanel() {
         let panel = NSOpenPanel()
         var types: [UTType] = [.svg, .png, .jpeg, .tiff, .bmp, .gif]

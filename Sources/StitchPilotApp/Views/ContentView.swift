@@ -425,9 +425,18 @@ struct ContentView: View {
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            guard let url else { return }
-            DispatchQueue.main.async { app.importFile(url: url) }
+        _ = provider.loadObject(ofClass: URL.self) { url, error in
+            DispatchQueue.main.async {
+                guard let url else {
+                    // Previously silent -- a drag that failed to resolve to
+                    // a file URL left whatever was already open untouched
+                    // with no feedback at all, which reads as "the drop did
+                    // nothing" or, worse, "it brought back old content."
+                    app.errorMessage = "Couldn't read that dropped item\(error.map { ": \($0.localizedDescription)" } ?? "")."
+                    return
+                }
+                app.openDroppedFile(url: url)
+            }
         }
         return true
     }
