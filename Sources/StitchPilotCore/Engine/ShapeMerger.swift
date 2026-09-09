@@ -17,6 +17,17 @@ public enum ShapeMerger {
     /// large shapes can't allocate an enormous mask — resolution is scaled
     /// down to fit instead of merging failing outright.
     private static let maxPixels = 6_000_000
+    /// `rasterSizing` below scales down to a *continuous* target of
+    /// `maxPixels`, then rounds each dimension up to a whole pixel
+    /// independently — two ceilings that can each add just under a pixel,
+    /// nudging the discrete `width * height` a few thousand pixels past
+    /// the continuous target right at the boundary. Targeting 98% instead
+    /// of 100% leaves comfortable slack (~120,000 pixels) for that
+    /// rounding, found via a real merge (four largeish logo shapes on a
+    /// wide canvas) that failed outright with "Couldn't merge the
+    /// selected shapes" despite being nowhere near a genuinely
+    /// unreasonable size. See CHANGELOG.md.
+    private static let rasterBudgetSafetyFactor = 0.98
     private static let simplifyEpsilonPixels = 1.2
 
     /// Merges `shapes` into one `VectorShape`. Returns `nil` if the shapes
@@ -171,8 +182,9 @@ public enum ShapeMerger {
         var scale = pixelsPerMM
         let rawWidth = (combinedBounds.width + marginMM * 2) * scale
         let rawHeight = (combinedBounds.height + marginMM * 2) * scale
-        if rawWidth * rawHeight > Double(maxPixels), rawWidth * rawHeight > 0 {
-            scale *= (Double(maxPixels) / (rawWidth * rawHeight)).squareRoot()
+        let budget = Double(maxPixels) * rasterBudgetSafetyFactor
+        if rawWidth * rawHeight > budget, rawWidth * rawHeight > 0 {
+            scale *= (budget / (rawWidth * rawHeight)).squareRoot()
         }
         let originX = combinedBounds.minX - marginMM
         let originY = combinedBounds.minY - marginMM

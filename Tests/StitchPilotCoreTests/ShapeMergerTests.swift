@@ -133,4 +133,21 @@ struct ShapeMergerTests {
         #expect(merged.subPaths.count == 2, "outer boundary fuses with the stroke (1 subpath), hole stays separate (1 more)")
         #expect(merged.boundingBox.maxX > 20, "the merged shape should now extend past the original outer edge")
     }
+
+    /// `rasterSizing`'s pixel-budget clamp scales down to a *continuous*
+    /// target of exactly `maxPixels`, then independently rounds each
+    /// dimension up to a whole pixel -- two ceilings that can each add
+    /// just under a pixel, nudging the discrete width*height a little
+    /// past the continuous target right at the boundary. A combined
+    /// bounding box of 280x280mm lands exactly in that band and used to
+    /// fail outright ("Couldn't merge the selected shapes") despite being
+    /// an entirely reasonable size for real artwork (e.g. several logo
+    /// elements spread across a wide design) -- found against a real
+    /// four-shape logo merge on a 40cm-wide canvas. See CHANGELOG.md.
+    @Test func mergeOfWidelySeparatedShapesNearTheRasterBudgetBoundaryStillSucceeds() throws {
+        let a = square(0, 0, 5)
+        let b = square(275, 275, 5) // combined bounding box: 280 x 280mm
+        let merged = try #require(ShapeMerger.merge([a, b]), "merging shouldn't fail just from ceiling-rounding at the raster budget boundary")
+        #expect(merged.subPaths.count == 2, "the two squares don't touch, so they stay separate subpaths of one shape")
+    }
 }
