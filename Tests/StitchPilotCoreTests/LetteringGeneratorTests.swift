@@ -109,6 +109,15 @@ struct LetteringGeneratorTests {
         // The whole point of generating real vector shapes is that they
         // flow through the exact same classify-and-stitch pipeline as any
         // other imported shape -- no special-casing needed downstream.
+        // "H" is deliberately included here rather than avoided: it's the
+        // canonical branching shape (two stems joined by a crossbar) that
+        // `classify`'s own `canRepresentAsSingleSatinColumn` gate exists to
+        // catch when called per-glyph like this (as opposed to
+        // `classifyLetteringRun`, which the real lettering pipeline
+        // actually uses, and which already special-cases a run containing
+        // a branching letter -- see its own doc comment). Both letters
+        // should still produce real stitches; only "I" -- an ordinary,
+        // non-branching stroke -- should classify as satin.
         let spec = LetteringSpec(text: "HI", fontPostScriptName: "Helvetica-Bold", fontSizeMM: 15)
         let shapes = try LetteringGenerator.generateShapes(spec: spec)
         let objects = shapes.enumerated().map { i, shape in
@@ -116,7 +125,8 @@ struct LetteringGeneratorTests {
                               stitchType: StitchTypeClassifier.classify(shape: shape, parameters: StitchGenerationParameters()),
                               threadColor: .generic(RGBColor(hex: 0x000000)))
         }
-        #expect(objects.allSatisfy { $0.stitchType == .satin }, "normal bold letters at a real size should classify as satin")
+        #expect(objects[0].stitchType != .satin, "\"H\" branches into more than one column and can't be a single satin column")
+        #expect(objects[1].stitchType == .satin, "a normal bold, non-branching letter at a real size should classify as satin")
         let doc = StitchDocument(name: "Lettering", physicalWidthMM: 40, physicalHeightMM: 20, objects: objects)
         let plan = try DigitizePipeline.flatten(doc)
         #expect(plan.stitchCount > 0)

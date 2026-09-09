@@ -58,6 +58,40 @@ struct SatinColumnGeneratorTests {
         #expect(plan.stitchCount > 0)
     }
 
+    /// An "L" -- an ordinary right-angle bend, not a genuine branch like
+    /// "H" above -- rail-fits into two real, if unevenly-long, rails just
+    /// fine (`generatePartial` itself doesn't throw for it), and its own
+    /// satin crossings stay correctly inside the shape. The actual defect
+    /// was one level up: `DigitizePipeline` concatenates this object's
+    /// underlay directly in front of its satin crossings as one
+    /// continuous same-color run, and satin's centerRun/zigzag underlay
+    /// traces the column start-to-end -- the same direction the crossings
+    /// do -- so underlay's own *last* point sits at the column's far tip
+    /// while the crossings' *first* point sits back at its near tip.
+    /// Usually a harmless few-mm seam, buried under a plain column's own
+    /// dense coverage -- but for a bent shape like this, that seam runs
+    /// straight across the open notch with nothing on top to hide it,
+    /// rendering as a long, clearly visible diagonal scratch. Reproduced
+    /// directly against a real raster-imported logo's own "L" before this
+    /// test was written; see CHANGELOG.md.
+    @Test func bentLShapeUnderlaySeamStaysShortRatherThanCuttingAcrossTheNotch() throws {
+        let lShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(0, 28), Point2D(19, 28), Point2D(19, 23),
+            Point2D(6, 23), Point2D(6, 0),
+        ], closed: true)])
+        let object = EmbroideryObject(name: "L", shape: lShape, stitchType: .satin,
+                                       threadColor: .generic(RGBColor(hex: 0x000000)))
+        let doc = StitchDocument(name: "BentL", physicalWidthMM: 19, physicalHeightMM: 28, objects: [object])
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount > 0)
+        // The column's own longest legitimate single stitch (a satin
+        // crossing at its widest, or an underlay running-stitch span) is
+        // well under half the shape's own ~28mm height -- the seam this
+        // guards against was a ~30mm diagonal spanning almost the whole
+        // shape.
+        #expect(plan.maxStitchLength() < 14, "no stitch should span anywhere near the shape's own full extent")
+    }
+
     /// Pull and push compensation default to off here so these tests check
     /// pure satin geometry against exact bounds; `pullCompensationWidensColumn`
     /// and `pushCompensationShortensColumn` below test compensation itself.

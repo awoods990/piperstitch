@@ -266,10 +266,17 @@ struct TatamiFillGeneratorTests {
         let shape = VectorShape(subPaths: [outer, hole])
         let params = squareParams(spacing: 0.5)
 
-        // An unlimited threshold keeps everything merged into one run --
-        // identical to `generate`'s own (unchanged) behavior.
+        // An unlimited *distance* threshold no longer guarantees one run on
+        // its own: this hole is wide enough that the straight connector
+        // between the chains on either side of it leaves the shape
+        // entirely, crossing the open hole -- exactly the case
+        // `connectorStaysInsideShape` exists to keep split regardless of
+        // how far the distance threshold is raised (see its own doc
+        // comment). `generate()` -- which flattens every run back together
+        // regardless of this structure -- stays unaffected either way; see
+        // the assertion below.
         let unlimited = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: .infinity)
-        #expect(unlimited.count == 1)
+        #expect(unlimited.count > 1, "a connector crossing straight through this wide hole should stay split even with no distance limit at all")
 
         // The hole is 20mm wide -- well above a 5mm break threshold, so its
         // connector must become its own run boundary.
@@ -289,6 +296,39 @@ struct TatamiFillGeneratorTests {
         // Splitting changes structure, not content: flattening the split
         // runs back together must reproduce `generate`'s own output exactly.
         #expect(split.flatMap { $0 } == TatamiFillGenerator.generate(for: shape, parameters: params))
+    }
+
+    /// A concave notch open to the shape's own boundary (e.g. a "U", or an
+    /// "L"'s inner corner) isn't a hole at all -- no second sub-path, no
+    /// even-odd toggling -- but can still split a single scanline row into
+    /// two disconnected chains near the notch, the same way a hole does.
+    /// `connectorStaysInsideShape` has to catch this case too, not just
+    /// literal holes: a short, distance-wise-acceptable connector between
+    /// those two chains can still cut straight across the open notch,
+    /// landing outside the shape as surely as a hole-crossing one would.
+    /// Found directly against a real raster-imported logo's own "U" -- a
+    /// ~11.5mm diagonal scratch across its open top, well under the
+    /// default 15mm break threshold and so never split before this fix.
+    /// See CHANGELOG.md.
+    @Test func notchConnectorStaysSplitEvenWhenWellUnderTheBreakThreshold() {
+        let uShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(4, 0), Point2D(4, 24), Point2D(8, 30), Point2D(16, 30), Point2D(20, 24),
+            Point2D(20, 0), Point2D(24, 0), Point2D(24, 26), Point2D(16, 34), Point2D(8, 34), Point2D(0, 26),
+        ], closed: true)])
+        let params = squareParams(spacing: 0.5)
+
+        // A generous 15mm threshold (matching the real default
+        // `maxJumpWithoutTrimMM`) -- distance alone would happily merge a
+        // connector across this notch; only the geometric check should
+        // stop it.
+        let runs = TatamiFillGenerator.generateRuns(for: uShape, parameters: params, breakThresholdMM: 15.0)
+        #expect(runs.count > 1, "the notch-crossing connector should force a separate run even under a generous distance threshold")
+        for run in runs {
+            guard run.count > 1 else { continue }
+            for i in 1..<run.count {
+                #expect(run[i - 1].distance(to: run[i]) <= 15.01, "no stitch within a single run should exceed the break threshold")
+            }
+        }
     }
 
     /// End-to-end confirmation that a wide hole's connector actually

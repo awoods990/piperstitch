@@ -20,6 +20,32 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: column, parameters: defaultParams) == .satin)
     }
 
+    /// A genuinely branching shape (`canRepresentAsSingleSatinColumn`'s own
+    /// case: two rails that visibly cross and re-cross each other, not
+    /// just an ordinary bend) still correctly falls back to tatami fill
+    /// through the plain per-shape `classify` entry point, not just
+    /// through `classifyLetteringRun`'s own, separate whole-run gate --
+    /// this is the fix for raster-imported artwork (which never goes
+    /// through the lettering path at all) hitting the exact same
+    /// structural problem lettering already guarded against. A bent shape
+    /// like "L" that merely has a right-angle corner, though, is NOT
+    /// caught here -- `computeCrossings`' own crossing generation already
+    /// rail-fits it safely; the corresponding real defect (an "L"'s
+    /// underlay cutting a visible diagonal through its own open notch)
+    /// was in the underlay/crossings *concatenation* seam instead -- see
+    /// `DigitizePipelineTests`'s own regression test for that.
+    @Test func trueBranchingShapeDoesNotBecomeSatinThroughThePlainClassifier() {
+        // Two vertical stems joined by a horizontal crossbar -- an "H",
+        // built directly rather than through `LetteringGenerator` so this
+        // test doesn't depend on any particular font's own outline.
+        let hShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(4, 0), Point2D(4, 13), Point2D(16, 13), Point2D(16, 0),
+            Point2D(20, 0), Point2D(20, 30), Point2D(16, 30), Point2D(16, 17), Point2D(4, 17),
+            Point2D(4, 30), Point2D(0, 30),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: hShape, parameters: defaultParams) != .satin)
+    }
+
     /// 1.2mm is below the current 1.5mm minimum satin width but was above
     /// the old 1.0mm default -- guards the raised default itself, not just
     /// the classifier logic around it.

@@ -60,6 +60,28 @@ public enum UnderlayGenerator {
         let count = max(4, Int((approxLength / max(parameters.underlayStitchLengthMM, 0.5)).rounded()))
         let resampledA = PolygonGeometry.resampleByCount(railA, count: count)
         let resampledB = PolygonGeometry.resampleByCount(railB, count: count)
+        // Same rails the actual satin crossings validate before use (see
+        // `SatinColumnGenerator.crossingsEscapeTheShape`'s doc comment) --
+        // but resampled far more coarsely here (a handful of underlay
+        // stitches rather than a full crossing per `satinDensityMM`), so a
+        // rail-length mismatch too small to visibly misalign any single
+        // fine-grained satin crossing can still misalign these few, much
+        // longer strides badly enough to cut straight across a concave
+        // bend (e.g. an "L"). Found directly against a real raster-
+        // imported logo's own "L", whose finished satin coverage was
+        // correct but whose *underlay* -- sewn first, and exposed wherever
+        // it strays outside the satin that later covers it -- cut a
+        // visible diagonal scratch across the letter's own open notch,
+        // where no top stitching exists to hide it. Underlay is a
+        // stabilizing nicety, not required output, so skipping it
+        // entirely for the rare shape this affects is a safe fallback --
+        // far better than a visible defect. See CHANGELOG.md.
+        // Rings are exempt, same as `SatinColumnGenerator`'s own check --
+        // their rails come from angular ray-casting, which can't misalign
+        // like this by construction.
+        if !isClosedRing, SatinColumnGenerator.crossingsEscapeTheShape(resampledA, resampledB, polygon: shape.subPaths.first?.points ?? []) {
+            return []
+        }
 
         let centerline = zip(resampledA, resampledB).map { Point2D(($0.x + $1.x) / 2, ($0.y + $1.y) / 2) }
         let path = isClosedRing ? centerline : trimPolylineEnds(centerline, insetMM: parameters.underlayInsetMM)
@@ -75,12 +97,17 @@ public enum UnderlayGenerator {
     /// alongside center-run rather than replacing it.
     private static func zigzag(shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
         guard let (railA, railB) = try? SatinColumnGenerator.computeRails(for: shape) else { return [] }
+        let isClosedRing = railA.count > 1 && railA.first == railA.last
 
         let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
         let spacing = max(parameters.zigzagUnderlaySpacingMM, 0.3)
         let count = max(3, Int((approxLength / spacing).rounded()))
         let resampledA = PolygonGeometry.resampleByCount(railA, count: count)
         let resampledB = PolygonGeometry.resampleByCount(railB, count: count)
+        // See `centerRun`'s own doc comment on this same check.
+        if !isClosedRing, SatinColumnGenerator.crossingsEscapeTheShape(resampledA, resampledB, polygon: shape.subPaths.first?.points ?? []) {
+            return []
+        }
 
         let inset = max(parameters.underlayInsetMM, 0)
         var points: [Point2D] = []

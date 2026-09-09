@@ -74,6 +74,25 @@ public enum StitchTypeClassifier {
         if averageWidth < parameters.minSatinWidthMM { return .runningStitch }
         if shape.subPaths.count > 1 { return .tatamiFill }
         guard averageWidth <= parameters.maxSatinWidthMM else { return .tatamiFill }
+
+        // A shape's *average* width along one global axis is silent about
+        // whether it's actually one straight-ish column at all -- an "L"
+        // (a vertical stroke and a horizontal stroke meeting at a right
+        // angle, exactly the branching case `canRepresentAsSingleSatinColumn`
+        // exists to catch) can average out to a perfectly narrow, "uniform"
+        // width by this measurement alone despite having no single pair of
+        // rails a real satin column could follow. Found directly against a
+        // real raster-imported logo: the L's own bent corner produced a
+        // long diagonal stitch cutting straight across its open notch --
+        // `SatinColumnGenerator` silently railing the shape's boundary in
+        // an order that doesn't correspond to a real column, not merely a
+        // texture/density issue. `classifyLetteringRun` already gates its
+        // own satin decision on this same check (see its doc comment on
+        // "H") -- this was the one caller of a `.satin` verdict that
+        // didn't, because raster import never goes through the lettering
+        // path at all.
+        guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else { return .tatamiFill }
+
         guard averageWidth > satinUniformWidthThresholdMM else { return .satin }
 
         let widths = widthProfile(outer.points, axis: axis, mean: mean, lo: lo, hi: hi, samples: widthProfileSamples)

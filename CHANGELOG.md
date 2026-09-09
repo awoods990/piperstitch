@@ -4,6 +4,47 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: two more sources of visible diagonal scratches across bent/notched shapes
+
+A pre-launch sweep testing real logos (not synthetic test shapes) surfaced
+two more instances of the same underlying family of bug already fixed
+once this cycle for lettering: a same-color travel path landing
+geometrically "close enough," by distance alone, without checking that
+the path it actually takes stays covered or inside the shape.
+
+- **Satin underlay concatenation seam.** `DigitizePipeline` joins a satin
+  object's underlay directly in front of its own crossings as one
+  continuous same-color run. Both trace the column start-to-end, so
+  underlay's own *last* point sits at the column's far tip while the
+  crossings' *first* point sits back at its near tip — usually a harmless
+  few-mm seam buried under the column's own dense coverage, but for a
+  bent column (a raster-imported "L") that seam ran straight across the
+  shape's own open notch, fully exposed. Fixed by reversing the underlay
+  before concatenating, so it ends right next to where the crossings
+  begin. `SatinColumnGenerator` also gained a second, independent
+  crossing-validity check (`crossingsEscapeTheShape`, alongside the
+  existing `isTwisted`) for the same class of shape, and the raster-import
+  classifier (`StitchTypeClassifier.classify`) now runs the same
+  branching-column check `classifyLetteringRun` already used, so a
+  genuinely branching shape (not just a bent one) can't reach satin at all
+  through that path either.
+- **Tatami fill's own chain-merge connector.** `TatamiFillGenerator`
+  merges two scanline chains into one continuous stitched run whenever
+  their connector is shorter than `maxJumpWithoutTrimMM` (15mm) — sound
+  for a narrow letterform counter, where the short residual is genuinely
+  invisible, but a concave notch *open to the shape's own boundary*
+  (no second sub-path, not technically a hole at all — a raster-imported
+  "U"'s own open top) can produce a connector that's short in distance
+  but crosses empty fabric with nothing on either side to hide it under.
+  Now only merges when the connector's own path actually stays inside the
+  shape (mirroring `HiddenTravelRouter`'s own reasoning); otherwise it
+  becomes a genuine run boundary, which `DigitizePipeline` turns into a
+  real trim+jump.
+
+Verified against every logo in `TestArtwork/` plus a real customer's full
+logo set (Amerus, LIBBi) — no diagonal artifacts remain, full test suite
+(263 tests) passes.
+
 ## Fixed: a dropped file that failed to load silently left the old design on screen
 
 Drag-and-drop had two gaps that together could make a failed import look

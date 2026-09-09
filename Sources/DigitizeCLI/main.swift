@@ -216,8 +216,9 @@ do {
                 break
             }
         }
-        let longest = segments.sorted { $0.length > $1.length }.prefix(5)
-        if let worst = longest.first, worst.length > 12.5 {
+        let debugThreshold = ProcessInfo.processInfo.environment["DEBUG_SATIN"] != nil ? 3.0 : 12.5
+        let longest = segments.sorted { $0.length > $1.length }.prefix(15)
+        if let worst = longest.first, worst.length > debugThreshold {
             print("--- longest stitch segments ---")
             for s in longest {
                 print(String(format: "  %.2fmm: (%.3f, %.3f) -> (%.3f, %.3f)", s.length, s.from.x, s.from.y, s.to.x, s.to.y))

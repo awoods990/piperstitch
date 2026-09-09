@@ -277,8 +277,28 @@ public enum DigitizePipeline {
             // any part of it is too wide — see SatinColumnGenerator's doc
             // comment and EMBROIDERY_ALGORITHM_REFERENCE.md.
             let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .satin, parameters: object.parameters)
+            // Satin's own centerRun/zigzag underlay traces the column the
+            // same direction generatePartial's crossings do -- start to
+            // end -- which means underlay's own *last* point sits at the
+            // column's far tip while the crossings' *first* point sits
+            // back at its near tip. Concatenated as one continuous same-
+            // color run (see the identical issue -- and identical fix
+            // shape -- for tatami fill's edge-run underlay just above),
+            // that seam becomes a single very long "stitch" running
+            // straight across the whole column, which StitchFilter then
+            // chops into several equal segments. Usually invisible,
+            // buried under the dense satin coverage that follows on a
+            // plain solid column -- but found directly against a real
+            // raster-imported logo's own bent "L", where that same seam
+            // happened to cut straight across the shape's own open notch,
+            // with no satin coverage there to hide it. Reversing underlay
+            // here (its own direction is otherwise irrelevant -- it's a
+            // stabilizing base layer, not a directional stitch) puts its
+            // last point back at the *near* tip, right next to where the
+            // crossings begin, collapsing that seam back down to a
+            // genuinely short stitch. See CHANGELOG.md.
             do {
-                return [underlay + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
+                return [Array(underlay.reversed()) + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
             } catch SatinGenerationError.shapeNotSuitable {
                 // `StitchTypeClassifier` picks satin from a shape's average
                 // width alone, which is a real width measurement but no

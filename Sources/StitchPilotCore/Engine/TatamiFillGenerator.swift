@@ -170,10 +170,28 @@ public enum TatamiFillGenerator {
         // `breakThresholdMM` becomes a genuine run boundary the caller can
         // turn into a trim+jump. Distance is measured in this rotated space,
         // which rotation preserves exactly.
+        //
+        // Short alone isn't sufficient, though: `breakThresholdMM` (spec:
+        // `maxJumpWithoutTrimMM`) exists on the premise that an untrimmed
+        // same-color carry this short ends up buried under stitching sewn
+        // moments later, the same reasoning `HiddenTravelRouter` uses
+        // between separate objects -- but *within* one fill object, two
+        // chains can sit on opposite sides of the shape's own concave
+        // notch (e.g. a "U"'s open top, between its two strokes), where
+        // the straight connector between them crosses empty space with no
+        // fill on either side of it to hide it under. Found directly
+        // against a real raster-imported logo's own "U" -- a genuine
+        // ~11.5mm diagonal scratch across its open notch, well under the
+        // default 15mm threshold and so never converted to a trim. Only
+        // merge when the connector's own path actually stays inside the
+        // shape, mirroring `HiddenTravelRouter.pathIsCoveredByShape`; a
+        // connector that would leave the shape becomes a real run
+        // boundary instead, however short it is. See CHANGELOG.md.
         var mergedRuns: [[Point2D]] = []
         for chainPoints in rotatedChainPoints {
             if let lastPoint = mergedRuns.last?.last, let firstPoint = chainPoints.first,
-               lastPoint.distance(to: firstPoint) <= breakThresholdMM {
+               lastPoint.distance(to: firstPoint) <= breakThresholdMM,
+               connectorStaysInsideShape(from: lastPoint, to: firstPoint, polygons: rotatedPolygons) {
                 mergedRuns[mergedRuns.count - 1].append(contentsOf: chainPoints)
             } else {
                 mergedRuns.append(chainPoints)
@@ -181,6 +199,22 @@ public enum TatamiFillGenerator {
         }
 
         return mergedRuns.map { run in run.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) } }
+    }
+
+    /// Samples several interior points along the straight line from `a` to
+    /// `b` and checks each stays inside `polygons` (even-odd, so a hole
+    /// correctly counts as outside) -- endpoints excluded deliberately,
+    /// same reasoning as `HiddenTravelRouter.pathIsCoveredByShape`: both
+    /// endpoints already sit on real stitched content by construction, so
+    /// they're not informative about whether the path *between* them does.
+    private static func connectorStaysInsideShape(from a: Point2D, to b: Point2D, polygons: [[Point2D]]) -> Bool {
+        let sampleCount = 5
+        for step in 1...sampleCount {
+            let t = Double(step) / Double(sampleCount + 1)
+            let sample = Point2D(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+            guard PolygonGeometry.pointInPolygons(sample, polygons: polygons) else { return false }
+        }
+        return true
     }
 
     /// One scanline row's crossing interval, in rotated space, before

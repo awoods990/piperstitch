@@ -323,6 +323,36 @@ public enum SatinColumnGenerator {
         return false
     }
 
+    /// True when any interior crossing OR zigzag connector's own midpoint
+    /// falls outside the shape's actual boundary -- catches a column whose
+    /// rails don't correspond to a real column even when they never
+    /// directly cross each other (`isTwisted`'s own check): a concave bend
+    /// (e.g. an "L", two straight strokes meeting at a right angle) can
+    /// rail-walk into a single crossing -- or, just as easily, the zigzag
+    /// path's own *connector* between one crossing and the next
+    /// (`generate`'s actual stitch order alternates A[i], B[i], A[i+1],
+    /// B[i+1]... -- the connector is the B[i]-to-A[i+1] leg) -- that spans
+    /// straight across the shape's own empty notch, without ever
+    /// intersecting a neighboring segment. A real column's centerline,
+    /// which is what every one of these midpoints traces, should never
+    /// leave its own outline.
+    static func crossingsEscapeTheShape(_ resampledA: [Point2D], _ resampledB: [Point2D], polygon: [Point2D]) -> Bool {
+        let count = resampledA.count
+        guard count > 2, polygon.count >= 3 else { return false }
+        let interior = interiorRange(count: count)
+        guard interior.count > 1 else { return false }
+        for i in interior {
+            if !PolygonGeometry.pointInPolygon(midpoint(resampledA[i], resampledB[i]), polygon: polygon) {
+                return true
+            }
+            if i + 1 < count, interior.contains(i + 1),
+               !PolygonGeometry.pointInPolygon(midpoint(resampledB[i], resampledA[i + 1]), polygon: polygon) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Standard strict segment/segment intersection test via orientation
     /// signs (cross products) -- true only for a genuine crossing, not
     /// segments that merely touch at a shared endpoint or run collinear.
@@ -383,7 +413,23 @@ public enum SatinColumnGenerator {
         // each other rather than sweeping smoothly along the shape. Ring
         // columns are exempt -- their rails come from angular ray-casting
         // (`computeRingRails`), which can't twist this way by construction.
-        if !isClosedRing, isTwisted(resampledA, resampledB) {
+        //
+        // `isTwisted` alone doesn't catch every broken case, though: a
+        // concave BEND rather than a full branch (e.g. an "L" -- one
+        // vertical stroke and one horizontal stroke meeting at a right
+        // angle) can rail-walk into a single crossing that spans straight
+        // across the shape's own empty notch, landing far outside its
+        // boundary, without that crossing ever intersecting its
+        // neighbors -- `isTwisted`'s adjacent-segment check has nothing to
+        // catch there. Checking that every interior crossing's own
+        // midpoint actually lands inside the shape catches this
+        // complementary failure mode: a real column's centerline should
+        // never leave its own outline. Found directly against a real
+        // raster-imported logo's own "L" (see `StitchTypeClassifier`'s
+        // doc comment on this same case) -- reproduced and confirmed fixed
+        // via `--lettering-preview`-style direct rendering before this
+        // check was added; see CHANGELOG.md.
+        if !isClosedRing, isTwisted(resampledA, resampledB) || crossingsEscapeTheShape(resampledA, resampledB, polygon: shape.subPaths.first?.points ?? []) {
             throw SatinGenerationError.shapeNotSuitable("this outline branches into more than one column and can't be represented as a single satin column")
         }
 
