@@ -4,6 +4,47 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: three issues found against a real Brother-machine sew-out, plus a paint-tool improvement
+
+- **Under-filled satin/tatami coverage.** A real sew-out of this app's own
+  default density (0.4mm) showed individual crossings/rows as separate
+  visible ridges rather than solid fill -- on standard fabric, nothing
+  else about the design flagged as risky. Tightened both `satinDensityMM`
+  and `fillSpacingMM` defaults to 0.32mm. This is a best-effort
+  adjustment, not a physical simulation -- real thread lay, machine
+  tension, and registration drift aren't something a flat digitized
+  coordinate render can fully predict, which is also why the on-screen
+  preview never showed this gap in the first place: it draws the exact
+  digitized geometry, not a simulation of how a specific fabric/thread
+  actually takes it up. Also added a `QualityAnalyzer` warning when fine
+  detail (under 3mm) lands on a fabric type (terry/plush, stretch knit)
+  whose own pile or stretch is a physical substrate problem no amount of
+  coordinate-level compensation can correct for.
+- **Sewing order starting mid-word instead of at the first letter.** The
+  very first object placed came from raw authoring order, which for
+  raster-imported artwork is really "whichever pixel a top-to-bottom,
+  left-to-right mask scan happened to reach first" -- a letter with a
+  slightly different baseline or an ascender/accent can get scanned
+  before an earlier letter sitting a little lower, with no relationship
+  to actual reading order. Now starts from whichever ready object reads
+  first (left-to-right, then top-to-bottom) by actual position instead.
+- **`ShapeMerger` silently discarding a shape's own holes.** Rasterizing
+  and re-tracing a shape (via "Merge Shapes," the erase pen, or Paint)
+  only ever traced each connected region's *outer* boundary -- any
+  letterform counter (O, A, B, D, P, Q, R...) merged or painted anywhere
+  near lost its hole entirely, becoming solid. `RasterTracing` gained a
+  shared `findEnclosedRegionBoundaries` (lifted out of `ImageImporter`'s
+  own already-correct hole detection, which used the identical
+  flood-fill-from-the-border technique) so `ShapeMerger` finds holes the
+  same way raster import always has.
+- **Paint now recognizes when a stroke is filling a gap in an existing
+  object.** With nothing selected, a stroke that touches exactly one
+  object is assumed to be completing that object, not starting an
+  unrelated new shape on top of it -- the new coverage takes that
+  object's own thread color either way, and a dialog asks whether to
+  actually fuse the geometry together or keep it as a separate
+  same-colored object.
+
 ## Fixed: readiness score stuck regardless of edits, trim count explosion, Messages sharing, Colors stat
 
 - **The "N stitches under 0.15mm" quality warning showed up on every

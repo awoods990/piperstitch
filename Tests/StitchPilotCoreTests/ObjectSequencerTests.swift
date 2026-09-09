@@ -105,10 +105,36 @@ struct ObjectSequencerTests {
 
         // Authored with the notch square first. A bounding-box-only check
         // would (wrongly) treat the L as containing it and reorder the L
-        // first; true polygon containment finds no relationship, so
-        // authoring order is left untouched.
+        // first; true polygon containment finds no relationship, so the
+        // order comes entirely from the ordinary (non-containment)
+        // tie-break -- reading order (left-to-right, then top-to-bottom)
+        // of each object's own bounding-box center, which for this pair
+        // happens to put the L-shape (center (50,50)) ahead of the notch
+        // square (center (65,65)) regardless of which was authored first.
         let sequenced = ObjectSequencer.sequence([notchSquare, lObject])
-        #expect(sequenced.map { $0.name } == ["notchSquare", "lShape"])
+        #expect(sequenced.map { $0.name } == ["lShape", "notchSquare"])
+    }
+
+    /// The actual real-world bug this whole first-pick heuristic exists to
+    /// fix: raster-imported lettering authors its objects in whatever
+    /// order `RasterTracing.connectedComponents`'s own top-to-bottom,
+    /// left-to-right pixel scan happened to discover them in -- which,
+    /// for a row of letters with slightly different baselines/ascenders
+    /// (an accented character, a dotted "i", ...), doesn't reliably match
+    /// the word's actual left-to-right reading order. Found against a
+    /// real machine-sewn design that started mid-word instead of at its
+    /// first letter -- authoring order put a *middle* letter first
+    /// despite it sitting well to the right of the true first letter.
+    /// See CHANGELOG.md.
+    @Test func firstObjectPlacedIsTheLeftmostOneNotWhicheverWasAuthoredFirst() {
+        // Same color, no containment relationship -- authored out of
+        // reading order, middle letter first.
+        let middle = square(40, 0, 10, name: "middle")
+        let first = square(0, 2, 10, name: "first") // slightly different baseline, same as a real accented/dotted letter would have
+        let last = square(80, 0, 10, name: "last")
+
+        let sequenced = ObjectSequencer.sequence([middle, first, last])
+        #expect(sequenced.map { $0.name } == ["first", "middle", "last"], "sewing should start at the leftmost letter regardless of authoring order")
     }
 
     @Test func sequenceGeneratedReversesPathForCloserApproach() {

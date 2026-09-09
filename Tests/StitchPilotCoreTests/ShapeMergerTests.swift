@@ -98,4 +98,39 @@ struct ShapeMergerTests {
         #expect(ShapeMerger.subtractStroke([], strokePoints: [Point2D(0, 0)], radiusMM: 2) == nil)
         #expect(ShapeMerger.subtractStroke([square(0, 0, 10)], strokePoints: [], radiusMM: 2) == nil)
     }
+
+    private func ring(outer outerSize: Double, hole holeInset: Double) -> VectorShape {
+        VectorShape(subPaths: [
+            SubPath(points: [Point2D(0, 0), Point2D(outerSize, 0), Point2D(outerSize, outerSize), Point2D(0, outerSize)], closed: true),
+            SubPath(points: [Point2D(holeInset, holeInset), Point2D(outerSize - holeInset, holeInset),
+                              Point2D(outerSize - holeInset, outerSize - holeInset), Point2D(holeInset, outerSize - holeInset)], closed: true),
+        ])
+    }
+
+    /// A shape with its own hole (a letterform counter -- O, A, B...)
+    /// must keep that hole through a plain merge, not just when the hole
+    /// happens to be the only input -- rasterizing and re-tracing without
+    /// separately finding enclosed background regions silently fills a
+    /// hole in, turning e.g. an "O" solid. Found directly while building
+    /// the paint-tool's own "merge into the object underneath" prompt,
+    /// which made this reachable far more often than the existing
+    /// Merge Shapes button did. See CHANGELOG.md.
+    @Test func mergeAloneStillPreservesAShapesOwnHole() throws {
+        let o = ring(outer: 20, hole: 5)
+        let merged = try #require(ShapeMerger.merge([o]))
+        #expect(merged.subPaths.count == 2, "the hole must survive being rasterized and re-traced")
+    }
+
+    /// A brush stroke that overlaps a holed shape's *outer* boundary
+    /// (filling in a gap on its outside edge, not touching the hole
+    /// itself) should still keep the hole -- only the outer boundary
+    /// fuses with the stroke.
+    @Test func brushStrokeOverlappingAHoledShapesOuterEdgeStillPreservesTheHole() throws {
+        let o = ring(outer: 20, hole: 5)
+        // Starts just inside the outer edge (x=19) and extends past it (x=24).
+        let stroke = [Point2D(19, 10), Point2D(24, 10)]
+        let merged = try #require(ShapeMerger.mergeWithStroke([o], strokePoints: stroke, radiusMM: 2))
+        #expect(merged.subPaths.count == 2, "outer boundary fuses with the stroke (1 subpath), hole stays separate (1 more)")
+        #expect(merged.boundingBox.maxX > 20, "the merged shape should now extend past the original outer edge")
+    }
 }

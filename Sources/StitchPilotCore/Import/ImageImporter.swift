@@ -282,53 +282,18 @@ public enum ImageImporter {
     }
 
     /// Finds background-colored regions fully enclosed within
-    /// `clusterMask`'s foreground and traces each one's boundary, the same
-    /// way an outer shape's boundary is traced. Distinguished from ordinary
-    /// background (which touches the image border) via a flood fill from
-    /// the border across background pixels only: anything *not* reached is
-    /// enclosed by foreground on every side, not touching the outside at
-    /// all -- the standard "flood-fill from the edges to find holes"
-    /// technique.
+    /// `clusterMask`'s foreground and traces each one's boundary --
+    /// `RasterTracing.findEnclosedRegionBoundaries` (shared with
+    /// `ShapeMerger`, which needs the identical hole-finding logic to
+    /// avoid silently losing a shape's own holes when re-tracing) does
+    /// the actual work; this just applies this importer's own
+    /// simplification afterward.
     private static func findHoleBoundaries(clusterMask: [Bool], width: Int, height: Int) -> [[Point2D]] {
-        var reachableBackground = [Bool](repeating: false, count: width * height)
-        var queue: [Int] = []
-        func seed(_ x: Int, _ y: Int) {
-            let i = y * width + x
-            guard !clusterMask[i], !reachableBackground[i] else { return }
-            reachableBackground[i] = true
-            queue.append(i)
-        }
-        for x in 0..<width { seed(x, 0); seed(x, height - 1) }
-        for y in 0..<height { seed(0, y); seed(width - 1, y) }
-
-        var head = 0
-        while head < queue.count {
-            let i = queue[head]; head += 1
-            let x = i % width, y = i / width
-            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                let nx = x + dx, ny = y + dy
-                guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
-                let ni = ny * width + nx
-                guard !clusterMask[ni], !reachableBackground[ni] else { continue }
-                reachableBackground[ni] = true
-                queue.append(ni)
-            }
-        }
-
-        var holeMask = [Bool](repeating: false, count: width * height)
-        for i in 0..<(width * height) where !clusterMask[i] && !reachableBackground[i] {
-            holeMask[i] = true
-        }
-
-        let holeComponents = RasterTracing.connectedComponents(mask: holeMask, width: width, height: height, minAreaPixels: minComponentAreaPixels)
-        var boundaries: [[Point2D]] = []
-        for hole in holeComponents {
-            guard let boundary = RasterTracing.traceBoundary(mask: holeMask, width: width, height: height, start: hole.topLeftMost) else { continue }
+        let rawBoundaries = RasterTracing.findEnclosedRegionBoundaries(foregroundMask: clusterMask, width: width, height: height, minAreaPixels: minComponentAreaPixels)
+        return rawBoundaries.compactMap { boundary in
             let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
-            guard simplified.count > 2 else { continue }
-            boundaries.append(simplified)
+            return simplified.count > 2 ? simplified : nil
         }
-        return boundaries
     }
 
     /// If a traced boundary is very close to a circle (common for round

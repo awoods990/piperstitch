@@ -91,6 +91,17 @@ struct ContentView: View {
         .sheet(isPresented: $showingAddLettering) { AddLetteringSheet() }
         .sheet(isPresented: $showingDetectedText) { DetectedTextSheet() }
         .sheet(isPresented: $showingHelp) { GlossarySheet() }
+        .confirmationDialog(
+            app.pendingPaintMerge.map { "This looks like it's filling a gap in \u{201C}\($0.targetObjectName)\u{201D}. Merge it in?" } ?? "",
+            isPresented: Binding(get: { app.pendingPaintMerge != nil }, set: { if !$0 { app.cancelPaintMerge() } }),
+            titleVisibility: .visible
+        ) {
+            Button("Merge Into It") { app.confirmPaintMerge() }
+            Button("Keep as Separate Object") { app.keepPaintSeparate() }
+            Button("Cancel", role: .cancel) { app.cancelPaintMerge() }
+        } message: {
+            Text("Either way, the new stitching will match its thread color.")
+        }
         .safeAreaInset(edge: .bottom) {
             statusBar
         }

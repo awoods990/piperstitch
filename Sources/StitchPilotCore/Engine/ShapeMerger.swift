@@ -186,15 +186,33 @@ public enum ShapeMerger {
         let components = RasterTracing.connectedComponents(mask: mask, width: sizing.width, height: sizing.height, minAreaPixels: 1)
         guard !components.isEmpty else { return nil }
 
+        func toDocPoints(_ boundary: [Point2D]) -> SubPath? {
+            let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
+            guard simplified.count > 2 else { return nil }
+            let docPoints = simplified.map { Point2D(sizing.originX + $0.x / sizing.scale, sizing.originY + $0.y / sizing.scale) }
+            return SubPath(points: docPoints, closed: true)
+        }
+
         var subPaths: [SubPath] = []
         for component in components {
-            guard let boundary = RasterTracing.traceBoundary(mask: mask, width: sizing.width, height: sizing.height, start: component.topLeftMost) else { continue }
-            let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
-            guard simplified.count > 2 else { continue }
-            let docPoints = simplified.map { Point2D(sizing.originX + $0.x / sizing.scale, sizing.originY + $0.y / sizing.scale) }
-            subPaths.append(SubPath(points: docPoints, closed: true))
+            guard let boundary = RasterTracing.traceBoundary(mask: mask, width: sizing.width, height: sizing.height, start: component.topLeftMost),
+                  let subPath = toDocPoints(boundary) else { continue }
+            subPaths.append(subPath)
         }
         guard !subPaths.isEmpty else { return nil }
+
+        // Any of those same connected components can still have its own
+        // hole -- a letterform counter, most commonly. Rasterizing and
+        // re-tracing without also finding these would otherwise silently
+        // fill them in (an "O" merged or painted anywhere near becoming a
+        // solid blob), even though the outer-boundary tracing above is
+        // completely correct on its own terms: it was never asked to look
+        // for enclosed background at all. See CHANGELOG.md.
+        let holeBoundaries = RasterTracing.findEnclosedRegionBoundaries(foregroundMask: mask, width: sizing.width, height: sizing.height, minAreaPixels: 1)
+        for boundary in holeBoundaries {
+            guard let subPath = toDocPoints(boundary) else { continue }
+            subPaths.append(subPath)
+        }
         return VectorShape(subPaths: subPaths)
     }
 

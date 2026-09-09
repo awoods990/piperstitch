@@ -36,7 +36,13 @@ public enum QualityAnalyzer {
     private static let manyStitchesThreshold = 50_000
     private static let manyTrimsThreshold = 30
 
-    public static func analyze(_ plan: StitchPlan, hoopWidthMM: Double? = nil, hoopHeightMM: Double? = nil) -> EmbroideryReadinessReport {
+    /// `document` is optional (and defaults to nil) purely for source
+    /// compatibility with existing callers/tests that only ever had a
+    /// flattened `StitchPlan` to give this -- `checkFabricSuitability`
+    /// below is the one check that actually needs it (fabric type and
+    /// per-object shape width aren't recoverable from stitch commands
+    /// alone) and simply does nothing without it.
+    public static func analyze(_ plan: StitchPlan, hoopWidthMM: Double? = nil, hoopHeightMM: Double? = nil, document: StitchDocument? = nil) -> EmbroideryReadinessReport {
         var issues: [QualityIssue] = []
 
         checkStitchLengths(plan, into: &issues)
@@ -45,6 +51,7 @@ public enum QualityAnalyzer {
         checkStitchCount(plan, into: &issues)
         checkHoopFit(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM, into: &issues)
         checkEmptyDesign(plan, into: &issues)
+        checkFabricSuitability(document, into: &issues)
 
         let score = max(0, min(100, 100 - issues.reduce(0) { $0 + $1.scorePenalty }))
         return EmbroideryReadinessReport(score: score, issues: issues)
@@ -155,5 +162,59 @@ public enum QualityAnalyzer {
         if plan.stitchCount == 0 {
             issues.append(QualityIssue(severity: .critical, message: "Design has no stitches.", scorePenalty: 100))
         }
+    }
+
+    /// Below this width, a satin/fill region reads as "fine detail" --
+    /// the practical threshold real digitizers use for "don't try this on
+    /// a difficult substrate."
+    private static let fineDetailThresholdMM = 3.0
+    /// Fabrics whose own pull-compensation multiplier already marks them
+    /// as meaningfully distorting (`FabricType.compensationMultiplier`)
+    /// -- terry/plush for its pile height (fine stitching can sink into
+    /// or get swallowed by the pile entirely, a physical substrate
+    /// problem no amount of coordinate-level pull compensation can
+    /// correct for), stretch knit for how much the fabric itself moves
+    /// under the hoop.
+    private static let challengingFabrics: Set<FabricType> = [.terry, .stretchKnit]
+
+    /// Static coordinate-level pull/push compensation (`PullCompensation
+    /// Calculator`) is a best-effort estimate, not a physical simulation
+    /// -- it shifts where each stitch lands, but can't add stitching that
+    /// isn't there, and can't account for a fabric's own pile or weave
+    /// swallowing thin coverage. A design's *realistic* on-screen preview
+    /// renders the exact digitized coordinates, so it has no way to show
+    /// this kind of real-world gap either -- it isn't a bug in the
+    /// preview, just the limit of what a flat render of stitch positions
+    /// can represent. Found directly against a real Brother-machine
+    /// sew-out that showed letter gaps the app's own preview never hinted
+    /// at. This can only warn, not fix the underlying physical mismatch
+    /// -- the actionable options are a bolder/larger design, denser
+    /// stitching, or a stabilizer topping, all decisions only the person
+    /// holding the fabric can actually make. See CHANGELOG.md.
+    private static func checkFabricSuitability(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
+        guard let document else { return }
+        var narrowest: (widthMM: Double, fabric: FabricType)?
+        for object in document.objects {
+            guard challengingFabrics.contains(object.parameters.fabricType),
+                  object.stitchType == .satin || object.stitchType == .tatamiFill,
+                  let outer = object.shape.subPaths.first, outer.points.count >= 3 else { continue }
+            let area = abs(PolygonGeometry.signedArea(outer.points))
+            let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
+            let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
+            let length = hi - lo
+            guard length > 0, area > 0 else { continue }
+            let width = area / length
+            guard width < fineDetailThresholdMM else { continue }
+            if narrowest == nil || width < narrowest!.widthMM {
+                narrowest = (width, object.parameters.fabricType)
+            }
+        }
+        guard let narrowest else { return }
+        issues.append(QualityIssue(
+            severity: .warning,
+            message: String(format: "Fine detail (as narrow as %.1fmm) on %@ fabric often doesn't sew cleanly -- the pile or stretch can swallow or distort thin satin/fill in a way this preview can't show. Consider a bolder design, a larger size, or a stabilizer topping.",
+                             narrowest.widthMM, narrowest.fabric.shortName),
+            scorePenalty: 8
+        ))
     }
 }

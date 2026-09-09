@@ -135,6 +135,62 @@ public enum RasterTracing {
 
         return (closed && boundary.count > 2) ? boundary : nil
     }
+
+    // MARK: - Enclosed-region (hole) detection
+
+    /// Finds every background region fully enclosed within
+    /// `foregroundMask`'s foreground and traces each one's boundary, the
+    /// same way an outer shape's own boundary is traced. Distinguished
+    /// from ordinary background (which touches the mask's own border) via
+    /// a flood fill from the border across background pixels only:
+    /// anything *not* reached that way is enclosed by foreground on every
+    /// side, not touching the outside at all -- the standard "flood-fill
+    /// from the edges to find holes" technique. Originally
+    /// `ImageImporter`'s own private `findHoleBoundaries`, factored out
+    /// here so `ShapeMerger` can find holes the same way instead of
+    /// silently losing them: rasterizing-and-retracing a shape that
+    /// already had one (a letterform counter, most commonly) without this
+    /// step traces only the outer boundary and drops the hole entirely,
+    /// turning e.g. an "O" solid.
+    public static func findEnclosedRegionBoundaries(foregroundMask: [Bool], width: Int, height: Int, minAreaPixels: Int = 1) -> [[Point2D]] {
+        var reachableBackground = [Bool](repeating: false, count: width * height)
+        var queue: [Int] = []
+        func seed(_ x: Int, _ y: Int) {
+            let i = y * width + x
+            guard !foregroundMask[i], !reachableBackground[i] else { return }
+            reachableBackground[i] = true
+            queue.append(i)
+        }
+        for x in 0..<width { seed(x, 0); seed(x, height - 1) }
+        for y in 0..<height { seed(0, y); seed(width - 1, y) }
+
+        var head = 0
+        while head < queue.count {
+            let i = queue[head]; head += 1
+            let x = i % width, y = i / width
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let nx = x + dx, ny = y + dy
+                guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                let ni = ny * width + nx
+                guard !foregroundMask[ni], !reachableBackground[ni] else { continue }
+                reachableBackground[ni] = true
+                queue.append(ni)
+            }
+        }
+
+        var holeMask = [Bool](repeating: false, count: width * height)
+        for i in 0..<(width * height) where !foregroundMask[i] && !reachableBackground[i] {
+            holeMask[i] = true
+        }
+
+        let holeComponents = connectedComponents(mask: holeMask, width: width, height: height, minAreaPixels: minAreaPixels)
+        var boundaries: [[Point2D]] = []
+        for hole in holeComponents {
+            guard let boundary = traceBoundary(mask: holeMask, width: width, height: height, start: hole.topLeftMost) else { continue }
+            boundaries.append(boundary)
+        }
+        return boundaries
+    }
 }
 
 private func == (a: (x: Int, y: Int), b: (x: Int, y: Int)) -> Bool { a.x == b.x && a.y == b.y }

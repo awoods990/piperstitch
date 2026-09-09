@@ -98,7 +98,7 @@ final class AppState: ObservableObject {
     @Published var selectedHoop: HoopProfile? = HoopProfile.commonHoops[2] {
         didSet {
             guard let plan = stitchPlan else { return }
-            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM)
+            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM, document: document)
         }
     }
 
@@ -428,38 +428,141 @@ final class AppState: ObservableObject {
             : "Erased \(removedIDs.count) object(s) entirely."
     }
 
+    /// A paint stroke released with nothing selected, that turned out to
+    /// touch exactly one existing object -- held here while
+    /// `PaintMergeConfirmSheet` asks whether to actually merge it in,
+    /// rather than committing either way immediately. See `paintStroke`'s
+    /// own doc comment.
+    struct PendingPaintMerge {
+        var targetObjectID: EmbroideryObject.ID
+        var targetObjectName: String
+        var strokePoints: [Point2D]
+        var radiusMM: Double
+    }
+    @Published var pendingPaintMerge: PendingPaintMerge?
+
     /// Extends the single selected object's shape with a freehand brush
     /// stroke, or -- if nothing is selected -- creates a brand-new object
     /// from the stroke alone. A paint tool rather than a vector-editing
     /// one specifically so fixing a gap doesn't require understanding why
     /// the gap happened, just seeing it and drawing over it.
+    ///
+    /// With nothing selected, a stroke that touches exactly one existing
+    /// object is assumed to be filling a gap *in that object*, not
+    /// starting an unrelated new shape sitting on top of it -- the same
+    /// visual intent whether or not that object happened to be selected
+    /// first. Rather than silently guessing, this asks (via
+    /// `pendingPaintMerge`) whether to actually fuse the stroke into that
+    /// object or keep it as its own object; either way the new coverage
+    /// takes that object's own thread color, since a "fixed gap" reads as
+    /// the same material as what surrounds it, not a fresh color choice.
+    /// A stroke that touches no object (or more than one, which is
+    /// ambiguous) falls back to the original behavior: a brand-new object
+    /// in the manually chosen paint color.
     func paintStroke(points: [Point2D], radiusMM: Double) {
-        guard radiusMM > 0, !points.isEmpty, var current = document else { return }
+        guard radiusMM > 0, !points.isEmpty, let current = document else { return }
 
         if let id = selectedObjectID, let index = current.objects.firstIndex(where: { $0.id == id }) {
-            guard let extended = ShapeMerger.mergeWithStroke([current.objects[index].shape], strokePoints: points, radiusMM: radiusMM) else { return }
-            commitImmediateUndoSnapshot()
-            current.objects[index].shape = extended
-            current.objects[index].stitchType = StitchTypeClassifier.classify(shape: extended, parameters: current.objects[index].parameters)
-            document = current
-            scheduleLiveRegenerate()
-            statusMessage = "Extended \(current.objects[index].name)."
-        } else {
-            guard let strokeShape = ShapeMerger.mergeWithStroke([], strokePoints: points, radiusMM: radiusMM) else { return }
-            commitImmediateUndoSnapshot()
-            let parameters = StitchGenerationParameters()
-            let stitchType = StitchTypeClassifier.classify(shape: strokeShape, parameters: parameters)
-            let threadColor = matchToThreadLibrary
-                ? (ThreadLibrary.nearestMatch(to: paintColorRGB, in: effectivePalette) ?? .generic(paintColorRGB, name: "Painted Color"))
-                : .generic(paintColorRGB, name: "Painted Color")
-            let newObject = EmbroideryObject(name: "Painted Shape", shape: strokeShape, stitchType: stitchType,
-                                              threadColor: threadColor, parameters: parameters)
-            current.objects.append(newObject)
-            document = current
-            selectedObjectIDs = [newObject.id]
-            scheduleLiveRegenerate()
-            statusMessage = "Added a new painted shape."
+            extendObject(at: index, in: current, withStroke: points, radiusMM: radiusMM)
+            return
         }
+
+        let overlapping = objectsOverlappingStroke(points, radiusMM: radiusMM, in: current)
+        if overlapping.count == 1 {
+            let object = overlapping[0].object
+            pendingPaintMerge = PendingPaintMerge(targetObjectID: object.id, targetObjectName: object.name,
+                                                   strokePoints: points, radiusMM: radiusMM)
+            return
+        }
+
+        addNewPaintedObject(points: points, radiusMM: radiusMM, threadColor: nil)
+    }
+
+    /// Every existing object a freehand stroke actually touches, not just
+    /// comes near -- `ShapeMerger.mergeWithStroke` unions the stroke with
+    /// each bounding-box candidate: a real, rasterized overlap test that
+    /// already accounts for the brush's own radius, rather than an
+    /// approximate distance-to-boundary heuristic. A stroke that never
+    /// touches the object traces as the object's own subpaths plus one
+    /// fully separate one for the stroke itself -- exactly
+    /// `object.shape.subPaths.count + 1` -- so a touch is signaled by the
+    /// merged result having *fewer* subpaths than that, not necessarily
+    /// exactly one: a holed letterform (O, A, B...) still has its own
+    /// hole as a genuinely separate subpath even once the stroke fuses
+    /// with its outer boundary.
+    private func objectsOverlappingStroke(_ points: [Point2D], radiusMM: Double, in document: StitchDocument) -> [(index: Int, object: EmbroideryObject)] {
+        var strokeBox = BoundingBox.empty
+        for p in points { strokeBox = strokeBox.union(BoundingBox(minX: p.x - radiusMM, minY: p.y - radiusMM, maxX: p.x + radiusMM, maxY: p.y + radiusMM)) }
+        var matches: [(index: Int, object: EmbroideryObject)] = []
+        for (i, object) in document.objects.enumerated() where object.shape.boundingBox.intersects(strokeBox) {
+            guard let merged = ShapeMerger.mergeWithStroke([object.shape], strokePoints: points, radiusMM: radiusMM),
+                  merged.subPaths.count < object.shape.subPaths.count + 1 else { continue }
+            matches.append((i, object))
+        }
+        return matches
+    }
+
+    private func extendObject(at index: Int, in current: StitchDocument, withStroke points: [Point2D], radiusMM: Double) {
+        var current = current
+        guard let extended = ShapeMerger.mergeWithStroke([current.objects[index].shape], strokePoints: points, radiusMM: radiusMM) else { return }
+        commitImmediateUndoSnapshot()
+        current.objects[index].shape = extended
+        current.objects[index].stitchType = StitchTypeClassifier.classify(shape: extended, parameters: current.objects[index].parameters)
+        document = current
+        scheduleLiveRegenerate()
+        statusMessage = "Extended \(current.objects[index].name)."
+    }
+
+    /// `threadColor` nil means "no matched object -- use the manually
+    /// chosen paint color," the original create-new-shape behavior;
+    /// non-nil (from `keepPaintSeparate`) means "matched an object's
+    /// color, but the user chose not to fuse the geometry into it."
+    private func addNewPaintedObject(points: [Point2D], radiusMM: Double, threadColor: ThreadColor?) {
+        guard var current = document, let strokeShape = ShapeMerger.mergeWithStroke([], strokePoints: points, radiusMM: radiusMM) else { return }
+        commitImmediateUndoSnapshot()
+        let parameters = StitchGenerationParameters()
+        let stitchType = StitchTypeClassifier.classify(shape: strokeShape, parameters: parameters)
+        let resolvedColor = threadColor ?? (matchToThreadLibrary
+            ? (ThreadLibrary.nearestMatch(to: paintColorRGB, in: effectivePalette) ?? .generic(paintColorRGB, name: "Painted Color"))
+            : .generic(paintColorRGB, name: "Painted Color"))
+        let newObject = EmbroideryObject(name: "Painted Shape", shape: strokeShape, stitchType: stitchType,
+                                          threadColor: resolvedColor, parameters: parameters)
+        current.objects.append(newObject)
+        document = current
+        selectedObjectIDs = [newObject.id]
+        scheduleLiveRegenerate()
+        statusMessage = "Added a new painted shape."
+    }
+
+    /// Fuses a pending paint stroke into the object it was found to touch.
+    func confirmPaintMerge() {
+        guard let pending = pendingPaintMerge, let current = document,
+              let index = current.objects.firstIndex(where: { $0.id == pending.targetObjectID }) else {
+            pendingPaintMerge = nil
+            return
+        }
+        extendObject(at: index, in: current, withStroke: pending.strokePoints, radiusMM: pending.radiusMM)
+        selectedObjectIDs = [pending.targetObjectID]
+        pendingPaintMerge = nil
+    }
+
+    /// Keeps a pending paint stroke as its own object instead of fusing
+    /// it in -- still matched to the touched object's own thread color
+    /// (see `paintStroke`'s doc comment on why), just not joined
+    /// geometrically.
+    func keepPaintSeparate() {
+        guard let pending = pendingPaintMerge, let document,
+              let target = document.objects.first(where: { $0.id == pending.targetObjectID }) else {
+            pendingPaintMerge = nil
+            return
+        }
+        addNewPaintedObject(points: pending.strokePoints, radiusMM: pending.radiusMM, threadColor: target.threadColor)
+        pendingPaintMerge = nil
+    }
+
+    /// Discards a pending paint stroke entirely -- nothing added.
+    func cancelPaintMerge() {
+        pendingPaintMerge = nil
     }
 
     // MARK: - Lettering
@@ -829,7 +932,7 @@ final class AppState: ObservableObject {
             stitchPlan = plan
             stitchPlanGeneration = capturedGeneration
             lastColorSequence = colors
-            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM)
+            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM, document: document)
             statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
         } catch {
             guard !Task.isCancelled else { return }
@@ -1152,7 +1255,7 @@ final class AppState: ObservableObject {
             // after generation, not as a separate manual step — the user
             // should see whether a design is ready to sew as part of
             // seeing the preview, not have to remember to ask for it.
-            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM)
+            readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: selectedHoop?.widthMM, hoopHeightMM: selectedHoop?.heightMM, document: document)
             statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
         } catch {
             errorMessage = friendlyMessage(for: error)

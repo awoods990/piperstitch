@@ -127,7 +127,17 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     public var maxStitchLengthMM: Double = 12.0
 
     // Phase 2 — satin
-    public var satinDensityMM: Double = 0.4      // spacing between satin crossings
+    // Tightened from an original 0.4mm default: a real Brother-machine
+    // sew-out of this exact default showed visibly under-filled block
+    // letters -- individual crossings distinguishable as separate ridges
+    // rather than reading as one solid fill, on a design with no other
+    // red flag (standard fabric, no tiny/challenging detail). Real-world
+    // thread lay, machine tension, and registration drift all eat into
+    // the same nominal spacing a flat on-screen render represents
+    // perfectly; a denser default has more margin against that gap
+    // between digitized geometry and actual sewn coverage. See
+    // CHANGELOG.md.
+    public var satinDensityMM: Double = 0.32     // spacing between satin crossings
     public var maxSatinWidthMM: Double = 12.0    // beyond this, split or convert to fill
     /// Below this, a section of a column is too narrow to zigzag reliably
     /// (thread bunching, not enough fabric width for a stable satin
@@ -142,7 +152,8 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     public var minSatinWidthMM: Double = 1.5
 
     // Phase 2 — tatami fill
-    public var fillSpacingMM: Double = 0.4
+    // Same tightening, and for the same reason, as `satinDensityMM` above.
+    public var fillSpacingMM: Double = 0.32
     /// `nil` = automatic (see `FillAngleSelector`) — do not always fall
     /// back to a single fixed angle. Set explicitly to override.
     public var fillAngleDegrees: Double? = nil

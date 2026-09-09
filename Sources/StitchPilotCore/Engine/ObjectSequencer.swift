@@ -261,9 +261,24 @@ public enum ObjectSequencer {
     /// "entry" end.
     private static func bestCandidate(in ready: [Int], colors: [RGBColor], entryPoints: [Point2D], exitPoints: [Point2D], lastExitPoint: Point2D?, lastColor: RGBColor?) -> (index: Int, reversed: Bool) {
         guard let lastExitPoint, let lastColor else {
-            // Nothing sewn yet: no color or position to relate to, so keep
-            // the earliest-authored candidate for stable, predictable output.
-            return (ready.min()!, false)
+            // Nothing sewn yet: start from whichever ready candidate reads
+            // first -- left-to-right, then top-to-bottom -- rather than
+            // raw authoring/index order. For raster-imported artwork that
+            // order is really "whichever pixel a top-to-bottom,
+            // left-to-right mask scan happened to reach first"
+            // (`RasterTracing.connectedComponents`'s own scan direction),
+            // which has no reason to line up with a word's actual reading
+            // order -- a letter with a slightly different baseline or an
+            // ascender/accent can easily get scanned before an earlier
+            // letter sitting a little lower. Found against a real
+            // machine-sewn design that started mid-word instead of at its
+            // first letter. See CHANGELOG.md.
+            let first = ready.min { a, b in
+                let pa = entryPoints[a], pb = entryPoints[b]
+                if pa.x != pb.x { return pa.x < pb.x }
+                return pa.y < pb.y
+            }!
+            return (first, false)
         }
 
         let sameColor = ready.filter { colors[$0] == lastColor }
