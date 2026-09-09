@@ -61,4 +61,41 @@ struct ShapeMergerTests {
         let merged = try #require(ShapeMerger.mergeWithStroke([], strokePoints: stroke, radiusMM: 2))
         #expect(!merged.subPaths.isEmpty)
     }
+
+    /// The delete pen's basic case: a stroke along one edge of a shape
+    /// should shrink it, not touch the far side.
+    @Test func eraseStrokeAlongOneEdgeShrinksTheShape() throws {
+        let base = square(0, 0, 10)
+        // A stroke hugging the left edge, radius wide enough to bite in a
+        // couple mm from x=0.
+        let stroke = [Point2D(0, 1), Point2D(0, 9)]
+        let reduced = try #require(ShapeMerger.subtractStroke([base], strokePoints: stroke, radiusMM: 2))
+        #expect(reduced.boundingBox.minX > 0, "erasing along the left edge should push the remaining shape's left bound inward")
+        #expect(reduced.boundingBox.maxX > 8, "the far (right) edge shouldn't be affected by a stroke nowhere near it")
+    }
+
+    /// Erasing every pixel of a shape (a stroke that fully covers it,
+    /// generously oversized) should report nothing left to keep -- the
+    /// caller (`AppState.eraseStroke`) uses this `nil` to delete the
+    /// object outright rather than keeping an empty shape around.
+    @Test func eraseStrokeCoveringTheWholeShapeReturnsNil() {
+        let base = square(0, 0, 10)
+        let stroke = [Point2D(5, 5)]
+        #expect(ShapeMerger.subtractStroke([base], strokePoints: stroke, radiusMM: 20) == nil)
+    }
+
+    /// A stroke that never comes near the shape at all should leave it
+    /// completely unchanged.
+    @Test func eraseStrokeFarFromTheShapeLeavesItUnchanged() throws {
+        let base = square(0, 0, 10)
+        let stroke = [Point2D(1000, 1000), Point2D(1010, 1000)]
+        let result = try #require(ShapeMerger.subtractStroke([base], strokePoints: stroke, radiusMM: 2))
+        #expect(abs(result.boundingBox.width - 10) < 0.5)
+        #expect(abs(result.boundingBox.height - 10) < 0.5)
+    }
+
+    @Test func eraseStrokeWithEmptyInputReturnsNil() {
+        #expect(ShapeMerger.subtractStroke([], strokePoints: [Point2D(0, 0)], radiusMM: 2) == nil)
+        #expect(ShapeMerger.subtractStroke([square(0, 0, 10)], strokePoints: [], radiusMM: 2) == nil)
+    }
 }

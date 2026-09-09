@@ -108,4 +108,14 @@ public struct BoundingBox: Codable, Hashable, Sendable {
         guard !other.isEmpty else { return false }
         return other.minX >= minX && other.maxX <= maxX && other.minY >= minY && other.maxY <= maxY
     }
+
+    /// True when `self` and `other` overlap at all (touching or
+    /// overlapping edges count) -- unlike `contains`, neither has to lie
+    /// fully inside the other. A cheap early-out before a more expensive
+    /// exact geometry test (e.g. an eraser stroke's own bounding box
+    /// against every object's, before actually rasterizing anything).
+    public func intersects(_ other: BoundingBox) -> Bool {
+        guard !isEmpty, !other.isEmpty else { return false }
+        return minX <= other.maxX && maxX >= other.minX && minY <= other.maxY && maxY >= other.minY
+    }
 }

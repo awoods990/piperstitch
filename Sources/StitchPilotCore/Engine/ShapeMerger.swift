@@ -43,6 +43,21 @@ public enum ShapeMerger {
         return merge(shapes + discChain(along: strokePoints, radiusMM: radiusMM))
     }
 
+    /// The delete pen's operation: removes a freehand brush stroke's own
+    /// coverage from `shapes` instead of adding it -- rasterizes `shapes`
+    /// (unioned, exactly like `mergeWithStroke`), then clears whichever
+    /// pixels the same disc-chain stroke covers, and retraces. Returns
+    /// `nil` both for degenerate input and for a stroke that erases every
+    /// remaining pixel -- either way, the caller has nothing left to keep
+    /// as a shape (a fully-erased object should be deleted outright, not
+    /// kept as an empty one).
+    public static func subtractStroke(_ shapes: [VectorShape], strokePoints: [Point2D], radiusMM: Double) -> VectorShape? {
+        let nonEmpty = shapes.filter { !$0.subPaths.isEmpty }
+        guard !nonEmpty.isEmpty, radiusMM > 0, !strokePoints.isEmpty else { return nil }
+        return traceDifference(basePolygonSets: nonEmpty.map { $0.subPaths.map { $0.points } },
+                                erasePolygonSets: discChain(along: strokePoints, radiusMM: radiusMM).map { $0.subPaths.map { $0.points } })
+    }
+
     /// Approximates a brush stroke as a chain of overlapping regular
     /// polygons ("discs") along the path — resampled at a fine enough step
     /// that consecutive discs always overlap, so the chain has no gaps for
@@ -97,8 +112,61 @@ public enum ShapeMerger {
                 combinedBounds = combinedBounds.union(BoundingBox(points: polygon))
             }
         }
-        guard !combinedBounds.isEmpty else { return nil }
+        guard let sizing = rasterSizing(for: combinedBounds) else { return nil }
 
+        var mask = [Bool](repeating: false, count: sizing.width * sizing.height)
+        for polygons in polygonSets {
+            rasterize(polygons: polygons, into: &mask, width: sizing.width, height: sizing.height,
+                      originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        }
+        return traceMask(mask, sizing: sizing)
+    }
+
+    /// Same rasterize-then-trace shape as `trace`, except the mask starts
+    /// from `basePolygonSets`' own union and then has `erasePolygonSets`'
+    /// union cleared out of it before retracing -- the delete pen's actual
+    /// mechanism. Sized off the *base* shapes' own bounds only (matching
+    /// `subtractStroke`'s doc comment: erasing can only remove area, never
+    /// add any outside what was already there), so an eraser stroke
+    /// reaching outside the shape being erased simply has no effect out
+    /// there rather than growing the raster buffer for no reason.
+    private static func traceDifference(basePolygonSets: [[[Point2D]]], erasePolygonSets: [[[Point2D]]]) -> VectorShape? {
+        var combinedBounds = BoundingBox.empty
+        for polygons in basePolygonSets {
+            for polygon in polygons {
+                combinedBounds = combinedBounds.union(BoundingBox(points: polygon))
+            }
+        }
+        guard let sizing = rasterSizing(for: combinedBounds) else { return nil }
+
+        var mask = [Bool](repeating: false, count: sizing.width * sizing.height)
+        for polygons in basePolygonSets {
+            rasterize(polygons: polygons, into: &mask, width: sizing.width, height: sizing.height,
+                      originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        }
+        var eraseMask = [Bool](repeating: false, count: sizing.width * sizing.height)
+        for polygons in erasePolygonSets {
+            rasterize(polygons: polygons, into: &eraseMask, width: sizing.width, height: sizing.height,
+                      originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        }
+        for i in mask.indices where eraseMask[i] { mask[i] = false }
+        return traceMask(mask, sizing: sizing)
+    }
+
+    private struct RasterSizing {
+        var scale: Double
+        var originX: Double
+        var originY: Double
+        var width: Int
+        var height: Int
+    }
+
+    /// The raster buffer geometry (resolution, origin, clamped size) shared
+    /// by every rasterize-then-trace operation here -- pulled out so
+    /// `trace` and `traceDifference` compute it identically instead of two
+    /// copies drifting apart.
+    private static func rasterSizing(for combinedBounds: BoundingBox) -> RasterSizing? {
+        guard !combinedBounds.isEmpty else { return nil }
         let marginMM = 1.0
         var scale = pixelsPerMM
         let rawWidth = (combinedBounds.width + marginMM * 2) * scale
@@ -111,22 +179,19 @@ public enum ShapeMerger {
         let width = max(1, Int(((combinedBounds.width + marginMM * 2) * scale).rounded(.up)))
         let height = max(1, Int(((combinedBounds.height + marginMM * 2) * scale).rounded(.up)))
         guard width * height <= maxPixels else { return nil }
+        return RasterSizing(scale: scale, originX: originX, originY: originY, width: width, height: height)
+    }
 
-        var mask = [Bool](repeating: false, count: width * height)
-        for polygons in polygonSets {
-            rasterize(polygons: polygons, into: &mask, width: width, height: height,
-                      originX: originX, originY: originY, scale: scale)
-        }
-
-        let components = RasterTracing.connectedComponents(mask: mask, width: width, height: height, minAreaPixels: 1)
+    private static func traceMask(_ mask: [Bool], sizing: RasterSizing) -> VectorShape? {
+        let components = RasterTracing.connectedComponents(mask: mask, width: sizing.width, height: sizing.height, minAreaPixels: 1)
         guard !components.isEmpty else { return nil }
 
         var subPaths: [SubPath] = []
         for component in components {
-            guard let boundary = RasterTracing.traceBoundary(mask: mask, width: width, height: height, start: component.topLeftMost) else { continue }
+            guard let boundary = RasterTracing.traceBoundary(mask: mask, width: sizing.width, height: sizing.height, start: component.topLeftMost) else { continue }
             let simplified = PolylineSimplify.douglasPeucker(boundary, epsilon: simplifyEpsilonPixels)
             guard simplified.count > 2 else { continue }
-            let docPoints = simplified.map { Point2D(originX + $0.x / scale, originY + $0.y / scale) }
+            let docPoints = simplified.map { Point2D(sizing.originX + $0.x / sizing.scale, sizing.originY + $0.y / sizing.scale) }
             subPaths.append(SubPath(points: docPoints, closed: true))
         }
         guard !subPaths.isEmpty else { return nil }

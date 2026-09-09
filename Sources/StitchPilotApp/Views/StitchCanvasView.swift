@@ -19,6 +19,13 @@ enum StitchPreviewMode: String, CaseIterable, Identifiable {
 struct StitchCanvasView: View {
     let document: StitchDocument?
     let stitchPlan: StitchPlan?
+    /// Which edit generation `stitchPlan` was actually computed from
+    /// (`AppState.stitchPlanGeneration`) -- an exact, cheap identity for
+    /// "has the plan actually changed," replacing this view's previous
+    /// `stitchPlan.commands.hashValue`-based signature (which could only
+    /// ever be a probabilistic stand-in for equality, however unlikely a
+    /// real collision was in practice).
+    var stitchPlanGeneration: Int?
     /// The plan's per-run color sequence, computed once alongside it (see
     /// `AppState.autoDigitize`/`DigitizePipeline.flattenWithColors`) and
     /// passed in rather than recomputed here — recomputing it means redoing
@@ -45,6 +52,26 @@ struct StitchCanvasView: View {
     /// Called with a completed stroke's points, in document space (mm),
     /// once the user releases after painting.
     var onPaintStroke: ([Point2D]) -> Void = { _ in }
+    /// Whether the delete pen is active -- mutually exclusive with
+    /// `isPaintMode` (`AppState` itself enforces that neither is ever true
+    /// while the other is), sharing the same click/drag gesture to erase
+    /// coverage instead of adding it.
+    var isEraseMode: Bool = false
+    /// Called with a completed stroke's points, in document space (mm),
+    /// once the user releases after erasing.
+    var onEraseStroke: ([Point2D]) -> Void = { _ in }
+    /// True while the on-screen stitch plan (and therefore the realistic
+    /// bitmap) doesn't yet reflect the latest edit
+    /// (`AppState.isPreviewStale`) -- distinct from `isRegeneratingPreview`
+    /// (which only says a regenerate is *in flight*): this stays true for
+    /// the entire gap between an edit and the moment its regenerate
+    /// actually lands, including the debounce delay before that regenerate
+    /// even starts. Used to visibly mark the stitch/realistic layer as not
+    /// yet caught up, rather than silently drawing possibly-stale content
+    /// as if it were current -- see `AppState.stitchPlanGeneration`'s doc
+    /// comment for the exact "changed, then changed back" illusion this
+    /// fixes.
+    var isPreviewStale: Bool = false
     /// Called with (dxMM, dyMM) once the user finishes dragging an
     /// already-selected object (or group, e.g. a lettering group) to a new
     /// position -- clicking directly on a selected shape and dragging
@@ -194,15 +221,20 @@ struct StitchCanvasView: View {
                 func drawOverlays() {
                     if showGrid { drawSizeGrid(document, context: context, toView: toView, effectiveScale: effectiveScale) }
                     drawSelectionHighlight(document, context: context, toView: toView)
-                    if !isPaintMode {
+                    if !isPaintMode, !isEraseMode {
                         drawLiveTransformGhost(document, context: context, toView: toView)
                         drawResizeHandles(document, context: context, toView: toView)
                     }
-                    if isPaintMode, currentStrokePoints.count > 1 {
+                    if (isPaintMode || isEraseMode), currentStrokePoints.count > 1 {
                         var path = Path()
                         path.move(to: toView(currentStrokePoints[0]))
                         for p in currentStrokePoints.dropFirst() { path.addLine(to: toView(p)) }
-                        context.stroke(path, with: .color(paintColor.opacity(0.55)),
+                        // The delete pen's live stroke is always drawn red
+                        // regardless of the paint color picker, so a brush
+                        // stroke visibly reads as "removing" rather than
+                        // "adding" while it's still in progress.
+                        let strokeColor = isEraseMode ? Color.red : paintColor
+                        context.stroke(path, with: .color(strokeColor.opacity(0.55)),
                                        style: StrokeStyle(lineWidth: max(2, CGFloat(paintBrushRadiusMM * 2) * effectiveScale), lineCap: .round, lineJoin: .round))
                     }
                     if let rubberBandRect {
@@ -219,13 +251,25 @@ struct StitchCanvasView: View {
                     return
                 }
 
+                // While the shown plan hasn't caught up to the latest edit
+                // yet (`isPreviewStale`), dim it and raise the always-live
+                // artwork outline underneath so the two layers read as
+                // "still catching up" instead of silently disagreeing --
+                // see `AppState.stitchPlanGeneration`'s doc comment for the
+                // "changed, then changed back" illusion this replaces.
+                let stitchLayerOpacity = isPreviewStale ? 0.4 : 1.0
+                let liveOutlineOpacity = isPreviewStale ? 0.4 : 0.12
+
                 if mode == .realistic, let realisticImage {
-                    drawRealisticLayer(realisticImage, into: &context, rect: boundsRect)
+                    if isPreviewStale {
+                        drawArtworkFill(document, context: context, toView: toView, opacity: liveOutlineOpacity)
+                    }
+                    drawRealisticLayer(realisticImage, into: &context, rect: boundsRect, opacity: stitchLayerOpacity)
                     drawOverlays()
                     return
                 }
 
-                drawArtworkFill(document, context: context, toView: toView, opacity: 0.12)
+                drawArtworkFill(document, context: context, toView: toView, opacity: liveOutlineOpacity)
 
                 var colorIndex = 0
                 var currentColor = colorFor(index: 0)
@@ -234,7 +278,7 @@ struct StitchCanvasView: View {
                 var jumpPath = Path()
 
                 func flushStitchPath() {
-                    context.stroke(stitchPath, with: .color(currentColor), style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+                    context.stroke(stitchPath, with: .color(currentColor.opacity(stitchLayerOpacity)), style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
                     stitchPath = Path()
                 }
 
@@ -268,7 +312,7 @@ struct StitchCanvasView: View {
                     }
                 }
                 flushStitchPath()
-                context.stroke(jumpPath, with: .color(.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 2]))
+                context.stroke(jumpPath, with: .color(.gray.opacity(0.5 * stitchLayerOpacity)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 2]))
                 drawOverlays()
             }
             .simultaneousGesture(
@@ -302,7 +346,7 @@ struct StitchCanvasView: View {
             // for that same span, which -- if anything -- made it obvious
             // something was happening). Surfacing that gap explicitly so
             // it doesn't read as the app being stuck.
-            if isRegeneratingPreview || activeRealisticRenderCount > 0 {
+            if isRegeneratingPreview || activeRealisticRenderCount > 0 || isPreviewStale {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Refreshing…").font(.caption)
@@ -358,7 +402,13 @@ struct StitchCanvasView: View {
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(.thinMaterial, in: Capsule())
                     .padding(.top, 44)
-            } else if zoomScale > 1.01, !isPaintMode {
+            } else if isEraseMode {
+                Text("Erasing removes coverage from whatever the stroke touches")
+                    .font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.top, 44)
+            } else if zoomScale > 1.01 {
                 Text("Drag to select \u{2022} Option-drag to pan")
                     .font(.caption)
                     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -368,7 +418,7 @@ struct StitchCanvasView: View {
         }
         .onAppear { regenerateRealisticImageIfNeeded() }
         .onChange(of: mode) { _ in regenerateRealisticImageIfNeeded() }
-        .onChange(of: planSignature) { _ in regenerateRealisticImageIfNeeded() }
+        .onChange(of: stitchPlanGeneration) { _ in regenerateRealisticImageIfNeeded() }
         .onChange(of: canvasSize) { _ in regenerateRealisticImageIfNeeded() }
         // `lastZoomScale` (not the continuously-updating `zoomScale`) only
         // changes once a pinch gesture ends or a zoom button is pressed --
@@ -465,14 +515,18 @@ struct StitchCanvasView: View {
     /// A plain tap selects just the tapped object (or clears the selection
     /// if it missed); a shift-tap toggles that one object in/out of
     /// whatever's already selected, the standard multi-select convention.
-    /// In paint mode a tap instead paints a single dab at that point --
-    /// the zero-length case of a stroke, using the same code path a drag
-    /// does.
+    /// In paint or erase mode a tap instead paints/erases a single dab at
+    /// that point -- the zero-length case of a stroke, using the same code
+    /// path a drag does.
     private func handleTap(at location: CGPoint, in size: CGSize) {
         guard let document, let transform = computeTransform(document: document, size: size) else { return }
         let point = docPoint(from: location, document: document, transform: transform)
         if isPaintMode {
             onPaintStroke([point])
+            return
+        }
+        if isEraseMode {
+            onEraseStroke([point])
             return
         }
         let hit = objectID(at: point, in: document)
@@ -487,7 +541,7 @@ struct StitchCanvasView: View {
     }
 
     private func handleDragChanged(_ value: DragGesture.Value, size: CGSize) {
-        if isPaintMode {
+        if isPaintMode || isEraseMode {
             guard let document, let transform = computeTransform(document: document, size: size) else { return }
             if !isDragActive { isDragActive = true; currentStrokePoints = [] }
             currentStrokePoints.append(docPoint(from: value.location, document: document, transform: transform))
@@ -533,9 +587,13 @@ struct StitchCanvasView: View {
     }
 
     private func handleDragEnded(_ value: DragGesture.Value, size: CGSize) {
-        if isPaintMode {
+        if isPaintMode || isEraseMode {
             isDragActive = false
-            onPaintStroke(currentStrokePoints)
+            if isPaintMode {
+                onPaintStroke(currentStrokePoints)
+            } else {
+                onEraseStroke(currentStrokePoints)
+            }
             currentStrokePoints = []
             return
         }
@@ -589,14 +647,6 @@ struct StitchCanvasView: View {
         lastPanOffset = .zero
     }
 
-    /// A cheap stand-in for "has the plan actually changed" -- exact
-    /// equality isn't needed here, just enough sensitivity that a real
-    /// digitize re-run reliably invalidates the cached realistic render.
-    private var planSignature: Int? {
-        guard let stitchPlan else { return nil }
-        return stitchPlan.commands.hashValue
-    }
-
     /// `StitchRenderer` deliberately renders fine detail -- thin per-stitch
     /// highlight lines, alternating shading every other stitch -- at a
     /// fixed source resolution (12px/mm) independent of the canvas's
@@ -614,9 +664,17 @@ struct StitchCanvasView: View {
     /// already near Swift's type-checker complexity limit -- adding even
     /// one more statement directly inside it fails to compile ("unable to
     /// type-check this expression in reasonable time").
-    private func drawRealisticLayer(_ image: CGImage, into context: inout GraphicsContext, rect: CGRect) {
+    private func drawRealisticLayer(_ image: CGImage, into context: inout GraphicsContext, rect: CGRect, opacity: Double = 1.0) {
         let highQualityImage = Image(decorative: image, scale: 1, orientation: .up).interpolation(.high)
+        // `Image.opacity(_:)` returns `some View`, not an `Image` --
+        // useless to `GraphicsContext.draw`, which needs the concrete
+        // `Image` overload. `GraphicsContext.opacity` is the actual knob
+        // for scaling a draw call's alpha; restored right after so it
+        // doesn't leak into whatever `drawOverlays()` draws next.
+        let previousOpacity = context.opacity
+        context.opacity = opacity
         context.draw(highQualityImage, in: rect)
+        context.opacity = previousOpacity
     }
 
     /// The realistic preview's target resolution, matched to how big the
@@ -666,14 +724,14 @@ struct StitchCanvasView: View {
         // again (every small window resize or zoom tick would otherwise
         // trigger one).
         let resolutionDrifted = renderedPixelsPerMM <= 0 || abs(targetPixelsPerMM - renderedPixelsPerMM) / renderedPixelsPerMM > 0.25
-        guard planSignature != renderedSignature || resolutionDrifted else { return }
+        guard stitchPlanGeneration != renderedSignature || resolutionDrifted else { return }
 
         var options = StitchRenderer.Options()
         options.pixelsPerMM = targetPixelsPerMM
         let widthMM = document.physicalWidthMM
         let heightMM = document.physicalHeightMM
         let colorsSnapshot = colors
-        let targetSignature = planSignature
+        let targetSignature = stitchPlanGeneration
 
         renderTask?.cancel()
         activeRealisticRenderCount += 1

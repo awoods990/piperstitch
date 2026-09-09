@@ -11,7 +11,41 @@ import UniformTypeIdentifiers
 /// of that translation logic lives in StitchPilotCore, not here).
 @MainActor
 final class AppState: ObservableObject {
-    @Published var document: StitchDocument?
+    /// Bumped on *every* assignment to `document`, regardless of call site
+    /// -- a `didSet` on the property itself rather than something each of
+    /// the dozen-plus mutating functions below has to remember to do, so
+    /// it can't silently drift out of sync with a future edit path. This
+    /// is the ground truth for "how current is the on-screen preview,"
+    /// replacing the previous, easier-to-get-wrong signal of comparing a
+    /// hash of the stitch plan's own commands (`StitchCanvasView`'s old
+    /// `planSignature`) -- an exact integer both here and in
+    /// `stitchPlanGeneration` below is cheap to compare and can't produce
+    /// a false "unchanged" the way a hash collision theoretically could.
+    @Published private(set) var documentEditGeneration = 0
+    @Published var document: StitchDocument? {
+        didSet { documentEditGeneration += 1 }
+    }
+    /// Which `documentEditGeneration` the *current* `stitchPlan` was
+    /// actually generated from -- nil until the first successful digitize.
+    /// `isPreviewStale` below is the whole point of tracking this: while
+    /// an edit's debounced regenerate is still pending or running, this
+    /// lags `documentEditGeneration`, and the canvas uses that gap to show
+    /// the in-flight stitch/realistic layer as visibly not-yet-caught-up
+    /// instead of silently drawing it as if it were current -- found
+    /// directly against a real report that editing one letter's stitch
+    /// parameters made the canvas look like a *different* letter's edit
+    /// had reverted: the live artwork outline (always current, drawn
+    /// straight from `document`) updated instantly, while the solid
+    /// stitch-path/realistic layer underneath it kept showing the
+    /// pre-edit state for the ~150ms-plus-compute gap before the
+    /// debounced regenerate actually finished -- two layers of the same
+    /// canvas disagreeing with each other reads as "it changed, then
+    /// changed back," even though nothing was ever actually lost.
+    @Published private(set) var stitchPlanGeneration: Int?
+    /// True whenever the on-screen stitch plan (and therefore the
+    /// realistic bitmap rendered from it) doesn't yet reflect the latest
+    /// edit -- see `stitchPlanGeneration`'s doc comment.
+    var isPreviewStale: Bool { stitchPlanGeneration != documentEditGeneration }
     @Published var stitchPlan: StitchPlan?
     @Published var readinessReport: EmbroideryReadinessReport?
     /// The color sequence for the current `stitchPlan`, computed alongside
@@ -308,18 +342,91 @@ final class AppState: ObservableObject {
 
     @Published var isPaintMode = false {
         didSet {
+            guard isPaintMode else { return }
+            // Paint and Erase are two mutually exclusive brush tools
+            // sharing the same click-and-drag gesture on the canvas --
+            // switching one on turns the other off, the same way neither
+            // can coexist with an ordinary multi-selection (see below).
+            isEraseMode = false
             // Painting and multi-selecting are two different tools sharing
             // the same click-and-drag gesture on the canvas; clearing the
             // selection when entering paint mode keeps the two from
             // fighting over what a drag means, and a fresh multi-selection
             // left over from before wouldn't be an intentional "extend
             // this object" target anyway.
-            guard isPaintMode, selectedObjectIDs.count > 1 else { return }
+            guard selectedObjectIDs.count > 1 else { return }
             selectedObjectIDs = []
         }
     }
     @Published var paintBrushRadiusMM: Double = 1.5
     @Published var paintColorRGB = StitchPilotCore.RGBColor(hex: 0x000000)
+
+    // MARK: - Erase (the delete pen: manual coverage removal, the inverse
+    // of Paint above -- fixing a spot the auto-digitize or an import
+    // over-captured shouldn't require knowing which object to select and
+    // deleting the whole thing, just drawing over the part that's wrong).
+
+    @Published var isEraseMode = false {
+        didSet {
+            guard isEraseMode else { return }
+            isPaintMode = false
+            guard selectedObjectIDs.count > 1 else { return }
+            selectedObjectIDs = []
+        }
+    }
+
+    /// Erases a freehand brush stroke's own coverage from every object it
+    /// overlaps -- unlike Paint (scoped to the single selected object, or
+    /// else it creates something new), Erase acts on whatever the stroke
+    /// actually touches regardless of selection, the more natural reading
+    /// of "a delete pen that takes stuff away" wherever it's dragged. An
+    /// object a stroke erases down to nothing is removed outright rather
+    /// than left behind as an empty shape.
+    func eraseStroke(points: [Point2D], radiusMM: Double) {
+        guard radiusMM > 0, !points.isEmpty, var current = document, !current.objects.isEmpty else { return }
+
+        // A cheap bounding-box pre-filter before the real (rasterize-and-
+        // retrace) subtraction test -- most objects in a typical design
+        // aren't anywhere near a given stroke, and skipping straight past
+        // them keeps an erase drag responsive even on a design with many
+        // objects.
+        var strokeBox = BoundingBox.empty
+        for p in points { strokeBox = strokeBox.union(BoundingBox(minX: p.x - radiusMM, minY: p.y - radiusMM, maxX: p.x + radiusMM, maxY: p.y + radiusMM)) }
+
+        var touchedIndices: [Int] = []
+        for i in current.objects.indices where current.objects[i].shape.boundingBox.intersects(strokeBox) {
+            touchedIndices.append(i)
+        }
+        guard !touchedIndices.isEmpty else { return }
+
+        var changedAnything = false
+        var indicesToRemove: [Int] = []
+        for i in touchedIndices {
+            if let reduced = ShapeMerger.subtractStroke([current.objects[i].shape], strokePoints: points, radiusMM: radiusMM) {
+                guard reduced != current.objects[i].shape else { continue }
+                changedAnything = true
+                current.objects[i].shape = reduced
+                if !current.objects[i].stitchTypeIsManualOverride {
+                    current.objects[i].stitchType = StitchTypeClassifier.classify(shape: reduced, parameters: current.objects[i].parameters)
+                }
+            } else {
+                changedAnything = true
+                indicesToRemove.append(i)
+            }
+        }
+        guard changedAnything else { return }
+        commitImmediateUndoSnapshot()
+        let removedIDs = Set(indicesToRemove.map { current.objects[$0].id })
+        if !removedIDs.isEmpty {
+            current.objects.removeAll { removedIDs.contains($0.id) }
+            selectedObjectIDs.subtract(removedIDs)
+        }
+        document = current
+        scheduleLiveRegenerate()
+        statusMessage = removedIDs.isEmpty
+            ? "Erased from \(touchedIndices.count) object(s)."
+            : "Erased \(removedIDs.count) object(s) entirely."
+    }
 
     /// Extends the single selected object's shape with a freehand brush
     /// stroke, or -- if nothing is selected -- creates a brand-new object
@@ -704,6 +811,12 @@ final class AppState: ObservableObject {
     /// via the `Task.isCancelled` check below.
     private func autoDigitizeInBackground() async {
         guard let document else { return }
+        // The edit generation this exact `document` snapshot represents --
+        // captured now, before the async gap below, so the result can only
+        // ever be credited to the generation it was actually computed
+        // from, not whatever generation happens to be current once it
+        // finishes (see `stitchPlanGeneration`'s doc comment).
+        let capturedGeneration = documentEditGeneration
         errorMessage = nil
         let hoopWidthMM = selectedHoop?.widthMM
         let hoopHeightMM = selectedHoop?.heightMM
@@ -714,6 +827,7 @@ final class AppState: ObservableObject {
             let (plan, colors) = try await generation.value
             guard !Task.isCancelled else { return }
             stitchPlan = plan
+            stitchPlanGeneration = capturedGeneration
             lastColorSequence = colors
             readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM)
             statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
@@ -734,6 +848,7 @@ final class AppState: ObservableObject {
         liveRegenerateTask?.cancel()
         document = nil
         stitchPlan = nil
+        stitchPlanGeneration = nil
         readinessReport = nil
         lastColorSequence = []
         selectedObjectIDs = []
@@ -744,7 +859,7 @@ final class AppState: ObservableObject {
         physicalWidthMM = 100
         physicalHeightMM = 100
         errorMessage = nil
-        statusMessage = "Drag in an image or SVG file, then click Click to Create."
+        statusMessage = "Drag in an image or SVG file, use Add Lettering for a text-only design, then click Click to Create."
     }
 
     private func isRasterURL(_ url: URL) -> Bool { url.pathExtension.lowercased() != "svg" }
@@ -997,6 +1112,7 @@ final class AppState: ObservableObject {
             // recomputing it themselves.
             let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
             stitchPlan = plan
+            stitchPlanGeneration = documentEditGeneration
             lastColorSequence = colors
             // Quality analysis (spec §33/§76) runs automatically right
             // after generation, not as a separate manual step — the user

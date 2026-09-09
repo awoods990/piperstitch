@@ -49,13 +49,17 @@ struct ContentView: View {
             Divider()
 
             ZStack {
-                StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, colors: app.lastColorSequence,
+                StitchCanvasView(document: app.document, stitchPlan: app.stitchPlan, stitchPlanGeneration: app.stitchPlanGeneration,
+                                  colors: app.lastColorSequence,
                                   hoop: app.selectedHoop, selectedObjectIDs: app.selectedObjectIDs,
                                   onSelectionChange: { app.selectedObjectIDs = $0 },
                                   isPaintMode: app.isPaintMode,
                                   paintColor: Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255),
                                   paintBrushRadiusMM: app.paintBrushRadiusMM,
                                   onPaintStroke: { app.paintStroke(points: $0, radiusMM: app.paintBrushRadiusMM) },
+                                  isEraseMode: app.isEraseMode,
+                                  onEraseStroke: { app.eraseStroke(points: $0, radiusMM: app.paintBrushRadiusMM) },
+                                  isPreviewStale: app.isPreviewStale,
                                   onMoveSelection: { app.translateSelection(dxMM: $0, dyMM: $1) },
                                   onResizeSelection: { app.scaleSelection(scale: $0, anchorMM: $1) },
                                   isRegeneratingPreview: app.isRegeneratingPreview)
@@ -300,10 +304,21 @@ struct ContentView: View {
             }
             .tint(app.isPaintMode ? Color.accentColor : nil)
             .help("Draw in missing coverage by hand -- extends the selected object, or draws a new shape if nothing's selected.")
-            if app.isPaintMode {
+
+            Button {
+                app.isEraseMode.toggle()
+            } label: {
+                Label("Erase", systemImage: "eraser")
+            }
+            .tint(app.isEraseMode ? Color.red : nil)
+            .help("Remove coverage by hand -- draw over whatever's wrong and it's taken out of whichever object(s) it touches, regardless of what's selected.")
+
+            if app.isPaintMode || app.isEraseMode {
                 Slider(value: cmBinding($app.paintBrushRadiusMM), in: 0.05...1.0)
                     .frame(width: 90)
                     .help("Brush size")
+            }
+            if app.isPaintMode {
                 ColorPicker("", selection: Binding(
                     get: { Color(red: Double(app.paintColorRGB.r) / 255, green: Double(app.paintColorRGB.g) / 255, blue: Double(app.paintColorRGB.b) / 255) },
                     set: { app.paintColorRGB = rgbColor(from: $0) }
@@ -335,17 +350,40 @@ struct ContentView: View {
     }
 
     private var dropPrompt: some View {
-        VStack(spacing: 10) {
-            brandMark(size: 64)
-            Text("OneClickStitch").font(.title2).fontWeight(.semibold)
-            Text("Turn any image into embroidery.")
-                .foregroundStyle(.secondary)
-            Text("Drop an image or SVG file here, or click to choose one")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        VStack(spacing: 16) {
+            VStack(spacing: 10) {
+                brandMark(size: 64)
+                Text("OneClickStitch").font(.title2).fontWeight(.semibold)
+                Text("Turn any image into embroidery.")
+                    .foregroundStyle(.secondary)
+                Text("Drop an image or SVG file here, or click to choose one")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { app.openArtworkWithPanel() }
+
+            HStack(spacing: 8) {
+                Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 36, height: 1)
+                Text("or").font(.caption).foregroundStyle(.secondary)
+                Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 36, height: 1)
+            }
+
+            // No image required -- a design can be nothing but generated
+            // lettering (spec: not every embroidery job starts from
+            // artwork). `AddLetteringSheet` already handles `document ==
+            // nil` by minting a brand-new document sized to the text
+            // itself; this button is just making that path discoverable
+            // instead of only reachable via the editing toolbar's "Add
+            // Lettering," which a user staring at an empty drop target has
+            // no reason to expect works with nothing imported yet.
+            Button {
+                showingAddLettering = true
+            } label: {
+                Label("Start with Text Only", systemImage: "textformat")
+            }
+            .help("Skip importing artwork -- type text and it becomes the whole design, generated directly from a font's own outline.")
         }
-        .contentShape(Rectangle())
-        .onTapGesture { app.openArtworkWithPanel() }
     }
 
     private var statusBar: some View {

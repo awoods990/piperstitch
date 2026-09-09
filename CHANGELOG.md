@@ -4,6 +4,37 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: a delete pen, text-only projects, and a more honest live preview
+
+- **Preview staleness is now tracked explicitly instead of guessed at.**
+  `AppState.documentEditGeneration` bumps on every edit; `stitchPlanGeneration`
+  records which edit the on-screen stitch plan actually came from. The gap
+  between the two (`isPreviewStale`) replaced `StitchCanvasView`'s old
+  `stitchPlan.commands.hashValue`-based signature (an exact integer instead
+  of a hash-collision-prone stand-in), and is now used to visibly dim the
+  stitch/realistic layer while it's catching up to the latest edit rather
+  than silently drawing possibly-stale content as if it were current.
+  Reproduced directly: editing one letter's parameters made the canvas
+  *look* like a different letter's edit had reverted, because the always-
+  live artwork outline updated instantly while the solid stitch layer
+  underneath it kept showing the pre-edit state for the debounce-plus-
+  compute gap before the regenerate actually landed -- two layers quietly
+  disagreeing read as "it changed, then changed back," even though nothing
+  was ever actually lost (every document edit path was already
+  synchronous and correctly ordered on the main actor).
+- **A delete pen (Erase)**, next to Paint in the editing toolbar --
+  removes coverage from whatever a freehand stroke touches, regardless of
+  what's selected (unlike Paint, which is scoped to the single selected
+  object). `ShapeMerger.subtractStroke` rasterizes the stroke and clears
+  it out of the affected shape(s) before retracing, the inverse of the
+  existing `mergeWithStroke`; an object erased down to nothing is removed
+  outright rather than kept as an empty shape.
+- **A project can now start from text alone**, no image import required.
+  `AddLettering` already handled a `nil` document by minting a fresh one
+  sized to the lettering itself -- that path just wasn't discoverable
+  unless you already knew it worked with nothing imported yet. The empty-
+  project drop target now offers "Start with Text Only" directly.
+
 ## Fixed: hidden-travel bridging left visible diagonal scratches across textured fills
 
 `HiddenTravelRouter`'s "bury a same-color travel gap as running stitch

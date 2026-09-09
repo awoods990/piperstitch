@@ -53,6 +53,27 @@ struct GeometryTests {
         #expect(!box.contains(.empty))
     }
 
+    @Test func intersectsIsTrueForOverlappingBoxesNeitherFullyContaining() {
+        let a = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 10)
+        let b = BoundingBox(minX: 5, minY: 5, maxX: 15, maxY: 15)
+        #expect(a.intersects(b))
+        #expect(b.intersects(a))
+    }
+
+    @Test func intersectsIsTrueForTouchingEdgesAndFalseForSeparateBoxes() {
+        let a = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 10)
+        let touching = BoundingBox(minX: 10, minY: 0, maxX: 20, maxY: 10)
+        #expect(a.intersects(touching))
+        let separate = BoundingBox(minX: 11, minY: 0, maxX: 20, maxY: 10)
+        #expect(!a.intersects(separate))
+    }
+
+    @Test func intersectsIsFalseWhenEitherBoxIsEmpty() {
+        let box = BoundingBox(minX: 0, minY: 0, maxX: 10, maxY: 10)
+        #expect(!box.intersects(.empty))
+        #expect(!BoundingBox.empty.intersects(box))
+    }
+
     @Test func subPathLengthOpenVsClosed() {
         let open = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 10)], closed: false)
         #expect(abs(open.length - 20) <= 0.0001)
