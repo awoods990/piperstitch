@@ -560,7 +560,14 @@ private struct InspectorView: View {
             if let plan = app.stitchPlan {
                 Section("Production Statistics") {
                     LabeledContent("Stitches", value: "\(plan.stitchCount)")
-                    LabeledContent("Colors", value: "\(app.document?.objects.count ?? 0)")
+                    // Distinct thread colors actually used -- not object
+                    // count (many objects routinely share one color, e.g.
+                    // every letter of a word), which this showed before
+                    // and made a color-count-driven setting like the
+                    // import color preset look like it was doing nothing:
+                    // the object count barely moves even when the actual
+                    // color count does.
+                    LabeledContent("Colors", value: "\(Set((app.document?.objects ?? []).map { $0.threadColor.rgb }).count)")
                     LabeledContent("Color changes", value: "\(plan.colorChangeCount)")
                     LabeledContent("Trims", value: "\(plan.trimCount)")
                     LabeledContent("Max stitch", value: String(format: "%.3f cm", plan.maxStitchLength() / 10))

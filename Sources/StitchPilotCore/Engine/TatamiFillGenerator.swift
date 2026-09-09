@@ -182,20 +182,41 @@ public enum TatamiFillGenerator {
         // fill on either side of it to hide it under. Found directly
         // against a real raster-imported logo's own "U" -- a genuine
         // ~11.5mm diagonal scratch across its open notch, well under the
-        // default 15mm threshold and so never converted to a trim. Only
-        // merge when the connector's own path actually stays inside the
-        // shape, mirroring `HiddenTravelRouter.pathIsCoveredByShape`; a
-        // connector that would leave the shape becomes a real run
-        // boundary instead, however short it is. See CHANGELOG.md.
+        // default 15mm threshold and so never converted to a trim.
+        //
+        // The containment check only kicks in above `minCheckedConnectorMM`,
+        // though -- a trim is real, expensive production cost (a machine
+        // stop, a thread cut, a re-anchor), while a stray connector this
+        // short is visually negligible even where it technically exits the
+        // shape for a fraction of a millimeter. Skipping the check below
+        // that floor matters in practice: finely detailed multi-color
+        // artwork (a stippled or textured illustration) can legitimately
+        // decompose into dozens of small same-color fragments a couple of
+        // millimeters apart, each with its own short, harmless connector --
+        // checking every one of those unconditionally turned a real 19-trim
+        // design into 121; an 8mm floor (comfortably below the ~11.5mm
+        // "U" defect this exists to catch, comfortably above the noise
+        // floor of that same design's own fine detail) brought it back
+        // down to 26, without losing the actual fix. Only merge when the
+        // connector's own
+        // path actually stays inside the shape (mirroring
+        // `HiddenTravelRouter.pathIsCoveredByShape`) or is short enough not
+        // to matter either way; a connector that's both long *and* would
+        // leave the shape becomes a real run boundary instead. See
+        // CHANGELOG.md.
+        let minCheckedConnectorMM = 8.0
         var mergedRuns: [[Point2D]] = []
         for chainPoints in rotatedChainPoints {
-            if let lastPoint = mergedRuns.last?.last, let firstPoint = chainPoints.first,
-               lastPoint.distance(to: firstPoint) <= breakThresholdMM,
-               connectorStaysInsideShape(from: lastPoint, to: firstPoint, polygons: rotatedPolygons) {
-                mergedRuns[mergedRuns.count - 1].append(contentsOf: chainPoints)
-            } else {
-                mergedRuns.append(chainPoints)
+            if let lastPoint = mergedRuns.last?.last, let firstPoint = chainPoints.first {
+                let connectorLength = lastPoint.distance(to: firstPoint)
+                let staysInside = connectorLength <= minCheckedConnectorMM
+                    || connectorStaysInsideShape(from: lastPoint, to: firstPoint, polygons: rotatedPolygons)
+                if connectorLength <= breakThresholdMM, staysInside {
+                    mergedRuns[mergedRuns.count - 1].append(contentsOf: chainPoints)
+                    continue
+                }
             }
+            mergedRuns.append(chainPoints)
         }
 
         return mergedRuns.map { run in run.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) } }

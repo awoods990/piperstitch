@@ -128,7 +128,19 @@ public enum DigitizePipeline {
                         continue // the jump just above already targets this point
                     }
                     if i == 0, commands.isEmpty {
-                        commands.append(.jump(p)) // move to the design's first stitch location
+                        // Move to the design's first stitch location -- and,
+                        // same as the `case .jump = commands.last` branch
+                        // above, that jump already targets this exact
+                        // point, so the loop must not also re-stitch it:
+                        // without this `continue`, the design's very first
+                        // command pair was `.jump(p)` immediately followed
+                        // by `.stitch(p)` at that identical coordinate — a
+                        // genuine zero-length stitch, on every single
+                        // design, that no edit could ever clear because
+                        // it was never caused by the design. See
+                        // CHANGELOG.md.
+                        commands.append(.jump(p))
+                        continue
                     }
                     commands.append(.stitch(p))
                 }

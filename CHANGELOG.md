@@ -4,6 +4,43 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Fixed: readiness score stuck regardless of edits, trim count explosion, Messages sharing, Colors stat
+
+- **The "N stitches under 0.15mm" quality warning showed up on every
+  design, regardless of its artwork or any editing** -- the actual cause
+  was two genuine zero-length stitches `TieStitchGenerator`/
+  `DigitizePipeline` always produced: a tie-in's own "return to anchor"
+  point duplicated the real stitch sequence's own first point (since
+  they're the same coordinate by construction), and the very first
+  command of every design was a jump immediately followed by a stitch to
+  that identical point. Neither was caused by the design, so no amount of
+  color/density/etc. editing could ever clear the warning -- exactly
+  matching a report that the readiness score never seemed to improve.
+  Both are gone now; a typical design's remaining near-zero-length
+  stitches (if any) come from its own genuine fine detail.
+- **The prior fix for tatami fill's own chain-merge connector (previous
+  entry) was too strict** -- checking every connector's containment
+  unconditionally, even a fraction-of-a-millimeter one, turned a real
+  19-trim design into 121 once tested against genuinely detailed
+  multi-color artwork (a crest with dozens of small same-color
+  fragments). A trim is real, expensive production cost; a stray
+  connector under 8mm is visually negligible even where it technically
+  exits the shape. Gating the containment check to connectors longer
+  than that brought the same design back down to 26 trims without
+  losing the actual "U"-notch fix.
+- **The Production Statistics panel's "Colors" figure was actually the
+  object count**, not the number of distinct thread colors -- many
+  objects routinely share one color (every letter of a word, say), so
+  this barely moved even when switching the color-reduction preset
+  genuinely did change the real color count, reading as "nothing
+  happened." Now shows the actual distinct color count.
+- **Sharing a design via Messages opened the app but never attached
+  anything** -- the app declared no UTI/document-type information at
+  all for its own file formats (.dst/.pes/.exp/.jef/.stitchpilot), so
+  macOS had no idea what kind of file it was being handed via the share
+  sheet. Declared proper `UTExportedTypeDeclarations`/
+  `CFBundleDocumentTypes` for all five.
+
 ## Fixed: two more sources of visible diagonal scratches across bent/notched shapes
 
 A pre-launch sweep testing real logos (not synthetic test shapes) surfaced

@@ -16,12 +16,24 @@ public enum TieStitchGenerator {
     /// Prepends a tie-in to `points` (which must already be the real,
     /// generated stitch sequence for the run this tie-in anchors). No-op if
     /// there are fewer than 2 points to determine a direction from.
+    ///
+    /// The "there and back" only needs to add the "there" (`forward`) point
+    /// explicitly -- the "back" leg's destination is `start`, which is
+    /// already `points[0]` by construction, so appending it again here
+    /// would land two identical points back to back: a genuine zero-length
+    /// stitch, not a real one, and invisible to `StitchFilter`'s own
+    /// minimum-length merge since tie stitches are added after that pass
+    /// runs. Found as the reason this exact one extra stitch (matching the
+    /// count of color engagements, i.e. present in every design regardless
+    /// of its actual artwork or settings) always showed up in "stitches
+    /// under 0.15mm" quality warnings that no amount of editing ever
+    /// cleared. See CHANGELOG.md.
     public static func applyTieIn(to points: [Point2D]) -> [Point2D] {
         guard points.count >= 2 else { return points }
         let start = points[0]
         guard let dir = normalized(points[1], minus: start) else { return points }
         let forward = Point2D(start.x + dir.x * lockStitchLengthMM, start.y + dir.y * lockStitchLengthMM)
-        return [start, forward, start] + points
+        return [start, forward] + points
     }
 
     /// Appends a tie-off to `points`.
