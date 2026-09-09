@@ -1155,13 +1155,13 @@ final class AppState: ObservableObject {
     /// whole project at once, which per-object editing in the Object
     /// Inspector doesn't give you. Individual objects can still be tuned
     /// afterward without this drifting or fighting them.
-    @Published var globalSatinDensityMM: Double = 0.4 {
+    @Published var globalSatinDensityMM: Double = 0.32 {
         didSet {
             guard oldValue != globalSatinDensityMM else { return }
             applyGlobalSatinDensity()
         }
     }
-    @Published var globalFillSpacingMM: Double = 0.4 {
+    @Published var globalFillSpacingMM: Double = 0.32 {
         didSet {
             guard oldValue != globalFillSpacingMM else { return }
             applyGlobalFillSpacing()
