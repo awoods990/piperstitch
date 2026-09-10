@@ -75,7 +75,7 @@ final class AppState: ObservableObject {
     @Published var colorPreset: ColorQuantizationPreset = .normalEmbroidery {
         didSet {
             guard oldValue != colorPreset, let url = lastImportedURL, isRasterURL(url) else { return }
-            importFile(url: url)
+            importFile(url: url, preserveCurrentSize: true)
         }
     }
     private var lastImportedURL: URL?
@@ -1012,7 +1012,17 @@ final class AppState: ObservableObject {
         }
     }
 
-    func importFile(url: URL) {
+    /// `preserveCurrentSize`: true when this import is re-processing a
+    /// file already on screen (currently just `colorPreset`'s re-import
+    /// on change) rather than bringing in something new -- the user's own
+    /// manually-set Finished Size is a deliberate choice at that point,
+    /// not a starting point to recompute past. Without this, switching
+    /// color presets after resizing silently snapped the design back to
+    /// `SizeRecommender`'s recommendation (often much larger than what
+    /// the user had just set), which read as the resize having no effect
+    /// at all rather than as a side effect of an unrelated color change.
+    /// See CHANGELOG.md.
+    func importFile(url: URL, preserveCurrentSize: Bool = false) {
         errorMessage = nil
         isBusy = true
         defer { isBusy = false }
@@ -1051,18 +1061,21 @@ final class AppState: ObservableObject {
             var combined = BoundingBox.empty
             for s in rawShapes { combined = combined.union(s.boundingBox) }
             sourceAspectRatio = combined.height > 0 ? combined.width / combined.height : 1
-            // Size the design from its own detail, not a fixed default --
-            // a plain bold logo stays at the normal default size, but
-            // artwork with fine detail (small text, a ring of curved
-            // lettering) gets scaled up enough that its thinnest real
-            // stroke has a chance of surviving as an actual stitch rather
-            // of running stitch collapsing into an illegible squiggle at a
-            // size no digitizer, automatic or human, could sew cleanly.
-            // The Finished Size panel still lets the user override this
-            // immediately after -- this only sets where they start from.
-            physicalWidthMM = SizeRecommender.recommendedWidthMM(for: rawShapes, currentWidthMM: defaultPhysicalWidthMM)
-            if lockAspectRatio {
-                physicalHeightMM = sourceAspectRatio > 0 ? physicalWidthMM / sourceAspectRatio : physicalWidthMM
+            if !preserveCurrentSize {
+                // Size the design from its own detail, not a fixed default
+                // -- a plain bold logo stays at the normal default size,
+                // but artwork with fine detail (small text, a ring of
+                // curved lettering) gets scaled up enough that its
+                // thinnest real stroke has a chance of surviving as an
+                // actual stitch rather of running stitch collapsing into
+                // an illegible squiggle at a size no digitizer, automatic
+                // or human, could sew cleanly. The Finished Size panel
+                // still lets the user override this immediately after --
+                // this only sets where they start from.
+                physicalWidthMM = SizeRecommender.recommendedWidthMM(for: rawShapes, currentWidthMM: defaultPhysicalWidthMM)
+                if lockAspectRatio {
+                    physicalHeightMM = sourceAspectRatio > 0 ? physicalWidthMM / sourceAspectRatio : physicalWidthMM
+                }
             }
 
             rebuildDocument(rawShapes: rawShapes, fillColors: fillColors, combinedBounds: combined, name: url.deletingPathExtension().lastPathComponent)
@@ -1375,6 +1388,20 @@ final class AppState: ObservableObject {
 
     enum ShareFormat { case dst, pes, exp, jef }
 
+    /// `NSSharingServicePicker` isn't retained by AppKit once `show` returns
+    /// -- Apple's own guidance (and long-standing Cocoa developer knowledge)
+    /// is that the *caller* must keep it alive for as long as it's on
+    /// screen, or its behavior while presented is undefined. A `let` local
+    /// to `shareCurrentFile` had nothing else holding it, so ARC was free
+    /// to deallocate it the moment the function returned -- immediately
+    /// after `show` presents the popover, while the user is still looking
+    /// at it. Matches a real report of choosing Messages from the share
+    /// sheet opening two separate Messages windows for one send. Released
+    /// again once the delegate reports the user's chosen service (or that
+    /// they dismissed without choosing one). See CHANGELOG.md.
+    private var activeSharingPicker: NSSharingServicePicker?
+    private var activeSharingPickerCompletion: SharingPickerCompletion?
+
     /// Presents Apple's native share sheet for the current design's
     /// embroidery file. The share sheet needs a real file on disk (not
     /// in-memory data), so this writes to a temporary location first --
@@ -1414,6 +1441,13 @@ final class AppState: ObservableObject {
 
             guard let contentView = NSApp.keyWindow?.contentView else { return }
             let picker = NSSharingServicePicker(items: [tempURL])
+            let completion = SharingPickerCompletion { [weak self] in
+                self?.activeSharingPicker = nil
+                self?.activeSharingPickerCompletion = nil
+            }
+            picker.delegate = completion
+            activeSharingPicker = picker
+            activeSharingPickerCompletion = completion
             picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
         } catch {
             errorMessage = friendlyMessage(for: error)
@@ -1487,5 +1521,18 @@ final class AppState: ObservableObject {
 
     private func friendlyMessage(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+    }
+}
+
+/// `NSSharingServicePickerDelegate` requires `NSObjectProtocol`, which the
+/// plain-Swift `AppState` doesn't have -- this tiny `NSObject` stand-in just
+/// forwards the one callback `shareCurrentFile` actually needs (releasing
+/// `activeSharingPicker` once the user has made their choice) back via a
+/// closure instead.
+private final class SharingPickerCompletion: NSObject, NSSharingServicePickerDelegate {
+    private let onChoose: () -> Void
+    init(onChoose: @escaping () -> Void) { self.onChoose = onChoose }
+    func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+        onChoose()
     }
 }
