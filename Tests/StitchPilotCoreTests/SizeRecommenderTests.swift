@@ -67,4 +67,40 @@ struct SizeRecommenderTests {
         let recommended = SizeRecommender.recommendedWidthMM(for: [zeroArea], currentWidthMM: 77)
         #expect(recommended == 77)
     }
+
+    /// A hoop much smaller than the flat 400mm ceiling: the recommendation
+    /// must fit it, in *both* dimensions, not just clamp width and let the
+    /// implied height (derived from the artwork's own aspect ratio, the
+    /// same way `AppState` derives it independently) overflow a hoop
+    /// proportioned differently than the artwork. Found directly against
+    /// two real logos that both landed on the 400mm ceiling regardless of
+    /// the 6x10in hoop actually selected -- a starting size the very next
+    /// quality check (hoop fit) immediately flagged as too big. See
+    /// CHANGELOG.md.
+    @Test func hoopSelectionCapsTheRecommendationEvenBelowTheCeiling() {
+        // Same "extremely fine, artwork-wide detail" pattern as
+        // recommendationIsClampedToAReasonableMaximum, spread over enough
+        // height that the artwork has a real (non-degenerate) aspect ratio.
+        var shapes: [VectorShape] = []
+        for i in 0..<20 {
+            shapes.append(rect(Double(i) * 50, Double(i) * 10, 45, 0.3))
+        }
+        let uncapped = SizeRecommender.recommendedWidthMM(for: shapes, currentWidthMM: 100)
+        #expect(uncapped == 400, "sanity check: this artwork hits the ceiling with no hoop selected")
+
+        let capped = SizeRecommender.recommendedWidthMM(for: shapes, currentWidthMM: 100, maxWidthMM: 160, maxHeightMM: 260)
+        #expect(capped < uncapped, "a tighter hoop should actually reduce the recommendation here")
+        #expect(capped <= 160.0001, "must not recommend wider than the selected hoop")
+
+        var combined = BoundingBox.empty
+        for s in shapes { combined = combined.union(s.boundingBox) }
+        let impliedHeightMM = capped / (combined.width / combined.height)
+        #expect(impliedHeightMM <= 260.0001, "must not recommend taller than the selected hoop either")
+    }
+
+    @Test func aGenerousHoopDoesNotShrinkAnAlreadyFittingRecommendation() {
+        let shapes = [rect(0, 0, 200, 200)]
+        let recommended = SizeRecommender.recommendedWidthMM(for: shapes, currentWidthMM: 100, maxWidthMM: 1000, maxHeightMM: 1000)
+        #expect(recommended == 100, "a hoop far larger than the recommendation shouldn't change it")
+    }
 }

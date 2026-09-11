@@ -1071,8 +1071,15 @@ final class AppState: ObservableObject {
                 // an illegible squiggle at a size no digitizer, automatic
                 // or human, could sew cleanly. The Finished Size panel
                 // still lets the user override this immediately after --
-                // this only sets where they start from.
-                physicalWidthMM = SizeRecommender.recommendedWidthMM(for: rawShapes, currentWidthMM: defaultPhysicalWidthMM)
+                // this only sets where they start from. Capped to whatever
+                // hoop is currently selected, if any -- otherwise a design
+                // detailed enough to want the full 400mm ceiling landed
+                // there regardless of a much smaller selected hoop,
+                // recommending a starting size the very next quality check
+                // (hoop fit) would immediately flag as too big. See
+                // CHANGELOG.md.
+                physicalWidthMM = SizeRecommender.recommendedWidthMM(for: rawShapes, currentWidthMM: defaultPhysicalWidthMM,
+                                                                      maxWidthMM: selectedHoop?.widthMM, maxHeightMM: selectedHoop?.heightMM)
                 if lockAspectRatio {
                     physicalHeightMM = sourceAspectRatio > 0 ? physicalWidthMM / sourceAspectRatio : physicalWidthMM
                 }

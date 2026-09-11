@@ -59,7 +59,20 @@ public enum SizeRecommender {
     /// when the artwork has no measurable detail to react to (e.g. every
     /// shape degenerate) -- pass the app's existing default so behavior is
     /// unchanged for that edge case.
-    public static func recommendedWidthMM(for shapes: [VectorShape], currentWidthMM: Double) -> Double {
+    ///
+    /// `maxWidthMM`/`maxHeightMM` -- the currently-selected hoop's usable
+    /// area, when there is one -- cap the result so it never recommends a
+    /// starting size the design can't even fit in, regardless of how fine
+    /// its detail is. `maxRecommendedWidthMM`'s flat 400mm ceiling below is
+    /// already a *general* "this is getting unreasonable" backstop, not a
+    /// promise the result fits any particular hoop -- a genuinely detailed
+    /// design against a small hoop would otherwise still get recommended
+    /// at a size the very next quality check (hoop fit) immediately flags
+    /// as too big. Scales down uniformly (preserving the artwork's own
+    /// aspect ratio) by whichever of the two dimensions is the tighter
+    /// constraint, rather than independently squashing width and height
+    /// out of proportion. See CHANGELOG.md.
+    public static func recommendedWidthMM(for shapes: [VectorShape], currentWidthMM: Double, maxWidthMM: Double? = nil, maxHeightMM: Double? = nil) -> Double {
         var combined = BoundingBox.empty
         for shape in shapes { combined = combined.union(shape.boundingBox) }
         guard combined.width > 0, combined.height > 0 else { return currentWidthMM }
@@ -72,7 +85,22 @@ public enum SizeRecommender {
         guard thinnestSignificant > 0 else { return currentWidthMM }
 
         let neededWidthMM = targetMinFeatureMM * combined.width / thinnestSignificant
-        return min(maxRecommendedWidthMM, max(minRecommendedWidthMM, neededWidthMM))
+        var recommended = min(maxRecommendedWidthMM, max(minRecommendedWidthMM, neededWidthMM))
+
+        if maxWidthMM != nil || maxHeightMM != nil {
+            let aspectRatio = combined.width / combined.height // width / height, in the artwork's own units
+            var scale = 1.0
+            if let maxWidthMM, recommended > maxWidthMM {
+                scale = min(scale, maxWidthMM / recommended)
+            }
+            let recommendedHeightMM = recommended / aspectRatio
+            if let maxHeightMM, recommendedHeightMM > maxHeightMM {
+                scale = min(scale, maxHeightMM / recommendedHeightMM)
+            }
+            recommended *= scale
+        }
+
+        return recommended
     }
 
     /// Same technique `StitchTypeClassifier` already uses to judge a
