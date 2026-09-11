@@ -4,6 +4,31 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Rebrand to PiperStitch
+
+- Renamed the product from "OneClickStitch" to "PiperStitch" using the new
+  brand assets provided (`Logo/Primary Logo.png`, a sandpiper carrying a
+  loop of thread that forms the tail of "Stitch", for the wordmark;
+  `Logo/Favicon.png`, the same bird alone with the thread looping into a
+  stylized "e" beneath it, already square, for every icon-shaped use;
+  `Logo/First Logo.png`, an alternate illustration-style mark with a
+  tagline, kept as a source asset but not used anywhere in the app). Same
+  scope as the prior rename, per ARCHITECTURE.md → "Branding":
+  `Resources/Info.plist` (`CFBundleName`/`CFBundleDisplayName`/
+  `CFBundleIdentifier`/`CFBundleIconFile`, and the `com.oneclickstitch.*`
+  UTI prefix to `com.piperstitch.*`), the `WindowGroup` title, in-app
+  alert/error/empty-state text, `Scripts/build_app_bundle.sh`'s output
+  bundle name (now `PiperStitch.app`), a regenerated app icon
+  (`Resources/PiperStitch.icns`) and in-app toolbar mark
+  (`Sources/StitchPilotApp/Resources/PiperStitchIcon.png`) both generated
+  from `Logo/Favicon.png`, and `Resources/Branding/`'s wordmark/favicon
+  assets. Left unchanged, same
+  reasoning as before: `Package.swift`'s package/target/product names, the
+  compiled binary's filename inside the bundle, and — new this time,
+  called out explicitly since it's easy to conflate with the display name —
+  the `.stitchpilot` project-file extension itself, so a project saved
+  under any prior name still opens.
+
 ## Fixed: three issues found against a real Brother-machine sew-out, plus a paint-tool improvement
 
 - **Under-filled satin/tatami coverage.** A real sew-out of this app's own

@@ -1275,7 +1275,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// The One-Click Stitch action (spec: OneClickStitch's whole promise —
+    /// The One-Click Stitch action (spec: PiperStitch's whole promise —
     /// "turn any image into embroidery," fast/easy/affordable): runs Auto
     /// Digitize and then immediately prompts to save the result, combining
     /// what would otherwise be two separate manual steps (Auto Digitize,
@@ -1325,7 +1325,7 @@ final class AppState: ObservableObject {
 
     func exportDST() {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
             return
         }
         do {
@@ -1340,7 +1340,7 @@ final class AppState: ObservableObject {
 
     func exportPES() {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
             return
         }
         do {
@@ -1355,7 +1355,7 @@ final class AppState: ObservableObject {
 
     func exportEXP() {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
             return
         }
         do {
@@ -1370,7 +1370,7 @@ final class AppState: ObservableObject {
 
     func exportJEF() {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
             return
         }
         do {
@@ -1410,7 +1410,7 @@ final class AppState: ObservableObject {
     /// spec §59 guarantee as one saved locally.
     func shareCurrentFile(format: ShareFormat) {
         guard let plan = stitchPlan, let document else {
-            errorMessage = "Import artwork first — OneClickStitch digitizes it automatically."
+            errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
             return
         }
         do {

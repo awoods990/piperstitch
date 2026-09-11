@@ -1,9 +1,9 @@
-# OneClickStitch
+# PiperStitch
 
 *Turn any image into embroidery.* Fast, easy, affordable — professional
 automatic embroidery digitizing software for macOS (Apple Silicon).
 
-OneClickStitch converts ordinary image and vector artwork into machine-ready
+PiperStitch converts ordinary image and vector artwork into machine-ready
 embroidery designs by making the same technical decisions an experienced
 human digitizer would: it segments artwork into objects, chooses a stitch
 technique per object, generates underlay and compensation, sequences the
@@ -14,10 +14,11 @@ problems — rather than tracing pixels into stitches. Drop in artwork, click
 > **Status:** early development (Phase 1 of the roadmap in `ARCHITECTURE.md`).
 > Not yet a finished product. See `CHANGELOG.md` for what actually works today.
 
-"OneClickStitch" is a working product name (the project was built and is
-still documented throughout under its original working name, StitchPilot —
-see ARCHITECTURE.md → "Branding"); the name is kept out of core logic so it
-can change again later without a rewrite.
+"PiperStitch" is a working product name (the project was built and is still
+documented throughout under its original working name, StitchPilot, and was
+briefly rebranded "OneClickStitch" before this — see ARCHITECTURE.md →
+"Branding"); the name is kept out of core logic so it can change again later
+without a rewrite.
 
 ## What it does (target — see CHANGELOG.md for current state)
 
@@ -30,7 +31,7 @@ automatic quality audit, and the embroidery format your machine reads
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — system design, module boundaries, the internal data model, the auto-digitize pipeline, and third-party dependencies + licenses.
 - [`DIGITIZING_ENGINE.md`](DIGITIZING_ENGINE.md) — how the engine actually digitizes: stitch-type selection, density, underlay, compensation, sequencing, quality scoring.
-- [`FORMATS.md`](FORMATS.md) — every supported embroidery file format, what OneClickStitch can read/write, and known format-specific limitations.
+- [`FORMATS.md`](FORMATS.md) — every supported embroidery file format, what PiperStitch can read/write, and known format-specific limitations.
 - [`TESTING.md`](TESTING.md) — how the automated test suite works, including cross-validation against an independent embroidery library.
 - [`CHANGELOG.md`](CHANGELOG.md) — what's actually implemented, phase by phase.
 

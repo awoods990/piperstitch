@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds OneClickStitch.app as a normal double-clickable macOS app bundle
+# Builds PiperStitch.app as a normal double-clickable macOS app bundle
 # from the Swift Package Manager build products — no Xcode.app/.xcodeproj
 # required (see ARCHITECTURE.md "Distribution"). End users only ever see
 # the resulting .app; they never see this script, Terminal, or Swift Package
@@ -7,16 +7,16 @@
 # (an internal implementation detail, not user-facing — renaming it would
 # touch every source file's imports for zero visible benefit); the bundle
 # wrapper, display name, bundle identifier, and icon are what the user
-# actually sees, and those all say OneClickStitch.
+# actually sees, and those all say PiperStitch.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="release"
 PRODUCT_NAME="StitchPilot"
-APP_NAME="OneClickStitch.app"
+APP_NAME="PiperStitch.app"
 BUILD_DIR=".build/apple/Products/${CONFIG}"
 
-echo "==> Building OneClickStitch (${CONFIG})"
+echo "==> Building PiperStitch (${CONFIG})"
 swift build -c "${CONFIG}"
 
 BIN_PATH=".build/release/${PRODUCT_NAME}"
@@ -31,7 +31,7 @@ mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${PRODUCT_NAME}"
 cp "Resources/Info.plist" "${APP_DIR}/Contents/Info.plist"
-cp "Resources/OneClickStitch.icns" "${APP_DIR}/Contents/Resources/OneClickStitch.icns"
+cp "Resources/PiperStitch.icns" "${APP_DIR}/Contents/Resources/PiperStitch.icns"
 
 echo "==> Built ${APP_DIR}"
 echo "Run with: open \"${APP_DIR}\""

@@ -105,7 +105,7 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom) {
             statusBar
         }
-        .alert("OneClickStitch", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
+        .alert("PiperStitch", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(app.errorMessage ?? "")
@@ -345,12 +345,12 @@ struct ContentView: View {
         .padding(.vertical, 8)
     }
 
-    /// The app's own mark (the stitched "S" + cursor-click glyph), bundled
-    /// as a real image asset rather than an approximated SF Symbol — see
+    /// The app's own mark (the stitched sandpiper), bundled as a real image
+    /// asset rather than an approximated SF Symbol — see
     /// `Resources/Branding/` for the source files this was generated from.
     @ViewBuilder
     private func brandMark(size: CGFloat) -> some View {
-        if let url = Bundle.module.url(forResource: "OneClickStitchIcon", withExtension: "png"),
+        if let url = Bundle.module.url(forResource: "PiperStitchIcon", withExtension: "png"),
            let nsImage = NSImage(contentsOf: url) {
             Image(nsImage: nsImage)
                 .resizable()
@@ -364,7 +364,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             VStack(spacing: 10) {
                 brandMark(size: 64)
-                Text("OneClickStitch").font(.title2).fontWeight(.semibold)
+                Text("PiperStitch").font(.title2).fontWeight(.semibold)
                 Text("Turn any image into embroidery.")
                     .foregroundStyle(.secondary)
                 Text("Drop an image or SVG file here, or click to choose one")

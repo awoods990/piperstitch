@@ -18,7 +18,7 @@ let package = Package(
             name: "StitchPilotApp",
             dependencies: ["StitchPilotCore"],
             path: "Sources/StitchPilotApp",
-            resources: [.copy("Resources/OneClickStitchIcon.png")]
+            resources: [.copy("Resources/PiperStitchIcon.png")]
         ),
         // A no-GUI command-line harness around the exact same digitizing
         // pipeline the app uses: import -> classify -> flatten -> render to

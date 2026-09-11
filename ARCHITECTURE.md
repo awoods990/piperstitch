@@ -67,30 +67,41 @@ touching the engine.
 
 ## Branding
 
-The product was renamed from its original working name "StitchPilot" to
-"OneClickStitch" without touching engine, model, or format code — exactly
-the outcome this section originally described as the point of keeping the
-name out of core logic. Concretely, what did and didn't change:
+The product has been renamed twice without ever touching engine, model, or
+format code — exactly the outcome this section originally described as the
+point of keeping the name out of core logic: from its original working name
+"StitchPilot" to "OneClickStitch", and then from "OneClickStitch" to
+"PiperStitch" (real brand assets — a sandpiper carrying a loop of thread —
+supplied as `Logo/Primary Logo.png` for the wordmark and `Logo/Favicon.png`
+for the square icon mark; `Logo/First Logo.png` is an alternate
+illustration-style mark kept as a source asset but not used in the app).
+Concretely, what
+did and didn't change, both times:
 
 - **Changed:** `Resources/Info.plist` (`CFBundleName`/`CFBundleDisplayName`/
-  `CFBundleIdentifier`/`CFBundleIconFile`), the SwiftUI `WindowGroup` title,
-  `Scripts/build_app_bundle.sh`'s output bundle name, the app icon
-  (`Resources/OneClickStitch.icns`, generated from the real brand assets in
-  `Resources/Branding/` — see below — replacing the old programmatically-drawn
-  placeholder mark), an in-app brand mark image bundled as an SPM resource
-  for `StitchPilotApp` (`Sources/StitchPilotApp/Resources/`, loaded via
-  `Bundle.module`), and user-facing documentation.
+  `CFBundleIdentifier`/`CFBundleIconFile`, and — second rename only — the
+  `com.oneclickstitch.*` UTI identifier prefix to `com.piperstitch.*`; the
+  `stitchpilot` project-file extension itself was deliberately left alone,
+  see below), the SwiftUI `WindowGroup` title, `Scripts/build_app_bundle.sh`'s
+  output bundle name, the app icon (`Resources/PiperStitch.icns`, generated
+  from the real brand assets in `Resources/Branding/` — see below — replacing
+  the prior rebrand's icon), an in-app brand mark image bundled as an SPM
+  resource for `StitchPilotApp` (`Sources/StitchPilotApp/Resources/`, loaded
+  via `Bundle.module`), and user-facing documentation.
 - **Deliberately left unchanged:** `Package.swift`'s package/target/product
   names (`StitchPilot`, `StitchPilotCore`, `StitchPilotApp`), Swift type
-  names (`StitchPilotApp` the `App` struct), module import statements, and
-  the actual compiled binary's filename inside the bundle
-  (`Contents/MacOS/StitchPilot`, referenced by `CFBundleExecutable`). These
-  are internal identifiers with zero user-visible surface — nothing outside
-  the source tree and this doc ever sees them — so renaming them would be
-  pure mechanical churn across every source file for no visible benefit.
-  `CFBundleDisplayName` (what Finder, the Dock, and the menu bar actually
-  show) is what carries the product's real name to the user, independent of
-  the binary's own filename — a normal, common pattern.
+  names (`StitchPilotApp` the `App` struct), module import statements, the
+  actual compiled binary's filename inside the bundle
+  (`Contents/MacOS/StitchPilot`, referenced by `CFBundleExecutable`), and the
+  `.stitchpilot` project-file extension. These are internal identifiers with
+  zero user-visible surface — nothing outside the source tree and this doc
+  ever sees them, and an existing `.stitchpilot` file on someone's disk
+  shouldn't stop opening just because the app's own name changed again — so
+  renaming them would be pure mechanical churn (or, for the file extension,
+  actively user-hostile) for no visible benefit. `CFBundleDisplayName` (what
+  Finder, the Dock, and the menu bar actually show) is what carries the
+  product's real name to the user, independent of both the binary's own
+  filename and the project file's extension — a normal, common pattern.
 
 No engine, model, or format code references the product name. Renaming the
 product again later is the same find/replace of display strings and
@@ -198,18 +209,18 @@ Package Manager, Terminal, or source code — see spec §3. Opening
 `.xcodeproj` generation step needed, for anyone who wants to develop this in
 the Xcode IDE later.
 
-Verified end to end: `Scripts/build_app_bundle.sh` produces `OneClickStitch.app`
+Verified end to end: `Scripts/build_app_bundle.sh` produces `PiperStitch.app`
 that launches via `open` (the same path double-clicking in Finder takes) as a
 real, independent process — confirmed via `System Events` recognizing it as
 a running application and the system log showing AppKit actually creating
 and ordering its window to the front, plus a direct screenshot of the
 running window's content. The bundle carries a real icon
-(`Resources/OneClickStitch.icns`, generated from the actual brand assets —
+(`Resources/PiperStitch.icns`, generated from the actual brand assets —
 see "Branding" above — rather than shipping with a generic default).
 
 ## Third-party dependencies
 
-**Runtime dependencies of the shipped app: none.** Everything OneClickStitch
+**Runtime dependencies of the shipped app: none.** Everything PiperStitch
 ships with is Swift + Apple system frameworks (Foundation, SwiftUI,
 CoreGraphics, Accelerate).
 

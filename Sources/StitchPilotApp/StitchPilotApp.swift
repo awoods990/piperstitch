@@ -16,7 +16,7 @@ struct StitchPilotApp: App {
         // normal relaunch, this isn't fighting that.
         let screenSize = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
 
-        WindowGroup("OneClickStitch") {
+        WindowGroup("PiperStitch") {
             ContentView()
                 .environmentObject(appState)
                 // Must clear the three panels' own minimum widths (176 +
