@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Under the hood — how PiperStitch digitizes</title>
+<meta name="description" content="How PiperStitch turns a picture into stitches: the three stitch types, underlay, pull compensation, sequencing, the readiness check, and how it was tested against real sew-outs.">
+<link rel="canonical" href="https://www.piperstitch.com/technology.html">
+<meta name="theme-color" content="#0f2a4d">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="PiperStitch">
+<meta property="og:title" content="Under the hood — how PiperStitch digitizes">
+<meta property="og:description" content="How PiperStitch turns a picture into stitches: the three stitch types, underlay, pull compensation, sequencing, the readiness check, and how it was tested against real sew-outs.">
+<meta property="og:url" content="https://www.piperstitch.com/technology.html">
+<meta property="og:image" content="https://www.piperstitch.com/assets/piperstitch-icon-512.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Under the hood — how PiperStitch digitizes">
+<meta name="twitter:description" content="How PiperStitch turns a picture into stitches: the three stitch types, underlay, pull compensation, sequencing, the readiness check, and how it was tested against real sew-outs.">
+<meta name="twitter:image" content="https://www.piperstitch.com/assets/piperstitch-icon-512.png">
+
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/piperstitch-mark-32.png">
+<link rel="apple-touch-icon" href="assets/piperstitch-icon-180.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand-link" href="index.html" aria-label="PiperStitch home">
+      <img src="assets/piperstitch-mark-180.png" alt="" width="34" height="34">
+      <span class="brand-word">Piper<span class="blue">Stitch</span><span class="brand-sub">EMBROIDERY DIGITIZING</span></span>
+    </a>
+    <button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="siteNav">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="site-nav" id="siteNav">
+      <a href="how-it-works.html">How It Works</a><a href="technology.html">Formats</a><a href="pricing.html">Pricing</a><a href="faq.html">FAQ</a>
+      <a class="btn btn-primary" href="download.html">Download for Mac</a>
+    </nav>
+  </div>
+</header>
+<main>
+
+<section class="page-hero sky">
+  <div class="wrap">
+    <p class="eyebrow">Under the hood</p>
+    <h1>How PiperStitch actually digitizes.</h1>
+    <p class="lede">For the curious: what a digitizer decides, how PiperStitch decides it for you, and how we know it works. No jargon without a translation.</p>
+  </div>
+</section>
+
+<section class="bg-white">
+  <div class="wrap narrow">
+    <p class="eyebrow">First, the big idea</p>
+    <h2>Rules, not guesses.</h2>
+    <p>
+      An embroidery machine doesn&rsquo;t sew pictures. It sews a <em>list of needle positions</em>, in order, with a
+      thread-colour change here and a trim there. Turning a picture into that list is called <strong>digitizing</strong>,
+      and it&rsquo;s a craft: a good digitizer looks at a shape and decides what kind of stitch it wants, how dense, in
+      which direction, what goes underneath it, how much to over-size it so the fabric&rsquo;s pull doesn&rsquo;t shrink it,
+      and what order everything should sew in so the needle never drags a visible thread across your design.
+    </p>
+    <p>
+      Cheap &ldquo;auto-convert&rdquo; tools skip all of that. They trace the pixels and fill everything with the same
+      stitch, which is why the results pucker, gap, and look nothing like the picture. PiperStitch is different in a
+      specific way: <strong>it makes the same decisions a professional digitizer makes, using the same rules they use,
+      one shape at a time.</strong>
+    </p>
+    <p>
+      It&rsquo;s worth saying plainly: <strong>PiperStitch is not an AI model.</strong> Nothing here was &ldquo;trained&rdquo; on a
+      pile of designs to guess what stitches might look right, and nothing is sent to a server to be generated. It&rsquo;s
+      an engine of explicit, written-down digitizing rules &mdash; the same ones taught to human digitizers &mdash; applied
+      to the measured geometry of your artwork, on your Mac. That means it&rsquo;s predictable: the same artwork gives the same
+      result every time, every choice has a reason you can see in the Inspector, and you can override any of them.
+    </p>
+  </div>
+</section>
+
+<section class="bg-line-top">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">The three stitches</p>
+      <h2>Every embroidery design is made of just three things.</h2>
+      <p class="lede">Choosing the right one for each shape is most of the craft. PiperStitch measures every shape and chooses for you &mdash; then re-chooses if you resize.</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card">
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A running stitch: a single line of short, evenly spaced stitches following a curve">
+  <path d="M16 84 C 60 20, 120 120, 224 40" fill="none" stroke="#e6e0d4" stroke-width="1" stroke-dasharray="2 3"/>
+  <path d="M16 84 C 60 20, 120 120, 224 40" fill="none" stroke="#2b86e8" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="9 5"/>
+  <g fill="#1f3f63"><circle cx="16" cy="84" r="2.4"/><circle cx="224" cy="40" r="2.4"/></g>
+</svg>
+        <h3 style="margin-top:14px">Running stitch</h3>
+        <p><strong>What it is:</strong> a single line of stitches, one after another, like hand sewing. A <em>bean stitch</em> sews each step forward-back-forward for a bolder line.</p>
+        <p><strong>When PiperStitch uses it:</strong> outlines, fine details, and anything narrower than about 1.5&nbsp;mm &mdash; too thin for satin to hold.</p>
+      </div>
+      <div class="card">
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A satin column: long stitches zig-zagging edge to edge across a curved band">
+  <path d="M20 40 C 80 10, 160 10, 220 40 L 220 84 C 160 54, 80 54, 20 84 Z" fill="#eef6fd"/>
+  <g stroke="#2b86e8" stroke-width="2.6" stroke-linecap="round">
+    <path d="M22 41 L 28 80"/><path d="M28 80 L 36 33"/><path d="M36 33 L 44 74"/><path d="M44 74 L 54 28"/><path d="M54 28 L 62 70"/><path d="M62 70 L 72 25"/><path d="M72 25 L 80 67"/><path d="M80 67 L 90 23"/><path d="M90 23 L 98 65"/><path d="M98 65 L 108 22"/><path d="M108 22 L 116 64"/><path d="M116 64 L 126 22"/><path d="M126 22 L 134 64"/><path d="M134 64 L 144 23"/><path d="M144 23 L 152 65"/><path d="M152 65 L 162 25"/><path d="M162 25 L 170 67"/><path d="M170 67 L 180 28"/><path d="M180 28 L 188 70"/><path d="M188 70 L 198 33"/><path d="M198 33 L 206 74"/><path d="M206 74 L 216 40"/>
+  </g>
+</svg>
+        <h3 style="margin-top:14px">Satin</h3>
+        <p><strong>What it is:</strong> long stitches zig-zagging edge to edge across a band. The classic glossy look of embroidered lettering and borders.</p>
+        <p><strong>When PiperStitch uses it:</strong> anything from 1.5&nbsp;mm to about 12&nbsp;mm wide. Wider than that and the long stitches snag, so it switches to fill &mdash; or splits the shape and satins each part.</p>
+      </div>
+      <div class="card">
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A tatami fill: many rows of short stitches covering a large shape, each row's stitches offset from the last">
+  <defs><clipPath id="leafclip"><path d="M20 100 C 30 30, 120 8, 222 18 C 210 80, 130 112, 20 100 Z"/></clipPath></defs>
+  <path d="M20 100 C 30 30, 120 8, 222 18 C 210 80, 130 112, 20 100 Z" fill="#eef6fd"/>
+  <g clip-path="url(#leafclip)" stroke="#2b86e8" stroke-width="2.2" stroke-linecap="round">
+    <path d="M0 22 H240" stroke-dasharray="10 3"/><path d="M0 30 H240" stroke-dasharray="10 3" stroke-dashoffset="4"/><path d="M0 38 H240" stroke-dasharray="10 3" stroke-dashoffset="8"/><path d="M0 46 H240" stroke-dasharray="10 3"/><path d="M0 54 H240" stroke-dasharray="10 3" stroke-dashoffset="4"/><path d="M0 62 H240" stroke-dasharray="10 3" stroke-dashoffset="8"/><path d="M0 70 H240" stroke-dasharray="10 3"/><path d="M0 78 H240" stroke-dasharray="10 3" stroke-dashoffset="4"/><path d="M0 86 H240" stroke-dasharray="10 3" stroke-dashoffset="8"/><path d="M0 94 H240" stroke-dasharray="10 3"/><path d="M0 102 H240" stroke-dasharray="10 3" stroke-dashoffset="4"/>
+  </g>
+  <path d="M20 100 C 30 30, 120 8, 222 18 C 210 80, 130 112, 20 100 Z" fill="none" stroke="#1f3f63" stroke-width="1.2" stroke-dasharray="3 2"/>
+</svg>
+        <h3 style="margin-top:14px">Tatami fill</h3>
+        <p><strong>What it is:</strong> rows of short stitches, like a woven mat, covering a large area. Each row&rsquo;s stitches are offset from the last so no grid pattern shows.</p>
+        <p><strong>When PiperStitch uses it:</strong> big shapes and backgrounds, and any satin candidate that turns out too wide. Rows run across the shape&rsquo;s narrow direction so they lie flat.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-white">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Step by step</p>
+      <h2>What happens when you click <em>Create Embroidery File</em>.</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="step-n">1</div><div>
+        <h3>Your picture becomes shapes</h3>
+        <p>PiperStitch first works out how many colours your design <em>really</em> has. A two-colour logo saved as a JPEG contains thousands of slightly different pixels; PiperStitch finds the two that matter. Each colour region is then traced into a clean outline &mdash; with its holes kept as holes (the middle of an O stays open) and overlapping regions separated into layers, so a badge doesn&rsquo;t lose the disc behind its text. If you give it an SVG, it uses the exact vector paths instead.</p>
+      </div></div>
+      <div class="step"><div class="step-n">2</div><div>
+        <h3>Each shape gets measured and classified</h3>
+        <p>The width of every shape is sampled at a dozen points along its length. Narrow &rarr; running stitch; medium &rarr; satin; wide &rarr; fill. A whole word of lettering is judged together so every letter sews the same way, and letters with counters (O, P, R, A, D, Q) get a satin ring around the hole rather than being flattened into fill. Resize the design and this is all reconsidered &mdash; scale small text up and it becomes satin on its own.</p>
+      </div></div>
+      <div class="step"><div class="step-n">3</div><div>
+        <h3>Underlay goes down first</h3>
+        <p>Professionals never sew satin straight onto fabric: a light preliminary layer &mdash; <strong>underlay</strong> &mdash; stabilises the cloth and gives the top stitches something to sit on, which is what makes satin look raised and even. PiperStitch lays an edge-run underlay under every column and, for wider columns, adds a zig-zag layer too (the technique digitizers call &ldquo;German underlay&rdquo;). Fills get their own edge-run and a light cross-hatch.</p>
+      </div></div>
+      <div class="step"><div class="step-n">4</div><div>
+        <h3>The shape is over-sized to fight pull</h3>
+        <p>Thread under tension pulls fabric inward, so a satin column always sews a little narrower than it was drawn, and a fill pushes outward at its ends. Digitizers counter this with <strong>pull compensation</strong>: drawing the shape slightly bigger than they want it to end up. PiperStitch does this automatically, scaling the amount to stitch density and to the fabric you picked &mdash; twill barely moves; a stretchy knit or a plush towel needs more.</p>
+      </div></div>
+      <div class="step"><div class="step-n">5</div><div>
+        <h3>Stitches are generated, with care at the edges</h3>
+        <p>Satin density tightens automatically on the inside of curves and relaxes on the outside so coverage stays even round a bend. Column ends are squared off the way a hand digitizer squares them. Fill rows are staggered so seams never line up. Every stitch is then checked: too short to sew (under 0.15&nbsp;mm) or too long to be safe (over 12.5&nbsp;mm) and it&rsquo;s split or merged. Each object starts with a tie-in and ends with a tie-off so nothing unravels.</p>
+      </div></div>
+      <div class="step"><div class="step-n">6</div><div>
+        <h3>Everything is put in order</h3>
+        <p>Backgrounds before foregrounds; inside before outside; the first letter of a word first, not whichever pixel a scanner happened to reach. Then the order is refined to keep the needle&rsquo;s travel short, and any travel that can&rsquo;t be avoided is routed <em>underneath</em> stitching that comes later &mdash; <strong>hidden travel</strong> &mdash; instead of scratching across your design. Colour changes are grouped so your machine stops as few times as possible; long jumps get a trim.</p>
+      </div></div>
+      <div class="step"><div class="step-n">7</div><div>
+        <h3>It checks its own work</h3>
+        <p>The <strong>Embroidery Readiness</strong> report scores the result from 0 to 100 and lists every real problem it found, with the actual numbers: a satin column too thin to hold, detail too fine for the fabric, a jump longer than 15&nbsp;mm, a design that won&rsquo;t fit the hoop, an unusual number of trims. Never &ldquo;density problem&rdquo; &mdash; always what, where, and what to do about it.</p>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-line-top">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">How we know it works</p>
+      <h2>Built from the craft. Tested against real thread.</h2>
+    </div>
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="card-num">The rules</div>
+        <h3>Professional digitizing practice, written down</h3>
+        <p>Every threshold and technique in PiperStitch comes from documented digitizing guidance &mdash; the width limits for satin, underlay types, compensation, sequencing &mdash; and from studying the two most respected open-source embroidery engines line by line. Where we went beyond them (automatic fill angles, curvature-aware satin density, reading-order sequencing) it&rsquo;s our own work, and it&rsquo;s documented.</p>
+      </div>
+      <div class="card">
+        <div class="card-num">The tests</div>
+        <h3>290 automated checks, on every build</h3>
+        <p>Every export is written and then read back by a separate parser &mdash; and, in development, by an independent embroidery library maintained by another team &mdash; and compared stitch for stitch. Real files from other manufacturers&rsquo; software are opened and checked too. If any of it disagrees, the build fails.</p>
+      </div>
+      <div class="card">
+        <div class="card-num">The needle</div>
+        <h3>Real sew-outs changed the defaults</h3>
+        <p>Designs are stitched on a real Brother machine and compared against the preview. That&rsquo;s how the default density became 0.32&nbsp;mm instead of 0.40 (the wider setting showed rows), how sew order came to start at the first letter, and how the pull-compensation table got its fabric-specific numbers. Real customer logos found real bugs, and each one became a permanent test.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-white">
+  <div class="wrap narrow">
+    <p class="eyebrow">You&rsquo;re still the digitizer</p>
+    <h2>Automatic isn&rsquo;t the same as locked.</h2>
+    <p>
+      Most of the time you&rsquo;ll click once and export. But every decision above is exposed, per object, in the
+      Inspector: change a shape from fill to satin, set its density, its underlay, its fill angle, its compensation.
+      Merge shapes, paint in coverage, erase a fragment, reorder the sew sequence, move and resize on the canvas,
+      choose threads from a real manufacturer palette, and watch the realistic preview and the readiness score update
+      as you go. The engine does the first 95% so you can spend your attention on the 5% that makes a design yours.
+    </p>
+    <div class="callout">
+      <strong>What it honestly doesn&rsquo;t do.</strong> Photographs and soft gradients aren&rsquo;t good embroidery subjects in any software, and PiperStitch will tell you so rather than pretend. Pull compensation is a well-informed estimate, not a physics simulation of your particular machine, thread and hooping &mdash; sew a test before a production run, as every digitizer does. And a handful of formats (VP3, XXX, HUS, ART) aren&rsquo;t here yet; see <a href="formats.html">Formats</a>.
+    </div>
+  </div>
+</section>
+
+
+<section class="sky cta-band">
+  <div class="wrap">
+    <h2>See the decisions on your own artwork.</h2>
+    <p class="lede">Free for 14 days, every feature. Open the Inspector and watch what it chose &mdash; then change your mind.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="download.html">Download PiperStitch for Mac</a>
+      <a class="btn btn-secondary" href="pricing.html">See pricing</a>
+    </div>
+  </div>
+</section>
+
+
+</main>
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <img src="assets/piperstitch-logo-420.png" alt="PiperStitch" width="202">
+        <p>Automatic embroidery digitizing for Mac. Turn any image into a machine-ready stitch file &mdash; in one click.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="how-it-works.html">How It Works</a></li>
+          <li><a href="formats.html">Formats &amp; Machines</a></li>
+          <li><a href="technology.html">Under the Hood</a></li>
+          <li><a href="system-requirements.html">System Requirements</a></li>
+          <li><a href="download.html">Download for Mac</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Account</h4>
+        <ul>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="pricing.html#subscribe">Subscribe</a></li>
+          <li><a href="https://admin.piperstitch.com/account">Manage subscription</a></li>
+          <li><a href="faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <ul>
+          <li><a href="terms.html">Terms of Use</a></li>
+          <li><a href="privacy-policy.html">Privacy Policy</a></li>
+          <li><a href="mailto:hello@piperstitch.com">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; <span id="year">2026</span> PiperStitch. All rights reserved. PiperStitch is not affiliated with Tajima, Brother, Baby Lock, Janome, Melco, or Bernina; their names identify file formats their machines read.</span>
+      <span class="footer-motto">Turn any image into embroidery.</span>
+    </div>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

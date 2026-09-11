@@ -9,6 +9,7 @@ instead of a one-time licence. No frameworks, no build step, no tracking.
 index.html                Homepage
 how-it-works.html         Product tour — import, decide, engineer, check
 formats.html              Supported machine formats, imports, hoops
+technology.html           "Under the hood" — how the engine digitizes; footer-linked only, not in the nav
 pricing.html              Pricing + the embedded subscribe form (talks to license-admin)
 faq.html                  Questions and answers (with FAQ schema for Google)
 system-requirements.html  Mac hardware/OS specification

@@ -106,6 +106,7 @@ if (empty($_SESSION['ps_registered'])) {
         <ul>
           <li><a href="how-it-works.html">How It Works</a></li>
           <li><a href="formats.html">Formats &amp; Machines</a></li>
+          <li><a href="technology.html">Under the Hood</a></li>
           <li><a href="system-requirements.html">System Requirements</a></li>
           <li><a href="download.html">Download for Mac</a></li>
         </ul>
