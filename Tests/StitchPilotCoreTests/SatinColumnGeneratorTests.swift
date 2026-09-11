@@ -13,7 +13,7 @@ struct SatinColumnGeneratorTests {
     /// `SatinGenerationError.shapeNotSuitable` propagated all the way up
     /// and aborted the *entire* document's digitize -- found against a real
     /// multi-object design, not synthetically. See CHANGELOG.md.
-    @Test func pipelineFallsBackToRunningStitchWhenASatinShapeIsGeometricallyDegenerate() throws {
+    @Test func pipelineFallsBackToTatamiFillWhenASatinShapeIsGeometricallyDegenerate() throws {
         let degenerate = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(5, 0), Point2D(2.5, 1),
         ], closed: true)])
@@ -22,7 +22,34 @@ struct SatinColumnGeneratorTests {
         let doc = StitchDocument(name: "DegenerateSatin", physicalWidthMM: 10, physicalHeightMM: 10, objects: [object])
 
         let plan = try DigitizePipeline.flatten(doc)
-        #expect(plan.stitchCount > 0, "should fall back to a real (running-stitch) result, not silently produce nothing")
+        #expect(plan.stitchCount > 0, "should fall back to a real (tatami fill) result, not silently produce nothing")
+    }
+
+    /// A plain triangle -- exactly 3 vertices -- always fails `computeRails`'s
+    /// own "at least 4 distinct points" floor, regardless of size, so *any*
+    /// triangle manually set to satin (a mountain shape in a logo, say)
+    /// hits this exact fallback, not just contrived degenerate slivers.
+    /// Falling back to a running-stitch outline (the old behavior) left a
+    /// real, sizeable shape looking hollow -- no fill at all inside a wide
+    /// triangle -- reported directly against a real design. Checks for
+    /// genuine interior fill coverage, not just "more than zero points" (a
+    /// bare perimeter trace would satisfy that too, which is exactly what
+    /// this regression looked like before the fix).
+    @Test func pipelineFallsBackToRealFillCoverageForAWideTriangleNotJustAnOutline() throws {
+        let triangle = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(40, 0), Point2D(20, 30),
+        ], closed: true)])
+        let object = EmbroideryObject(name: "Mountain", shape: triangle, stitchType: .satin,
+                                       threadColor: .generic(RGBColor(hex: 0xFF8000)), parameters: params())
+        let doc = StitchDocument(name: "TriangleSatin", physicalWidthMM: 40, physicalHeightMM: 30, objects: [object])
+
+        let plan = try DigitizePipeline.flatten(doc)
+        // A running-stitch outline around this ~40x30mm triangle's ~100mm
+        // perimeter would be a few dozen stitches at most. Real tatami
+        // fill at this density across a triangle this size produces many
+        // hundreds -- an order-of-magnitude difference a bare outline
+        // could never reach.
+        #expect(plan.stitchCount > 200, "should be solid fill coverage, not a thin outline trace (got \(plan.stitchCount) stitches)")
     }
 
     /// A synthetic "H" -- two parallel vertical stems joined by a
@@ -48,8 +75,8 @@ struct SatinColumnGeneratorTests {
         }
 
         // The pipeline must still produce real output for this object --
-        // falling back to a running-stitch outline (the same fallback any
-        // other geometrically-unsuitable satin shape already gets), not
+        // falling back to tatami fill (the same fallback any other
+        // geometrically-unsuitable satin shape already gets), not
         // aborting the whole document's digitize.
         let object = EmbroideryObject(name: "H", shape: hShape, stitchType: .satin,
                                        threadColor: .generic(RGBColor(hex: 0x000000)), parameters: params())

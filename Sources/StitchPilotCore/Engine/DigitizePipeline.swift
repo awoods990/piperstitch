@@ -315,22 +315,31 @@ public enum DigitizePipeline {
                 // `StitchTypeClassifier` picks satin from a shape's average
                 // width alone, which is a real width measurement but no
                 // guarantee the outline is well-formed enough for satin's
-                // rail-fitting (an outline with too few distinct points, or
-                // no two identifiable ends -- typically a degenerate sliver
-                // that only crossed the satin-width threshold because a
-                // design got sized up, not something wrong with the sizing
-                // itself). Without this fallback, one such object aborts
-                // the *entire* document's digitize with an uncaught error,
-                // exactly the kind of single-object fragility spec §19
-                // means to avoid. Running stitch is the same fallback
-                // `StitchTypeClassifier` already uses for a shape whose
-                // *width* alone is too thin for satin -- reusing it here
-                // for "too geometrically degenerate for satin" is the same
-                // reasoning, just triggered by a different signal.
-                return [object.shape.subPaths.flatMap {
-                    RunningStitchGenerator.generate(for: $0, stitchLengthMM: object.parameters.stitchLengthMM,
-                                                     minStitchLengthMM: object.parameters.minStitchLengthMM)
-                }]
+                // rail-fitting -- either a genuinely degenerate sliver (too
+                // few distinct points, no two identifiable ends) *or* a
+                // perfectly normal, wide shape whose topology just doesn't
+                // reduce to two parallel-ish rails (a triangle is the
+                // common case: satin wants a "sausage" with two long
+                // sides, not three edges meeting at a point). Without this
+                // fallback, one such object aborts the *entire* document's
+                // digitize with an uncaught error, exactly the kind of
+                // single-object fragility spec §19 means to avoid.
+                //
+                // Falls back to tatami fill, not a running-stitch outline
+                // -- fill is the general-purpose technique that can cover
+                // *any* closed shape regardless of topology, where a bare
+                // outline leaves a real, sizeable shape looking hollow
+                // (no fill inside at all) rather than just less glossy
+                // than satin would have been. A running-stitch outline
+                // only ever made sense here for the genuinely-degenerate-
+                // sliver case, where fill and outline look about the same
+                // anyway; it never made sense for a shape satin merely
+                // couldn't rail-fit. Found against a real logo (a manually
+                // satin-typed mountain triangle) that rendered as an empty
+                // outline instead of a solid fill. See CHANGELOG.md.
+                let fillUnderlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
+                let fill = TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
+                return [fillUnderlay + fill]
             }
         }
     }
