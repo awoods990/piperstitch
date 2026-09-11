@@ -572,6 +572,17 @@ private struct InspectorView: View {
     /// preset is still active once the user has nudged the numbers away
     /// from it. Selecting "Custom" is a no-op; it only exists so the list
     /// has an explicit "I'm not using a preset" option to land on.
+    ///
+    /// `InspectorView` is a single long-lived view instance for the whole
+    /// app session, so this `@State` otherwise survives New Project and
+    /// every later import untouched -- a preset picked for one document
+    /// kept showing as "selected" for a completely different one imported
+    /// afterward (its Width/Height fields showing that new document's own
+    /// size, which rarely matches the stale preset's), reading as if the
+    /// old project's size had carried over. Resetting whenever the
+    /// document's own name changes (New Project clears it to nil; any
+    /// import/open sets it to that file's name) covers every case that
+    /// actually starts a different document. See CHANGELOG.md.
     @State private var selectedSizePreset: GarmentSizePreset?
 
     var body: some View {
@@ -695,6 +706,7 @@ private struct InspectorView: View {
             .padding(.horizontal, 13)
         }
         .background(PSColor.panel)
+        .onChange(of: app.document?.name) { _ in selectedSizePreset = nil }
     }
 
     private func icon(for severity: IssueSeverity) -> String {
