@@ -327,7 +327,7 @@ struct StitchCanvasView: View {
             .onAppear { canvasSize = geo.size }
             .onChange(of: geo.size) { canvasSize = $0 }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(PSColor.paper)
         .gesture(
             MagnificationGesture()
                 .onChanged { value in zoomScale = clampZoom(lastZoomScale * value) }

@@ -85,7 +85,7 @@ struct ContentView: View {
                 editingToolbarRow
                 Divider()
             }
-            .background(.bar)
+            .background(PSColor.panel)
         }
         .sheet(isPresented: $showingMergeColors) { MergeColorsSheet() }
         .sheet(isPresented: $showingThreadLibrary) { ThreadLibrarySheet() }
@@ -131,30 +131,14 @@ struct ContentView: View {
     /// own, so both rows are a plain custom `HStack` pinned to the top via
     /// `.safeAreaInset` instead of the system `.toolbar` modifier.
     private var fileToolbarRow: some View {
-        HStack(spacing: 14) {
-            // The One-Click Stitch action: styled with the app's own mark
-            // and a prominent tint so it's unmistakably *the* button in
-            // this row, not one of an equal-weight row of icons —
-            // everything else here is a secondary/manual path for users
-            // who want to inspect or adjust before exporting. There's no
-            // separate "Auto Digitize" action any more: every edit
-            // (import, resize, per-object parameter change, color merge)
-            // regenerates the preview on its own a moment later, so this
-            // button's only remaining job is the export step itself.
-            Button {
-                app.createEmbroideryFile()
-            } label: {
-                HStack(spacing: 6) {
-                    brandMark(size: 18)
-                    Text("Click to Create").fontWeight(.semibold)
-                }
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                brandMark(size: 20)
+                Text("PiperStitch").font(.system(size: 13, weight: .bold)).foregroundStyle(PSColor.navy800)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color(red: 0.09, green: 0.42, blue: 0.72))
-            .disabled(app.document == nil)
-            .help("One click: digitize this artwork and save it as a machine embroidery file.")
+            .padding(.trailing, 4)
 
-            Divider().frame(height: 20)
+            Divider().frame(height: 18)
 
             Button {
                 if app.document == nil {
@@ -191,8 +175,11 @@ struct ContentView: View {
                 Button("Open Artwork...") { app.openArtworkWithPanel() }
                 Button("Open Project...") { app.openProjectWithPanel() }
             } label: {
-                Label("Open", systemImage: "folder")
+                pillLabel("Open", systemImage: "folder")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
             Button {
                 app.saveProject()
             } label: {
@@ -221,21 +208,26 @@ struct ContentView: View {
                 Button("Melco (.exp)") { app.exportEXP() }
                 Button("Janome (.jef)") { app.exportJEF() }
             } label: {
-                Label("Download", systemImage: "square.and.arrow.down")
+                pillLabel("Download", systemImage: "square.and.arrow.down")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
             .disabled(app.stitchPlan == nil)
+
             Menu {
                 Button("Tajima (.dst)") { app.shareCurrentFile(format: .dst) }
                 Button("Brother/Baby Lock (.pes)") { app.shareCurrentFile(format: .pes) }
                 Button("Melco (.exp)") { app.shareCurrentFile(format: .exp) }
                 Button("Janome (.jef)") { app.shareCurrentFile(format: .jef) }
             } label: {
-                Label("Send", systemImage: "square.and.arrow.up")
+                pillLabel("Send", systemImage: "square.and.arrow.up")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
             .disabled(app.stitchPlan == nil)
             .help("Send the embroidery file via AirDrop, Mail, Messages, and more.")
 
-            Divider().frame(height: 20)
+            Divider().frame(height: 18)
 
             Button {
                 showingHelp = true
@@ -243,11 +235,47 @@ struct ContentView: View {
                 Label("Help", systemImage: "questionmark.circle")
             }
             .help("Definitions of the digitizing terms used throughout this app, and why they matter.")
+
+            Divider().frame(height: 18)
+
+            // The One-Click Stitch action: a prominent solid pill so it's
+            // unmistakably *the* button in this row, not one of an equal-
+            // weight row of icons — everything else here is a secondary/
+            // manual path for users who want to inspect or adjust before
+            // exporting. There's no separate "Auto Digitize" action any
+            // more: every edit (import, resize, per-object parameter
+            // change, color merge) regenerates the preview on its own a
+            // moment later, so this button's only remaining job is the
+            // export step itself.
+            Button {
+                app.createEmbroideryFile()
+            } label: {
+                Text("Create Embroidery File")
+            }
+            .buttonStyle(PSPrimaryButtonStyle())
+            .disabled(app.document == nil)
+            .help("One click: digitize this artwork and save it as a machine embroidery file.")
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(PSPillButtonStyle())
         .labelStyle(.titleAndIcon)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(PSColor.panel)
+    }
+
+    /// A `Menu`'s own trigger isn't a `Button`, so `PSPillButtonStyle`
+    /// (a `ButtonStyle`) can't style it directly -- this renders the same
+    /// pill by hand for a `Menu`'s `label:`, paired with
+    /// `.menuStyle(.borderlessButton)` on the `Menu` itself to strip the
+    /// system's own chrome so this is the only visible styling.
+    private func pillLabel(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(PSColor.ink2)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(PSColor.panel, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(PSColor.line, lineWidth: 1))
     }
 
     /// Editing-related actions: everything that changes what's actually in
@@ -255,7 +283,7 @@ struct ContentView: View {
     /// hands-on tools (lettering, merging, painting) -- as opposed to
     /// document-level actions in `fileToolbarRow` above.
     private var editingToolbarRow: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             Button {
                 showingMergeColors = true
             } label: {
@@ -283,8 +311,10 @@ struct ContentView: View {
                     }
                 }
             } label: {
-                Label("Fabric: \(app.selectedFabricType.shortName)", systemImage: "square.stack.3d.up")
+                pillLabel("Fabric: \(app.selectedFabricType.shortName)", systemImage: "square.stack.3d.up")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
             .help("Adjusts the automatic pull/push compensation estimate for the fabric this design will be sewn on -- a stretchier material needs more correction, a stable/rigid one needs less. Applies to every object; an object's own manually-set compensation always wins over this.")
 
             // A visible boundary between adjusting the automatic output
@@ -292,7 +322,7 @@ struct ContentView: View {
             // (lettering, merging, painting) -- both act on the current
             // design, but one tunes what auto-digitize already produced
             // while the other is direct manual editing.
-            Divider().frame(height: 20)
+            Divider().frame(height: 18)
 
             Button {
                 showingAddLettering = true
@@ -307,7 +337,7 @@ struct ContentView: View {
                 } label: {
                     Label("Detected Text (\(app.detectedTextRegions.count))", systemImage: "text.viewfinder")
                 }
-                .tint(.orange)
+                .buttonStyle(PSPillButtonStyle(accent: .orange, isHighlighted: true))
                 .help("This import appears to contain text -- review it and optionally replace the raster-traced version with clean generated lettering.")
             }
 
@@ -324,7 +354,7 @@ struct ContentView: View {
             } label: {
                 Label("Paint", systemImage: "paintbrush.pointed")
             }
-            .tint(app.isPaintMode ? Color.accentColor : nil)
+            .buttonStyle(PSPillButtonStyle(isHighlighted: app.isPaintMode))
             .help("Draw in missing coverage by hand -- extends the selected object, or draws a new shape if nothing's selected.")
 
             Button {
@@ -332,7 +362,7 @@ struct ContentView: View {
             } label: {
                 Label("Erase", systemImage: "eraser")
             }
-            .tint(app.isEraseMode ? Color.red : nil)
+            .buttonStyle(PSPillButtonStyle(accent: .red, isHighlighted: app.isEraseMode))
             .help("Remove coverage by hand -- draw over whatever's wrong and it's taken out of whichever object(s) it touches, regardless of what's selected.")
 
             if app.isPaintMode || app.isEraseMode {
@@ -350,10 +380,11 @@ struct ContentView: View {
 
             Spacer()
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(PSPillButtonStyle())
         .labelStyle(.titleAndIcon)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(PSColor.panel)
     }
 
     /// The app's own mark (the stitched sandpiper), bundled as a real image
@@ -375,7 +406,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             VStack(spacing: 10) {
                 brandMark(size: 64)
-                Text("PiperStitch").font(.title2).fontWeight(.semibold)
+                Text("PiperStitch").font(.title2).fontWeight(.bold).foregroundStyle(PSColor.navy800)
                 Text("Turn any image into embroidery.")
                     .foregroundStyle(.secondary)
                 Text("Drop an image or SVG file here, or click to choose one")
@@ -404,6 +435,7 @@ struct ContentView: View {
             } label: {
                 Label("Start with Text Only", systemImage: "textformat")
             }
+            .buttonStyle(PSPillButtonStyle())
             .help("Skip importing artwork -- type text and it becomes the whole design, generated directly from a font's own outline.")
         }
     }
@@ -433,7 +465,8 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.bar)
+        .background(PSColor.panel)
+        .overlay(alignment: .top) { Rectangle().fill(PSColor.line2).frame(height: 1) }
     }
 
     /// A compact, always-visible readiness score at the bottom-right of the
@@ -452,7 +485,7 @@ struct ContentView: View {
                 Text("Readiness: \(report.score)/100")
             }
             .font(.callout)
-            .foregroundStyle(report.isReadyToSew ? Color.green : Color.orange)
+            .foregroundStyle(report.isReadyToSew ? PSColor.readyText : PSColor.warnText)
             .help(report.isReadyToSew
                   ? "Ready to sew -- no issues found."
                   : "\(report.issues.count) issue\(report.issues.count == 1 ? "" : "s") found -- see Embroidery Readiness in the Inspector for details.")
@@ -483,24 +516,36 @@ private struct ObjectListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Objects").font(.headline).padding(12)
-            Divider()
+            PSSectionLabel(app.document.map { "Objects · \($0.objects.count)" } ?? "Objects")
+                .padding(.horizontal, 13)
+                .padding(.top, 13)
+                .padding(.bottom, 9)
             if let document = app.document, !document.objects.isEmpty {
                 List(document.objects, selection: $app.selectedObjectIDs) { object in
-                    HStack {
-                        Circle()
+                    let isSelected = app.selectedObjectIDs.contains(object.id)
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 3)
                             .fill(Color(red: Double(object.threadColor.rgb.r) / 255,
                                         green: Double(object.threadColor.rgb.g) / 255,
                                         blue: Double(object.threadColor.rgb.b) / 255))
                             .frame(width: 12, height: 12)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(object.name)
-                            Text(object.threadColor.name).font(.caption2).foregroundStyle(.secondary)
+                            Text(object.threadColor.name).font(.caption2).opacity(0.75)
                         }
                         Spacer()
-                        Text(object.stitchType.rawValue).font(.caption).foregroundStyle(.secondary)
+                        Text(object.stitchType.rawValue).font(.caption).opacity(0.7)
                     }
+                    .font(.system(size: 12))
+                    .foregroundStyle(isSelected ? .white : PSColor.ink2)
+                    .padding(.vertical, 2)
                     .tag(object.id)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(isSelected ? PSColor.navy700 : Color.clear)
+                            .padding(.horizontal, 5)
+                    )
+                    .listRowSeparator(.hidden)
                     .contextMenu {
                         Button("Delete Object", role: .destructive) {
                             app.selectedObjectIDs = [object.id]
@@ -508,13 +553,15 @@ private struct ObjectListView: View {
                         }
                     }
                 }
-                .listStyle(.sidebar)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             } else {
                 Spacer()
                 Text("No objects yet").foregroundStyle(.secondary).padding()
                 Spacer()
             }
         }
+        .background(PSColor.panel)
     }
 }
 
@@ -528,115 +575,126 @@ private struct InspectorView: View {
     @State private var selectedSizePreset: GarmentSizePreset?
 
     var body: some View {
-        Form {
-            if app.selectedObject != nil {
-                ObjectInspectorSection()
-            } else if app.selectedObjectIDs.count > 1 {
-                MultiSelectionSection()
-            }
-
-            Section("Finished Size") {
-                Picker("Standard Size", selection: $selectedSizePreset) {
-                    Text("Custom").tag(GarmentSizePreset?.none)
-                    ForEach(GarmentSizePreset.standardPresets) { preset in
-                        Text("\(preset.name) (\(cmString(preset.widthMM))×\(cmString(preset.heightMM))cm)").tag(GarmentSizePreset?.some(preset))
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if app.selectedObject != nil {
+                    ObjectInspectorSection()
+                } else if app.selectedObjectIDs.count > 1 {
+                    MultiSelectionSection()
                 }
-                .onChange(of: selectedSizePreset) { newValue in
-                    guard let newValue else { return }
-                    app.applyGarmentSizePreset(newValue)
-                }
-                HStack {
-                    TextField("Width (cm)", value: cmBinding($app.physicalWidthMM), format: .number)
-                        .onSubmit { app.applyPhysicalSizeChange() }
-                    Text("×")
-                    TextField("Height (cm)", value: cmBinding($app.physicalHeightMM), format: .number)
-                        .disabled(app.lockAspectRatio)
-                        .onSubmit { app.applyPhysicalSizeChange() }
-                }
-                Toggle("Lock aspect ratio", isOn: $app.lockAspectRatio)
-                Button("Apply Size") { app.applyPhysicalSizeChange() }
-            }
 
-            Section("Density (Entire Project)") {
-                globalDensitySlider("Satin Density", value: $app.globalSatinDensityMM)
-                globalDensitySlider("Fill Row Spacing", value: $app.globalFillSpacingMM)
-                Text("Applies to every satin or fill object in the project at once. Select an individual object above to fine-tune just that one.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Hoop") {
-                Picker("Hoop", selection: $app.selectedHoop) {
-                    Text("None").tag(HoopProfile?.none)
-                    ForEach(HoopProfile.commonHoops) { hoop in
-                        Text("\(hoop.name) (\(cmString(hoop.widthMM))×\(cmString(hoop.heightMM))cm)").tag(HoopProfile?.some(hoop))
-                    }
-                }
-            }
-
-            Section("Color Reduction") {
-                Picker("Preset", selection: $app.colorPreset) {
-                    ForEach(ColorQuantizationPreset.allCases, id: \.self) { preset in
-                        Text(presetLabel(preset)).tag(preset)
-                    }
-                }
-                Text("Only affects images — vector art keeps its own colors.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Thread Colors") {
-                Toggle("Match to thread library", isOn: $app.matchToThreadLibrary)
-                Text("Snaps each detected color to the nearest sewable thread color instead of the exact artwork color.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let plan = app.stitchPlan {
-                Section("Production Statistics") {
-                    LabeledContent("Stitches", value: "\(plan.stitchCount)")
-                    // Distinct thread colors actually used -- not object
-                    // count (many objects routinely share one color, e.g.
-                    // every letter of a word), which this showed before
-                    // and made a color-count-driven setting like the
-                    // import color preset look like it was doing nothing:
-                    // the object count barely moves even when the actual
-                    // color count does.
-                    LabeledContent("Colors", value: "\(Set((app.document?.objects ?? []).map { $0.threadColor.rgb }).count)")
-                    LabeledContent("Color changes", value: "\(plan.colorChangeCount)")
-                    LabeledContent("Trims", value: "\(plan.trimCount)")
-                    LabeledContent("Max stitch", value: String(format: "%.3f cm", plan.maxStitchLength() / 10))
-                }
-            }
-
-            if let report = app.readinessReport {
-                Section {
-                    HStack {
-                        Text(report.isReadyToSew ? "Ready to Sew" : "Review Recommended")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(report.score)/100")
-                            .font(.headline)
-                            .foregroundStyle(report.isReadyToSew ? .green : .orange)
-                    }
-                    if report.issues.isEmpty {
-                        Label("No issues found.", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.caption)
-                    } else {
-                        ForEach(Array(report.issues.enumerated()), id: \.offset) { _, issue in
-                            Label(issue.message, systemImage: icon(for: issue.severity))
-                                .font(.caption)
-                                .foregroundStyle(color(for: issue.severity))
+                PSSection("Finished Size") {
+                    Picker("Standard Size", selection: $selectedSizePreset) {
+                        Text("Custom").tag(GarmentSizePreset?.none)
+                        ForEach(GarmentSizePreset.standardPresets) { preset in
+                            Text("\(preset.name) (\(cmString(preset.widthMM))×\(cmString(preset.heightMM))cm)").tag(GarmentSizePreset?.some(preset))
                         }
                     }
-                } header: {
-                    Text("Embroidery Readiness")
+                    .onChange(of: selectedSizePreset) { newValue in
+                        guard let newValue else { return }
+                        app.applyGarmentSizePreset(newValue)
+                    }
+                    HStack {
+                        TextField("Width (cm)", value: cmBinding($app.physicalWidthMM), format: .number)
+                            .onSubmit { app.applyPhysicalSizeChange() }
+                        Text("×")
+                        TextField("Height (cm)", value: cmBinding($app.physicalHeightMM), format: .number)
+                            .disabled(app.lockAspectRatio)
+                            .onSubmit { app.applyPhysicalSizeChange() }
+                    }
+                    Toggle("Lock aspect ratio", isOn: $app.lockAspectRatio)
+                    Button("Apply Size") { app.applyPhysicalSizeChange() }
+                        .buttonStyle(PSPillButtonStyle())
+                }
+
+                PSSection("Density (Entire Project)") {
+                    globalDensitySlider("Satin Density", value: $app.globalSatinDensityMM)
+                    globalDensitySlider("Fill Row Spacing", value: $app.globalFillSpacingMM)
+                    Text("Applies to every satin or fill object in the project at once. Select an individual object above to fine-tune just that one.")
+                        .font(.caption)
+                        .foregroundStyle(PSColor.muted)
+                }
+
+                PSSection("Hoop") {
+                    Picker("Hoop", selection: $app.selectedHoop) {
+                        Text("None").tag(HoopProfile?.none)
+                        ForEach(HoopProfile.commonHoops) { hoop in
+                            Text("\(hoop.name) (\(cmString(hoop.widthMM))×\(cmString(hoop.heightMM))cm)").tag(HoopProfile?.some(hoop))
+                        }
+                    }
+                }
+
+                PSSection("Color Reduction") {
+                    Picker("Preset", selection: $app.colorPreset) {
+                        ForEach(ColorQuantizationPreset.allCases, id: \.self) { preset in
+                            Text(presetLabel(preset)).tag(preset)
+                        }
+                    }
+                    Text("Only affects images — vector art keeps its own colors.")
+                        .font(.caption)
+                        .foregroundStyle(PSColor.muted)
+                }
+
+                PSSection("Thread Colors") {
+                    Toggle("Match to thread library", isOn: $app.matchToThreadLibrary)
+                    Text("Snaps each detected color to the nearest sewable thread color instead of the exact artwork color.")
+                        .font(.caption)
+                        .foregroundStyle(PSColor.muted)
+                }
+
+                if let plan = app.stitchPlan {
+                    PSSection("Production Statistics") {
+                        VStack(spacing: 0) {
+                            PSRow("Stitches", "\(plan.stitchCount)")
+                            // Distinct thread colors actually used -- not
+                            // object count (many objects routinely share
+                            // one color, e.g. every letter of a word),
+                            // which this showed before and made a color-
+                            // count-driven setting like the import color
+                            // preset look like it was doing nothing: the
+                            // object count barely moves even when the
+                            // actual color count does.
+                            PSRow("Colors", "\(Set((app.document?.objects ?? []).map { $0.threadColor.rgb }).count)")
+                            PSRow("Color changes", "\(plan.colorChangeCount)")
+                            PSRow("Trims", "\(plan.trimCount)")
+                            PSRow("Max stitch", String(format: "%.3f cm", plan.maxStitchLength() / 10))
+                        }
+                    }
+                }
+
+                if let report = app.readinessReport {
+                    VStack(alignment: .leading, spacing: 8) {
+                        PSSectionLabel("Embroidery Readiness")
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(report.isReadyToSew ? "Ready to sew" : "Review recommended")
+                                    .font(.system(size: 15, weight: .semibold))
+                                Spacer()
+                                Text("\(report.score)/100").font(.system(size: 15, weight: .semibold))
+                            }
+                            if report.issues.isEmpty {
+                                Label("No issues found.", systemImage: "checkmark.circle.fill")
+                                    .font(.system(size: 11.5))
+                            } else {
+                                ForEach(Array(report.issues.enumerated()), id: \.offset) { _, issue in
+                                    Label(issue.message, systemImage: icon(for: issue.severity))
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(color(for: issue.severity))
+                                }
+                            }
+                        }
+                        .foregroundStyle(report.isReadyToSew ? PSColor.readyText : PSColor.warnText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(11)
+                        .background(report.isReadyToSew ? PSColor.readyBG : PSColor.warnBG, in: RoundedRectangle(cornerRadius: 9))
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(report.isReadyToSew ? PSColor.readyBorder : PSColor.warnBorder, lineWidth: 1))
+                    }
+                    .padding(.vertical, 13)
                 }
             }
+            .padding(.horizontal, 13)
         }
-        .formStyle(.grouped)
+        .background(PSColor.panel)
     }
 
     private func icon(for severity: IssueSeverity) -> String {
@@ -696,22 +754,25 @@ private struct MultiSelectionSection: View {
     @EnvironmentObject var app: AppState
 
     var body: some View {
-        Section("Selected Objects") {
+        PSSection("Selected Objects") {
             Text("\(app.selectedObjectIDs.count) objects selected")
-                .font(.headline)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(PSColor.navy800)
             Button {
                 app.mergeSelectedShapesIntoOneObject()
             } label: {
                 Label("Merge into One Shape", systemImage: "arrow.triangle.merge")
             }
+            .buttonStyle(PSPillButtonStyle())
             Button(role: .destructive) {
                 app.deleteSelectedObject()
             } label: {
                 Label("Delete Selected", systemImage: "trash")
             }
+            .buttonStyle(PSPillButtonStyle(accent: .red, isHighlighted: true))
             Text("Drag a box around several broken pieces on the canvas (or shift-click them) to select them, then merge.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(PSColor.muted)
         }
     }
 }
@@ -731,10 +792,10 @@ private struct ObjectInspectorSection: View {
     @EnvironmentObject var app: AppState
 
     var body: some View {
-        Section("Selected Object") {
+        PSSection("Selected Object") {
             if let object = app.selectedObject {
                 HStack {
-                    Text(object.name).font(.headline)
+                    Text(object.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(PSColor.navy800)
                     Spacer()
                     Button(role: .destructive) {
                         app.deleteSelectedObject()
@@ -972,6 +1033,7 @@ private struct MergeColorsSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(PSColor.blue500)
                 .disabled(selectedRGBs.count < 2 || targetColor == nil)
             }
             .padding()
@@ -1101,6 +1163,7 @@ private struct AddLetteringSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(PSColor.blue500)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedFontPostScriptName.isEmpty)
             }
             .padding()
@@ -1186,6 +1249,7 @@ private struct DetectedTextSheet: View {
                                 drafts.removeAll { $0.id == draft.id }
                             }
                             .buttonStyle(.borderedProminent)
+                .tint(PSColor.blue500)
                             .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
@@ -1268,6 +1332,7 @@ private struct ThreadLibrarySheet: View {
                 Spacer()
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
+                .tint(PSColor.blue500)
             }
             .padding()
         }
@@ -1419,6 +1484,7 @@ private struct GlossarySheet: View {
                 Spacer()
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
+                .tint(PSColor.blue500)
             }
             .padding()
         }
