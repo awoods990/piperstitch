@@ -1365,6 +1365,26 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Appended to the suggested/shared export filename when a hoop is
+    /// selected -- e.g. "Logo - 6x10in.dst" -- so re-exporting the same
+    /// design for a different hoop doesn't silently overwrite the last
+    /// file or require the user to rename by hand to tell them apart.
+    /// Computed from the hoop's own width/height in inches rather than
+    /// parsing `HoopProfile.name`'s display string, so it can't inherit
+    /// stray characters (quote marks, "×") that are fine to show on
+    /// screen but unwelcome in a filename. Deliberately only affects the
+    /// filename on disk, not the `designName` passed to the format
+    /// writers below -- DST's own embedded name field is only 16
+    /// characters, too tight to spend on a suffix.
+    private var hoopFileNameSuffix: String {
+        guard let hoop = selectedHoop else { return "" }
+        func inches(_ mm: Double) -> String {
+            let v = mm / 25.4
+            return v.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", v) : String(format: "%.1f", v)
+        }
+        return " - \(inches(hoop.widthMM))x\(inches(hoop.heightMM))in"
+    }
+
     func exportDST() {
         guard let plan = stitchPlan, let document else {
             errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
@@ -1374,7 +1394,7 @@ final class AppState: ObservableObject {
             let data = try DSTFormat.write(plan, designName: document.name)
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try DSTFormat.read(data)
-            saveExportedFile(data, suggestedName: document.name + ".dst", extension: "dst")
+            saveExportedFile(data, suggestedName: document.name + hoopFileNameSuffix + ".dst", extension: "dst")
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -1389,7 +1409,7 @@ final class AppState: ObservableObject {
             let data = try PESFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try PESFormat.read(data)
-            saveExportedFile(data, suggestedName: document.name + ".pes", extension: "pes")
+            saveExportedFile(data, suggestedName: document.name + hoopFileNameSuffix + ".pes", extension: "pes")
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -1404,7 +1424,7 @@ final class AppState: ObservableObject {
             let data = try EXPFormat.write(plan, designName: document.name)
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try EXPFormat.read(data)
-            saveExportedFile(data, suggestedName: document.name + ".exp", extension: "exp")
+            saveExportedFile(data, suggestedName: document.name + hoopFileNameSuffix + ".exp", extension: "exp")
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -1419,7 +1439,7 @@ final class AppState: ObservableObject {
             let data = try JEFFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
             // Self-validate before ever handing the file to the user (spec §59).
             _ = try JEFFormat.read(data)
-            saveExportedFile(data, suggestedName: document.name + ".jef", extension: "jef")
+            saveExportedFile(data, suggestedName: document.name + hoopFileNameSuffix + ".jef", extension: "jef")
         } catch {
             errorMessage = friendlyMessage(for: error)
         }
@@ -1477,7 +1497,7 @@ final class AppState: ObservableObject {
                 ext = "jef"
             }
             let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(document.name)
+                .appendingPathComponent(document.name + hoopFileNameSuffix)
                 .appendingPathExtension(ext)
             try data.write(to: tempURL, options: .atomic)
 

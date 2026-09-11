@@ -144,6 +144,7 @@ struct ContentView: View {
             Button {
                 if app.document == nil {
                     app.newProject()
+                    app.openArtworkWithPanel()
                 } else {
                     showingNewProjectConfirm = true
                 }
@@ -152,7 +153,16 @@ struct ContentView: View {
             }
             .confirmationDialog("Start a new project? The current design will be closed without saving.",
                                  isPresented: $showingNewProjectConfirm, titleVisibility: .visible) {
-                Button("Start New Project", role: .destructive) { app.newProject() }
+                // "New" is the start of a project, not just a reset -- the
+                // whole point is bringing in artwork next, so ask for it
+                // immediately instead of leaving the user looking at an
+                // empty canvas wondering what to do now. Same panel
+                // "Open Artwork..." already opens; cancelling it just
+                // leaves the fresh empty project in place, same as before.
+                Button("Start New Project", role: .destructive) {
+                    app.newProject()
+                    app.openArtworkWithPanel()
+                }
                 Button("Cancel", role: .cancel) {}
             }
 
@@ -404,18 +414,38 @@ struct ContentView: View {
     }
 
     private var dropPrompt: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 10) {
-                brandMark(size: 64)
+        VStack(spacing: 20) {
+            VStack(spacing: 8) {
+                brandMark(size: 56)
                 Text("PiperStitch").font(.title2).fontWeight(.bold).foregroundStyle(PSColor.navy800)
                 Text("Turn any image into embroidery.")
                     .foregroundStyle(.secondary)
-                Text("Drop an image or SVG file here, or click to choose one")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
-            .contentShape(Rectangle())
-            .onTapGesture { app.openArtworkWithPanel() }
+
+            // A prominent, unmistakably-clickable box instead of relying
+            // on plain text ("...or click to choose one") reading as
+            // tappable on its own -- found directly against a user who
+            // only realized this area accepted a drag, not a click.
+            Button {
+                app.openArtworkWithPanel()
+            } label: {
+                VStack(spacing: 6) {
+                    Image(systemName: "plus.circle.fill").font(.system(size: 28))
+                    Text("Start").font(.title3.weight(.bold))
+                    Text("Click to choose an image or SVG").font(.caption).opacity(0.85)
+                }
+                .foregroundStyle(.white)
+                .padding(.vertical, 26)
+                .padding(.horizontal, 42)
+                .background(RoundedRectangle(cornerRadius: 18).fill(PSColor.blue500))
+                .shadow(color: PSColor.navy900.opacity(0.2), radius: 14, y: 6)
+            }
+            .buttonStyle(.plain)
+            .help("Choose an image or SVG file to start a new design -- or just drag one anywhere onto this canvas.")
+
+            Text("or drag a file anywhere onto this canvas")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 36, height: 1)

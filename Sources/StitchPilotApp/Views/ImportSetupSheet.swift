@@ -179,15 +179,41 @@ struct ImportSetupSheet: View {
         LazyVGrid(columns: columns, spacing: 10) {
             ForEach(GarmentSizePreset.standardPresets) { preset in
                 ChoiceButton(title: preset.name, subtitle: "\(cm(preset.widthMM)) × \(cm(preset.heightMM)) cm", symbol: symbol(for: preset), selected: placement == .preset(preset)) {
+                    let placementChanged = placement != .preset(preset)
                     placement = .preset(preset)
                     app.applyGarmentSizePreset(preset)
-                    if isCapDesign, !app.selectedFabricType.isHeadwear { app.selectedFabricType = .structuredCap }
+                    // Predicts the fabric step's own answer from the
+                    // placement the moment it's picked -- a polo shirt is
+                    // knit, a cap front is a structured buckram panel --
+                    // so that step already starts somewhere sensible
+                    // instead of the generic "Standard" default, the same
+                    // "choosing one answer pre-chooses the logical next
+                    // one" adaptiveness the fabric-leads-with-headwear
+                    // reordering below already does. Guarded on the
+                    // placement actually *changing* so re-tapping the same
+                    // already-selected card doesn't stomp a fabric the
+                    // user has since deliberately picked for themselves.
+                    if placementChanged, let predicted = predictedFabric(for: preset) {
+                        app.selectedFabricType = predicted
+                    }
                 }
             }
             ChoiceButton(title: "Something else", subtitle: "I'll set the size myself", symbol: "ruler", selected: placement == .custom) {
                 placement = .custom
             }
         }
+    }
+
+    /// Deliberately conservative: only the placements whose *name* names
+    /// an actual garment/material commits to a guess (a bare "Left Chest"
+    /// or "Sleeve" could be on anything from a woven jacket to a knit tee,
+    /// so those are left alone rather than guessing wrong and requiring a
+    /// correction the user didn't ask for).
+    private func predictedFabric(for preset: GarmentSizePreset) -> FabricType? {
+        let n = preset.name.lowercased()
+        if n.contains("cap") || n.contains("hat") { return .structuredCap }
+        if n.contains("polo") { return .knit }
+        return nil
     }
 
     private var sizeStep: some View {
