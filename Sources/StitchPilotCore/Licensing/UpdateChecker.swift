@@ -39,7 +39,7 @@ public enum UpdateChecker {
     public static func availableUpdate(from data: Data, currentVersion: String) -> AvailableUpdate? {
         guard let feed = try? JSONDecoder().decode(UpdateFeed.self, from: data),
               isNewer(feed.latest_version, than: currentVersion),
-              let url = URL(string: feed.download_url) else { return nil }
+              let url = URL(string: feed.download_url), url.scheme == "https" || url.scheme == "http", url.host != nil else { return nil }
         return AvailableUpdate(version: feed.latest_version, downloadURL: url, notes: feed.notes ?? "")
     }
 

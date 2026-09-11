@@ -4,6 +4,37 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: subscription licensing, the marketing website, and the License Admin service
+
+- **In-app subscription gate** (`Sources/StitchPilotCore/Licensing/`,
+  `Sources/StitchPilotApp/LicenseManager.swift`, `Views/SubscriptionViews.swift`).
+  A 14-day free trial from first launch (tracked in two places, earlier
+  start wins), then a `LockedOverlay` until the person signs in with a
+  subscribed email. Sign-in is email + six-digit code — there is no
+  license key; the app holds a device token and a short-lived
+  Ed25519-signed *entitlement* (`PSE1.<payload>.<sig>`) verified with
+  CryptoKit against the public key in `LicenseConfig`, refreshed silently
+  every 12 hours, bound to this Mac's device id. Menu item *PiperStitch
+  Subscription…*, a status-bar pill (trial countdown / account), and an
+  update notice driven by `UpdateChecker` polling the website's feed
+  (nil in dev builds). DEBUG builds honour `PIPERSTITCH_API_BASE` /
+  `PIPERSTITCH_PUBLIC_KEY` for local testing. `LicensingTests` (13 tests,
+  Swift Testing) include a token signed by the Python service to prove
+  the two wire formats agree.
+- **`license-admin/`** — a FastAPI service modelled on the Amerus License
+  Admin, reworked for subscriptions: Stripe Checkout in subscription
+  mode, webhook mirroring of subscription state, the app sign-in API,
+  a customer self-service account page with Stripe Billing Portal
+  hand-off, and an admin dashboard (MRR, past-due, cancelling, comps,
+  devices, financials, SFTP update publishing). 71 pytest tests.
+- **`website/`** — the marketing site, cloned from the amerus-website
+  structure (static HTML + a PHP download gate on GoDaddy cPanel) with the
+  PiperStitch brand and copy, an embedded subscribe form that calls
+  license-admin, and draft Terms/Privacy pages written for a subscription.
+- **`LICENSING.md`** — the operational guide tying the three together.
+  The signing keypair lives in `~/Documents/PiperStitch-Licensing/`,
+  outside the repo. The Amerus project itself was read, not modified.
+
 ## Rebrand to PiperStitch
 
 - Renamed the product from "OneClickStitch" to "PiperStitch" using the new

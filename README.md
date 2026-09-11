@@ -34,6 +34,7 @@ automatic quality audit, and the embroidery format your machine reads
 - [`FORMATS.md`](FORMATS.md) — every supported embroidery file format, what PiperStitch can read/write, and known format-specific limitations.
 - [`TESTING.md`](TESTING.md) — how the automated test suite works, including cross-validation against an independent embroidery library.
 - [`CHANGELOG.md`](CHANGELOG.md) — what's actually implemented, phase by phase.
+- [`LICENSING.md`](LICENSING.md) — the subscription model: the in-app trial and sign-in, the `license-admin/` service, and the `website/` download gate and subscribe form.
 
 ## Building from source
 

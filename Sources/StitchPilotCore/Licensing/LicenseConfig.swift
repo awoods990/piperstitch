@@ -35,6 +35,23 @@ public struct LicenseConfig: Sendable {
         self.updateFeedURL = updateFeedURL
     }
 
+    /// What the app actually runs with: `production`, except that a DEBUG
+    /// build honours two environment variables so a developer can point a
+    /// local build at a local License Admin (and its test keypair) without
+    /// editing source: PIPERSTITCH_API_BASE and PIPERSTITCH_PUBLIC_KEY.
+    /// Release builds ignore both — the public key must not be overridable
+    /// in anything a customer runs.
+    public static var current: LicenseConfig {
+        var config = production
+        #if DEBUG
+        let env = ProcessInfo.processInfo.environment
+        if let base = env["PIPERSTITCH_API_BASE"], let url = URL(string: base) { config.apiBaseURL = url }
+        if let key = env["PIPERSTITCH_PUBLIC_KEY"], !key.isEmpty { config.publicKeyBase64 = key }
+        if let feed = env["PIPERSTITCH_UPDATE_FEED"], let url = URL(string: feed) { config.updateFeedURL = url }
+        #endif
+        return config
+    }
+
     /// The shipping configuration. `updateFeedURL` is nil in development
     /// builds so a dev copy never polls a URL nobody hosts yet — set it
     /// when the site is live (LICENSING.md → "Shipping an update").

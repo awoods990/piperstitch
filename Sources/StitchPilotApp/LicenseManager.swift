@@ -32,7 +32,7 @@ final class LicenseManager: ObservableObject {
     private var record: LicenseRecord
     private var refreshLoop: Task<Void, Never>?
 
-    init(config: LicenseConfig = .production) {
+    init(config: LicenseConfig = .current) {
         self.config = config
         self.api = LicenseAPIClient(baseURL: config.apiBaseURL)
         var loaded = LicenseRecord.load()

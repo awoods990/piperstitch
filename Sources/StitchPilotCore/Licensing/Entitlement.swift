@@ -76,7 +76,7 @@ public enum EntitlementVerifier {
         let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 3, parts[0] == prefix,
               let payloadBytes = base64URLDecode(parts[1]),
-              let signature = base64URLDecode(parts[2]) else {
+              let signature = base64URLDecode(parts[2]), signature.count == 64 else {
             throw EntitlementError.malformed
         }
         guard let keyBytes = Data(base64Encoded: publicKeyBase64),
