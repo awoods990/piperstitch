@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in — PiperStitch License Admin{% endblock %}
+{% block body %}
+<main style="max-width: 380px; margin-top: 80px;">
+  <div class="card">
+    <h1>PiperStitch License Admin</h1>
+    <p class="muted" style="margin-top:0">Sign in to manage subscriptions.</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/admin/login">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autofocus required autocomplete="username">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password">
+      <div style="margin-top:18px"><button type="submit">Sign in</button></div>
+    </form>
+  </div>
+</main>
+{% endblock %}

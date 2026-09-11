@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Your subscription — PiperStitch{% endblock %}
+{% block body %}
+<main class="public" style="max-width:640px">
+  <div style="display:flex; justify-content:space-between; align-items:center">
+    <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+    <form method="post" action="/account/logout"><button class="small secondary" type="submit">Sign out of this page</button></form>
+  </div>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <h1>{{ customer.name }}</h1>
+    <p class="muted" style="margin-top:0">{{ customer.email }}</p>
+    <div class="status-line">
+      {% if validity.entitled %}
+        {% if validity.status == 'comp' %}
+          <span class="pill comp">complimentary</span> Your access runs through <strong>{{ validity.period_end.date().isoformat() if validity.period_end else '—' }}</strong>.
+        {% elif validity.cancel_at_period_end %}
+          <span class="pill cancelling">ending</span> Your subscription ends on <strong>{{ validity.period_end.date().isoformat() if validity.period_end else '—' }}</strong>. You won't be charged again. PiperStitch keeps working until then.
+        {% elif validity.status == 'past_due' %}
+          <span class="pill past_due">payment issue</span> Your last renewal didn't go through. Update your card below and the retry will succeed; PiperStitch keeps working for {{ config.ENTITLEMENT_GRACE_DAYS }} days past your renewal date.
+        {% else %}
+          <span class="pill active">active</span> {{ price_label() }} a month{% if validity.period_end %}, next renewal <strong>{{ validity.period_end.date().isoformat() }}</strong>{% endif %}.
+        {% endif %}
+      {% elif validity.status == 'ended' %}
+        <span class="pill ended">ended</span> Your subscription ended{% if validity.period_end %} on {{ validity.period_end.date().isoformat() }}{% endif %}. <a href="/subscribe?name={{ customer.name|urlencode }}&email={{ customer.email|urlencode }}">Resubscribe</a> any time — same email, same sign-in.
+      {% else %}
+        <span class="pill not-yet">no subscription</span> You're registered but don't have a subscription yet. <a href="/subscribe?name={{ customer.name|urlencode }}&email={{ customer.email|urlencode }}">Subscribe</a> for {{ price_label() }} a month.
+      {% endif %}
+    </div>
+    {% if can_manage_billing %}
+    <form method="post" action="/account/billing-portal" style="margin-top:14px">
+      <button type="submit">{% if validity.cancel_at_period_end %}Resume, update card, or see invoices{% else %}Update card, see invoices, or cancel{% endif %}</button>
+      <p class="small muted" style="margin:8px 0 0">Opens Stripe's secure billing page. Cancelling there stops future charges; you keep access until the end of the period you've paid for.</p>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Signed-in Macs ({{ devices|length }} of {{ max_devices }})</h2>
+    <p class="muted small" style="margin-top:-4px">Sign a Mac out here if you've replaced it or reached the limit. It will ask you to sign in again the next time it opens.</p>
+    <table>
+      <tr><th>Mac</th><th>Last used</th><th></th></tr>
+      {% for d in devices %}
+      <tr>
+        <td>{{ d.device_name or 'Unnamed Mac' }}</td>
+        <td class="muted">{{ d.last_seen_at|short_date }}</td>
+        <td><form method="post" action="/account/devices/{{ d.id }}/revoke"><button class="small secondary" type="submit">Sign out</button></form></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">No Mac is signed in yet. Open PiperStitch and choose Sign In.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  {% if payments %}
+  <div class="card">
+    <h2>Payments</h2>
+    <table>
+      <tr><th>Date</th><th>Amount</th><th>Status</th></tr>
+      {% for p in payments %}
+      <tr><td>{{ (p.paid_at or p.created_at)|short_date }}</td><td>{{ p.amount_cents|money }}</td><td><span class="pill {{ p.status }}">{{ p.status }}</span></td></tr>
+      {% endfor %}
+    </table>
+    <p class="small muted" style="margin:10px 0 0">Receipts and invoices with full detail are on the Stripe billing page above.</p>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

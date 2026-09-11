@@ -1,0 +1,65 @@
+{% extends "admin_base.html" %}
+{% block title %}Dashboard — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  <div class="kpi-grid">
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ counts.paying }}</div>
+      <div class="kpi-label">Paying subscribers</div>
+      <div class="kpi-sub">+{{ counts.new_this_month }} new / &minus;{{ counts.churned_this_month }} ended this month</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ counts.mrr_cents|money }}</div>
+      <div class="kpi-label">Monthly recurring revenue</div>
+      <div class="kpi-sub">{{ counts.revenue_this_month_cents|money }} collected this month</div>
+    </div>
+    <div class="kpi-tile {% if counts.past_due %}warn{% endif %}">
+      <div class="kpi-value">{{ counts.past_due }}</div>
+      <div class="kpi-label">Past due</div>
+      <div class="kpi-sub">{{ counts.failed_payments_this_month }} failed charge{{ '' if counts.failed_payments_this_month == 1 else 's' }} this month &middot; <a href="/admin/subscribers?status=past_due">see who</a></div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ counts.cancelling }}</div>
+      <div class="kpi-label">Cancelling at period end</div>
+      <div class="kpi-sub"><a href="/admin/subscribers?status=cancelling">See who &rarr;</a></div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ counts.comps }}</div>
+      <div class="kpi-label">Complimentary</div>
+      <div class="kpi-sub">Granted directly, no Stripe</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ download_counts.total }}</div>
+      <div class="kpi-label">Downloads</div>
+      <div class="kpi-sub">{{ download_counts.this_month }} this month &middot; <a href="/admin/registrations">registrations &rarr;</a></div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ pending_checkout_count }}</div>
+      <div class="kpi-label">Pending checkouts</div>
+      <div class="kpi-sub">Started, not yet paid</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value" style="font-size:20px">{{ latest_update.version if latest_update else '—' }}</div>
+      <div class="kpi-label">Live app version</div>
+      <div class="kpi-sub"><a href="/admin/updates">Publish an update &rarr;</a></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Recent activity</h2>
+    <ul class="timeline">
+      {% for e in recent_events %}
+      <li>
+        <span class="when">{{ e.created_at|short_dt }}</span>
+        <span>
+          {% if e.customer_id %}<a href="/admin/customers/{{ e.customer_id }}">{{ e.customer_name or e.customer_email }}</a>{% else %}<span class="muted">Unknown customer</span>{% endif %}
+          &mdash; <strong>{{ e.kind.replace('_', ' ') }}</strong>{% if e.detail %}: {{ e.detail }}{% endif %}
+        </span>
+      </li>
+      {% else %}
+      <li class="muted">Nothing yet. The first subscription will show up here the moment Stripe confirms it.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</main>
+{% endblock %}

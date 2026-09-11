@@ -1,0 +1,72 @@
+{% extends "admin_base.html" %}
+{% block title %}Updates — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if not configured %}
+  <div class="card" style="background:#fdf6e3; border-color:#e8dcb0">
+    <strong>Website publishing isn't configured yet.</strong>
+    <p class="muted" style="margin:6px 0 0">
+      Set <code>WEBSITE_SFTP_HOST</code>, <code>WEBSITE_SFTP_USERNAME</code>, and
+      <code>WEBSITE_SFTP_PASSWORD</code> in this service's environment to enable publishing
+      directly from this page. Until then, upload the build and the feed JSON by hand
+      &mdash; see the main repo's <code>LICENSING.md</code> &rarr; &ldquo;Shipping an update&rdquo;.
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Currently live</h2>
+    {% if latest %}
+    <p class="muted" style="margin-top:-4px">
+      Version <strong>{{ latest.version }}</strong>, published {{ latest.published_at }}.
+    </p>
+    {% if latest.notes %}<p>{{ latest.notes }}</p>{% endif %}
+    {% else %}
+    <p class="muted">No update has been published from this page yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Publish a new version</h2>
+    <p class="muted" style="margin-top:-6px">
+      Uploads the build to the website and updates the live feed that every copy of PiperStitch
+      already checks. You still need to bump <code>CFBundleShortVersionString</code> in
+      <code>Resources/Info.plist</code> and build the app yourself first.
+    </p>
+    <form method="post" action="/admin/updates" enctype="multipart/form-data">
+      <label for="version">Version</label>
+      <input type="text" id="version" name="version" required placeholder="e.g. 0.2.0" pattern="\d+\.\d+\.\d+">
+
+      <label for="notes">Release notes (optional)</label>
+      <textarea id="notes" name="notes" rows="3"></textarea>
+
+      <label for="build_file">Build file (.dmg or .zip)</label>
+      <input type="file" id="build_file" name="build_file" required accept=".dmg,.zip">
+
+      <div style="margin-top:18px">
+        <button type="submit" {% if not configured %}disabled{% endif %}>Publish update</button>
+      </div>
+    </form>
+  </div>
+
+  {% if history %}
+  <div class="card">
+    <h2>Publish history</h2>
+    <table>
+      <tr><th>Version</th><th>Notes</th><th>Size</th><th>Published</th></tr>
+      {% for h in history %}
+      <tr>
+        <td>{{ h.version }}</td>
+        <td class="muted">{{ h.notes or "—" }}</td>
+        <td class="muted">{{ "%.1f"|format(h.file_size / 1048576) }} MB</td>
+        <td class="muted">{{ h.published_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

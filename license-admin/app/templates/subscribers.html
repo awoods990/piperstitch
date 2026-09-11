@@ -1,0 +1,60 @@
+{% extends "admin_base.html" %}
+{% block title %}Subscribers — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if pending_checkouts %}
+  <div class="card">
+    <h2>Pending checkouts</h2>
+    <p class="muted" style="margin-top:-6px">People who started a Stripe checkout but haven't completed payment — nothing to do, shown for support visibility.</p>
+    <table>
+      <tr><th>Name</th><th>Email</th><th>Started</th></tr>
+      {% for c in pending_checkouts %}
+      <tr><td>{{ c.customer_name }}</td><td>{{ c.customer_email }}</td><td class="muted">{{ c.created_at|short_dt }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">Subscriptions ({{ subscriptions|length }})</h2>
+      <div class="actions">
+        <a class="button secondary small" href="/admin/subscribers">All</a>
+        <a class="button secondary small" href="/admin/subscribers?status=entitled">Entitled</a>
+        <a class="button secondary small" href="/admin/subscribers?status=past_due">Past due</a>
+        <a class="button secondary small" href="/admin/subscribers?status=cancelling">Cancelling</a>
+        <a class="button secondary small" href="/admin/subscribers?status=canceled">Ended</a>
+        <a class="button secondary small" href="/admin/subscribers?status=comp">Comps</a>
+        <a class="button secondary small" href="/admin/export.csv">Export CSV</a>
+      </div>
+    </div>
+    <form class="searchbar" method="get" action="/admin/subscribers">
+      <input type="hidden" name="status" value="{{ status }}">
+      <input type="text" name="q" placeholder="Search name, email, or Stripe subscription id…" value="{{ query }}">
+      <button type="submit" class="secondary">Search</button>
+    </form>
+    <table>
+      <tr><th>Customer</th><th>Status</th><th>Period ends</th><th>Price</th><th>Source</th><th>Started</th><th>Stripe</th></tr>
+      {% for s in subscriptions %}
+      <tr>
+        <td><a href="/admin/customers/{{ s.customer_id }}">{{ s.customer_name }}</a><br><span class="muted">{{ s.customer_email }}</span></td>
+        <td>
+          <span class="pill {{ s.status }}">{{ s.status.replace('_', ' ') }}</span>
+          {% if s.cancel_at_period_end and s.status in ('active','trialing','past_due') %}<br><span class="pill cancelling">ends at period end</span>{% endif %}
+        </td>
+        <td>{{ s.current_period_end|short_date }}</td>
+        <td>{% if s.source == 'manual' %}<span class="muted">comp</span>{% else %}{{ s.amount_cents|money }}/mo{% endif %}</td>
+        <td><span class="pill {{ s.source }}">{{ s.source }}</span></td>
+        <td class="muted">{{ s.created_at|short_date }}</td>
+        <td class="mono">{{ s.stripe_subscription_id or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No subscriptions{% if query or status %} match{% else %} yet{% endif %}.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

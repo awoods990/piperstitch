@@ -1,0 +1,26 @@
+{% extends "admin_base.html" %}
+{% block title %}Financials — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  <div class="kpi-grid">
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.mrr_cents|money }}</div><div class="kpi-label">MRR right now</div><div class="kpi-sub">{{ counts.paying }} paying &times; {{ price_label() }}/mo (actual prices summed)</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.revenue_this_month_cents|money }}</div><div class="kpi-label">Collected this month</div><div class="kpi-sub">Paid invoices, Stripe fees not deducted</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.new_this_month }} / {{ counts.churned_this_month }}</div><div class="kpi-label">Started / ended this month</div><div class="kpi-sub">Paid subscriptions only</div></div>
+  </div>
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">Revenue by month</h2>
+      <a class="button secondary small" href="/admin/financials.csv">Export CSV</a>
+    </div>
+    <p class="muted" style="margin-top:0">Every paid invoice Stripe reported, grouped by the month it was paid. Comps never appear here — no money changed hands. Refunds issued in the Stripe Dashboard are not subtracted; see Stripe for the net.</p>
+    <table>
+      <tr><th>Month</th><th>Payments</th><th>Revenue</th><th>Started</th><th>Ended</th></tr>
+      {% for m in months %}
+      <tr><td>{{ m.month }}</td><td>{{ m.payment_count }}</td><td>{{ m.revenue_cents|money }}</td><td>{{ m.started }}</td><td>{{ m.ended }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No payments yet.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

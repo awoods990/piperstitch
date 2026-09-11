@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Your subscription — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <h1>Manage your subscription</h1>
+    <p class="muted" style="margin-top:0">Enter the email you subscribed with and we'll send a one-time link. No password to remember.</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/account">
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" required autocomplete="email" autofocus value="{{ email or '' }}">
+      <div style="margin-top:18px"><button type="submit">Email me a link</button></div>
+    </form>
+  </div>
+  <p class="small muted">From your account page you can update your card, download invoices, sign out a Mac, or cancel.</p>
+</main>
+{% endblock %}

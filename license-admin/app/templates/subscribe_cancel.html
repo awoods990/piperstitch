@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Checkout cancelled — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <h1>No charge was made.</h1>
+    <p>You left before finishing checkout, so nothing was billed. Whenever you're ready, you can start again.</p>
+    <div style="display:flex; gap:10px; margin-top:18px">
+      <a class="button" href="/subscribe">Try again</a>
+      <a class="button secondary" href="{{ config.WEBSITE_BASE_URL }}">Back to PiperStitch</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

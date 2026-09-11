@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PiperStitch License Admin{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <style>
+    :root {
+      --navy: #0f2a4d;
+      --blue: #1a6fd1;
+      --caramel: #a8621f;
+      --red: #b3252c;
+      --bg: #f7f5f1;
+      --card: #ffffff;
+      --border: #e4dfd5;
+      --text: #161a20;
+      --muted: #6a7280;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--navy); color: #fff; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    header a { color: #fff; text-decoration: none; font-weight: 600; }
+    header form { margin: 0; }
+    header .brand { font-size: 15px; }
+    nav.admin-nav { display: flex; gap: 4px; }
+    nav.admin-nav a { font-weight: 500; font-size: 13px; padding: 6px 12px; border-radius: 6px; color: rgba(255,255,255,0.75); }
+    nav.admin-nav a:hover { color: #fff; background: rgba(255,255,255,0.08); }
+    nav.admin-nav a.active { color: #fff; background: rgba(255,255,255,0.16); }
+    .header-right { display: flex; gap: 16px; align-items: center; }
+    @media (max-width: 760px) { header { flex-wrap: wrap; gap: 10px; } nav.admin-nav { order: 3; flex-basis: 100%; overflow-x: auto; } }
+    header button { background: transparent; border: 1px solid rgba(255,255,255,0.4); color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    main { max-width: 1040px; margin: 0 auto; padding: 24px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    h3 { font-size: 14px; margin: 18px 0 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+    tr:last-child td { border-bottom: none; }
+    .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    a { color: var(--blue); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .kpi-tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+    .kpi-tile .kpi-value { font-size: 28px; font-weight: 700; line-height: 1.1; }
+    .kpi-tile .kpi-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .kpi-tile .kpi-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+    .kpi-tile.warn { border-color: #f0cabe; background: #fdf6f4; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .pill.active, .pill.paid, .pill.sent, .pill.yes { background: #e6f4ea; color: #1e7e34; }
+    .pill.trialing { background: #e8f0fe; color: #1a56db; }
+    .pill.comp, .pill.manual { background: #fdf0e6; color: #b3591a; }
+    .pill.past_due, .pill.failed, .pill.cancelling { background: #fff4e0; color: #9a6300; }
+    .pill.canceled, .pill.unpaid, .pill.ended, .pill.incomplete_expired, .pill.not-yet, .pill.no { background: #f1f1f3; color: #55555c; }
+    .pill.incomplete { background: #fdeaea; color: var(--red); }
+    .pill.stripe { background: #ece9fb; color: #5b3fc4; }
+    input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: #fff; color: var(--text); font-family: inherit; }
+    textarea { min-height: 120px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; margin-top: 14px; }
+    label:first-child { margin-top: 0; }
+    label.inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; margin: 0; }
+    label.inline input { width: auto; }
+    button, .button { display: inline-block; background: var(--blue); color: #fff; border: none; padding: 10px 18px; border-radius: 7px; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; font-family: inherit; }
+    button.secondary, .button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); }
+    button.danger { background: #fff; color: var(--red); border: 1px solid #f3c6c6; }
+    button.small, .button.small { padding: 5px 10px; font-size: 12px; }
+    .error { background: #fdeaea; color: var(--red); border: 1px solid #f3c6c6; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+    .success { background: #e6f4ea; color: #1e7e34; border: 1px solid #c6ecd0; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+    .notice { background: #fff8e6; color: #7a5a00; border: 1px solid #f1dfa3; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+    .searchbar { display: flex; gap: 8px; margin-bottom: 16px; }
+    .searchbar input { flex: 1; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .actions form { margin: 0; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
+    .timeline { list-style: none; margin: 0; padding: 0; }
+    .timeline li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; gap: 12px; }
+    .timeline li:last-child { border-bottom: none; }
+    .timeline .when { color: var(--muted); white-space: nowrap; min-width: 120px; font-size: 12px; }
+    .status-line { font-size: 15px; margin: 4px 0 10px; }
+    .public { max-width: 520px; margin: 60px auto; padding: 0 20px; }
+    .public .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; color: var(--navy); font-weight: 700; font-size: 18px; text-decoration: none; }
+    .public .brand img { width: 40px; height: 40px; }
+  </style>
+</head>
+<body>
+  {% block body %}{% endblock %}
+</body>
+</html>

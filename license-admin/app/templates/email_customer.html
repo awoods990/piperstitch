@@ -1,0 +1,21 @@
+{% extends "admin_base.html" %}
+{% block title %}Email {{ customer.name }} — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main style="max-width:640px">
+  <div class="card">
+    <h1>Email {{ customer.name }}</h1>
+    <p class="muted" style="margin-top:0">To: {{ customer.email }}</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/admin/customers/{{ customer.id }}/email">
+      <label for="subject">Subject</label>
+      <input type="text" id="subject" name="subject" required value="{{ default_subject }}">
+      <label for="body">Message</label>
+      <textarea id="body" name="body" rows="12" required>{{ default_body }}</textarea>
+      <div style="margin-top:18px; display:flex; gap:10px">
+        <button type="submit">Send</button>
+        <a class="button secondary" href="/admin/customers/{{ customer.id }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</main>
+{% endblock %}

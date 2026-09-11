@@ -1,0 +1,153 @@
+{% extends "admin_base.html" %}
+{% block title %}{{ customer.name }} — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <h1 style="margin:0">{{ customer.name }}</h1>
+        <div class="muted">{{ customer.email }}{% if customer.phone %} &middot; {{ customer.phone }}{% endif %}{% if customer.address %} &middot; {{ customer.address }}{% endif %}</div>
+      </div>
+      <div class="actions">
+        <a class="button small secondary" href="/admin/customers/{{ customer.id }}/email">Write an email</a>
+        <form method="post" action="/admin/customers/{{ customer.id }}/account-link"><button class="small secondary" type="submit">Send account link</button></form>
+        {% if validity.entitled %}<form method="post" action="/admin/customers/{{ customer.id }}/resend-welcome"><button class="small secondary" type="submit">Resend welcome</button></form>{% endif %}
+        <form method="post" action="/admin/customers/{{ customer.id }}/delete" onsubmit="return confirm('Delete this customer and all their records here? A live paid subscription must be cancelled first. This cannot be undone.');"><button class="small danger" type="submit">Delete</button></form>
+      </div>
+    </div>
+
+    <div class="status-line">
+      {% if validity.entitled %}
+        <span class="pill {{ validity.status }}">{{ validity.status.replace('_', ' ') }}</span>
+        Entitled to use PiperStitch{% if validity.period_end %} &mdash; {% if validity.cancel_at_period_end or validity.status == 'comp' %}access ends{% else %}renews{% endif %} <strong>{{ validity.period_end.date().isoformat() }}</strong>{% endif %}.
+      {% elif validity.status == 'ended' %}
+        <span class="pill ended">ended</span> Subscription ended{% if validity.period_end %} on {{ validity.period_end.date().isoformat() }}{% endif %}.
+      {% else %}
+        <span class="pill not-yet">no subscription</span>
+        {% if trial_ends %}Downloaded {{ customer.downloaded_at|short_date }} &mdash; in-app trial ends around <strong>{{ trial_ends }}</strong>{% if trial_ends < today %} (past){% endif %}.{% else %}Registered but hasn't downloaded yet.{% endif %}
+      {% endif %}
+    </div>
+    <div class="muted small">
+      Registered {{ customer.created_at|short_dt }} via {{ customer.source.replace('_', ' ') }}
+      {% if customer.consent_terms_version %}&middot; accepted Terms v{{ customer.consent_terms_version }} at {{ customer.consent_accepted_at|short_dt }}{% endif %}
+      {% if customer.stripe_customer_id %}&middot; Stripe customer <span class="mono">{{ customer.stripe_customer_id }}</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h2>Subscriptions</h2>
+        {% for s in subscriptions %}
+        <div style="padding:10px 0; border-bottom:1px solid var(--border)">
+          <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start">
+            <div>
+              <span class="pill {{ s.status }}">{{ s.status.replace('_', ' ') }}</span>
+              <span class="pill {{ s.source }}">{{ s.source }}</span>
+              {% if s.cancel_at_period_end and s.status in ('active','trialing','past_due') %}<span class="pill cancelling">ends at period end</span>{% endif %}
+              <div class="small" style="margin-top:6px">
+                {% if s.current_period_start %}Period {{ s.current_period_start|short_date }} &rarr; {{ s.current_period_end|short_date }}{% else %}Through {{ s.current_period_end|short_date }}{% endif %}
+                {% if s.source == 'stripe' %}&middot; {{ s.amount_cents|money }}/mo{% endif %}
+                {% if s.ended_at %}&middot; ended {{ s.ended_at|short_date }}{% endif %}
+              </div>
+              {% if s.stripe_subscription_id %}<div class="mono muted">{{ s.stripe_subscription_id }}</div>{% endif %}
+              {% if s.notes %}<div class="muted small">{{ s.notes }}</div>{% endif %}
+            </div>
+            <div class="actions" style="flex-direction:column; align-items:flex-end">
+              {% if s.status in ('active','trialing','past_due','comp') %}
+                {% if s.cancel_at_period_end and s.source == 'stripe' %}
+                  <form method="post" action="/admin/subscriptions/{{ s.id }}/reactivate"><button class="small secondary" type="submit">Undo cancel</button></form>
+                {% elif s.source == 'stripe' %}
+                  <form method="post" action="/admin/subscriptions/{{ s.id }}/cancel" onsubmit="return confirm('Cancel at the end of the current period? They keep access until then and are not charged again.');"><input type="hidden" name="when" value="period_end"><button class="small secondary" type="submit">Cancel at period end</button></form>
+                {% endif %}
+                <form method="post" action="/admin/subscriptions/{{ s.id }}/cancel" onsubmit="return confirm('End access IMMEDIATELY? Use for refunds or abuse only.');"><input type="hidden" name="when" value="now"><button class="small danger" type="submit">End now</button></form>
+              {% endif %}
+              {% if s.source == 'stripe' %}
+                <form method="post" action="/admin/subscriptions/{{ s.id }}/sync"><button class="small secondary" type="submit">Sync from Stripe</button></form>
+              {% else %}
+                <form method="post" action="/admin/subscriptions/{{ s.id }}/extend" style="display:flex; gap:4px"><input type="date" name="until" required style="width:150px; padding:4px 6px; font-size:12px"><button class="small secondary" type="submit">Extend</button></form>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <p class="muted">No subscription yet.</p>
+        {% endfor %}
+
+        <h3>Grant complimentary access</h3>
+        <form method="post" action="/admin/customers/{{ customer.id }}/comp">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px">
+            <div><label for="comp_months">Months from today</label><input type="number" id="comp_months" name="months" value="1" min="1" max="120"></div>
+            <div><label for="comp_until">…or through a date</label><input type="date" id="comp_until" name="until"></div>
+          </div>
+          <label for="comp_note">Note (why)</label>
+          <input type="text" id="comp_note" name="note" placeholder="e.g. review copy, support make-good">
+          <div style="margin-top:12px; display:flex; gap:14px; align-items:center">
+            <label class="inline"><input type="checkbox" name="send_email" value="1" checked> Email them how to sign in</label>
+            <button type="submit" class="small">Grant</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Signed-in Macs ({{ devices|length }} of {{ max_devices }})</h2>
+        <table>
+          <tr><th>Mac</th><th>Signed in</th><th>Last seen</th><th>Entitled until</th><th></th></tr>
+          {% for d in devices %}
+          <tr>
+            <td>{{ d.device_name or 'Unnamed Mac' }}<br><span class="mono muted">{{ d.device_id[:16] }}…</span></td>
+            <td class="muted">{{ d.created_at|short_date }}</td>
+            <td class="muted">{{ d.last_seen_at|short_dt }}</td>
+            <td class="muted">{{ d.last_entitlement_until|short_date }}</td>
+            <td><form method="post" action="/admin/devices/{{ d.id }}/revoke"><button class="small secondary" type="submit">Sign out</button></form></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">No Mac has signed in yet.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Payments</h2>
+        <table>
+          <tr><th>When</th><th>Amount</th><th>Status</th><th>Invoice</th></tr>
+          {% for p in payments %}
+          <tr>
+            <td class="muted">{{ (p.paid_at or p.created_at)|short_date }}</td>
+            <td>{{ p.amount_cents|money }}</td>
+            <td><span class="pill {{ p.status }}">{{ p.status }}</span></td>
+            <td class="mono muted">{{ p.stripe_invoice_id or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">No payments yet.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Notes</h2>
+        <form method="post" action="/admin/customers/{{ customer.id }}/notes">
+          <textarea name="notes" placeholder="Anything worth remembering about this customer.">{{ customer.notes }}</textarea>
+          <div style="margin-top:10px"><button type="submit" class="small secondary">Save notes</button></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Timeline</h2>
+        <ul class="timeline">
+          {% for e in events %}
+          <li><span class="when">{{ e.created_at|short_dt }}</span><span><strong>{{ e.kind.replace('_', ' ') }}</strong>{% if e.detail %} &mdash; {{ e.detail }}{% endif %}</span></li>
+          {% else %}
+          <li class="muted">Nothing yet.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}

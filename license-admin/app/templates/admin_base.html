@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <a href="/admin" class="brand" style="display:flex; align-items:center; gap:9px">
+    <img src="/static/images/piperstitch-mark.png" alt="" width="24" height="24">
+    PiperStitch License Admin
+  </a>
+  <div class="header-right">
+    <nav class="admin-nav">
+      <a href="/admin" class="{% if active_nav == 'dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="/admin/subscribers" class="{% if active_nav == 'subscribers' %}active{% endif %}">Subscribers</a>
+      <a href="/admin/registrations" class="{% if active_nav == 'registrations' %}active{% endif %}">Registrations</a>
+      <a href="/admin/financials" class="{% if active_nav == 'financials' %}active{% endif %}">Financials</a>
+      <a href="/admin/updates" class="{% if active_nav == 'updates' %}active{% endif %}">Updates</a>
+    </nav>
+    <form method="post" action="/admin/logout"><button type="submit">Sign out</button></form>
+  </div>
+</header>
+{% block admin_body %}{% endblock %}
+{% endblock %}
