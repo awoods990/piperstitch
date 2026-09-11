@@ -38,7 +38,7 @@ if (empty($_SESSION['ps_registered'])) {
   <div class="header-inner">
     <a class="brand-link" href="index.html" aria-label="PiperStitch home">
       <img src="assets/piperstitch-mark-180.png" alt="" width="34" height="34">
-      <span class="brand-word">PIPERSTITCH<span class="brand-sub">EMBROIDERY DIGITIZING</span></span>
+      <span class="brand-word">Piper<span class="blue">Stitch</span><span class="brand-sub">EMBROIDERY DIGITIZING</span></span>
     </a>
     <button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="siteNav">
       <span></span><span></span><span></span>
@@ -51,7 +51,7 @@ if (empty($_SESSION['ps_registered'])) {
 </header>
 <main>
 
-<section class="page-hero dark">
+<section class="page-hero sky">
   <div class="wrap">
     <div class="confirm">
       <div class="confirm-mark">

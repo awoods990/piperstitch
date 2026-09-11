@@ -166,10 +166,13 @@ enforced inside the app, not by the download.
 
 ## Notes on how it was built
 
-- **Brand.** Navy and thread-blue sampled from the wordmark, caramel from
-  the sandpiper, and a warm linen ground (`#0f2a4d`, `#1a6fd1`, `#a8621f`,
-  `#f7f3ec`). The stylesheet is the Amerus one with the palette swapped
-  and the chat mock replaced by an embroidery-editor mock.
+- **Brand.** A shoreline palette: sky and sea-foam from the thread
+  (`#2b86e8`, `#3fb5a8`), sand and shell from the sandpiper (`#fdfaf4`,
+  `#d99a6a`), a touch of sun (`#f2a93b`), with navy (`#1f3f63`) as a text
+  colour rather than a backdrop. Light everywhere — no dark bands; the
+  hero and callout sections use the `.sky` class. Headings use the
+  system rounded face (`ui-rounded`) for a friendlier feel. The stylesheet
+  is structurally the Amerus one with the palette and mock replaced.
 - **Logos.** Cut from `Logo/Primary Logo.png` and `Logo/Favicon.png`:
   background removed (outside only — the cream stitching inside the bird
   is preserved), resized; touch/OG icons on a linen square.
