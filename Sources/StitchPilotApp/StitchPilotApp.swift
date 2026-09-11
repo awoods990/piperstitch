@@ -4,6 +4,9 @@ import AppKit
 @main
 struct StitchPilotApp: App {
     @StateObject private var appState = AppState()
+    /// Trial clock, sign-in, and the signed entitlement that unlocks the
+    /// editor -- see LicenseManager and LICENSING.md.
+    @StateObject private var license = LicenseManager()
 
     var body: some Scene {
         // A fresh window (first launch, or "New Window") opens at 80% of
@@ -19,6 +22,7 @@ struct StitchPilotApp: App {
         WindowGroup("PiperStitch") {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(license)
                 // Must clear the three panels' own minimum widths (176 +
                 // 504 + 300, plus dividers -- see ContentView's HStack) or
                 // this constraint silently loses to theirs.
@@ -26,6 +30,10 @@ struct StitchPilotApp: App {
         }
         .defaultSize(width: screenSize.width * 0.8, height: screenSize.height * 0.8)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("PiperStitch Subscription…") { license.isShowingAccount = true }
+                Button("Check for Updates…") { Task { await license.checkForUpdate() } }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Open Artwork...") { appState.openArtworkWithPanel() }
                     .keyboardShortcut("o", modifiers: .command)

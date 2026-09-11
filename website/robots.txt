@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /private/
+Disallow: /downloads/
+Disallow: /thank-you.php
+Disallow: /get.php
+Disallow: /updates/
+Disallow: /releases/
+
+Sitemap: https://www.piperstitch.com/sitemap.xml

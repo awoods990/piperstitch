@@ -1,0 +1,65 @@
+# PiperStitch — static site. Sensible defaults for Apache / GoDaddy cPanel hosting.
+# Same file as the Amerus site's, with the domain changed.
+
+# Force HTTPS. The registration form collects a name and email address, so
+# it must never be reachable over cleartext. Two conditions because shared
+# hosting often terminates TLS at a proxy, where %{HTTPS} is unset and only
+# X-Forwarded-Proto is accurate.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # Send the apex to www, matching the canonical tags on every page.
+  RewriteCond %{HTTP_HOST} ^piperstitch\.com$ [NC]
+  RewriteRule ^ https://www.piperstitch.com%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# Turn this on only once you've confirmed every page loads over https —
+# it tells browsers to refuse plain http for this domain for six months.
+# <IfModule mod_headers.c>
+#   Header always set Strict-Transport-Security "max-age=15768000"
+# </IfModule>
+
+DirectoryIndex index.html
+
+# Serve the right type for the Mac disk image so browsers download it
+AddType application/octet-stream .dmg
+
+# The update feed is parsed by the app's UpdateChecker, which needs valid
+# JSON back — make sure the server labels it correctly.
+AddType application/json .json
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain text/xml \
+    application/javascript application/json image/svg+xml
+</IfModule>
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  # The update feed must go stale fast — it is how an already-installed
+  # copy of PiperStitch learns a new release exists.
+  ExpiresByType application/json    "access plus 5 minutes"
+  ExpiresByType text/css            "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+  ExpiresByType image/png           "access plus 30 days"
+  ExpiresByType image/x-icon        "access plus 30 days"
+  ExpiresByType text/html           "access plus 1 hour"
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Internal notes must never be served — they describe how the download
+# gate works and where registration records are kept.
+<FilesMatch "\.(md|markdown)$">
+  Require all denied
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>

@@ -33,6 +33,7 @@ private func rgbColor(from color: Color) -> StitchPilotCore.RGBColor {
 
 struct ContentView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject var license: LicenseManager
     @State private var isTargeted = false
     @State private var showingNewProjectConfirm = false
     @State private var showingRedoConfirm = false
@@ -91,6 +92,16 @@ struct ContentView: View {
         .sheet(isPresented: $showingAddLettering) { AddLetteringSheet() }
         .sheet(isPresented: $showingDetectedText) { DetectedTextSheet() }
         .sheet(isPresented: $showingHelp) { GlossarySheet() }
+        // The subscription gate. `interactiveDismissDisabled` while locked
+        // so the sheet can't be swiped away to reveal a usable editor; the
+        // overlay underneath covers the editor regardless.
+        .sheet(isPresented: $license.isShowingAccount) {
+            AccountSheet().environmentObject(license).interactiveDismissDisabled(license.isLocked)
+        }
+        .overlay {
+            if license.isLocked { LockedOverlay().environmentObject(license) }
+        }
+        .onAppear { license.start() }
         .confirmationDialog(
             app.pendingPaintMerge.map { "This looks like it's filling a gap in \u{201C}\($0.targetObjectName)\u{201D}. Merge it in?" } ?? "",
             isPresented: Binding(get: { app.pendingPaintMerge != nil }, set: { if !$0 { app.cancelPaintMerge() } }),
@@ -404,6 +415,20 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .font(.callout)
             Spacer()
+            if let update = license.availableUpdate {
+                Button {
+                    NSWorkspace.shared.open(update.downloadURL)
+                } label: {
+                    Label("PiperStitch \(update.version) is available", systemImage: "arrow.down.circle")
+                        .font(.callout)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help(update.notes.isEmpty ? "Download the new version." : update.notes)
+                Divider().frame(height: 14)
+            }
+            LicenseStatusPill()
+            Divider().frame(height: 14)
             readinessBadge
         }
         .padding(.horizontal, 12)
