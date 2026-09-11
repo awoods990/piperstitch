@@ -94,6 +94,26 @@ struct PolygonGeometryTests {
         }
     }
 
+    /// A degenerate one-point "rail" (a satin column tip collapsed to a
+    /// single point) used to break this function's own documented
+    /// contract -- returning the lone input point unchanged instead of
+    /// `count + 1` points -- which crashed `SatinColumnGenerator.
+    /// isTwisted`/`crossingsEscapeTheShape` outright when they indexed it
+    /// point-for-point against a normal sibling rail resampled to the full
+    /// count. Found against a real logo (`LIBBi New Logo.png`) that
+    /// crashed the whole digitizing pipeline. See CHANGELOG.md.
+    @Test func resampleByCountHonorsItsContractForADegenerateSinglePointInput() {
+        let single = [Point2D(5, 5)]
+        let result = PolygonGeometry.resampleByCount(single, count: 20)
+        #expect(result.count == 21, "must still return count + 1 points, not the lone input point unchanged")
+        #expect(result.allSatisfy { $0.distance(to: Point2D(5, 5)) < 0.0001 })
+    }
+
+    @Test func resampleByCountOnEmptyInputStaysEmpty() {
+        let result = PolygonGeometry.resampleByCount([], count: 20)
+        #expect(result.isEmpty, "nothing to repeat -- should not fabricate points from no input")
+    }
+
     // MARK: - clipPolygonToRect
 
     @Test func clipRectFullyInsideWindowIsUnchangedInArea() {

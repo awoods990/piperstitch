@@ -92,7 +92,21 @@ public enum PolygonGeometry {
     /// regardless of their individual lengths) and `UnderlayGenerator` (to
     /// derive a satin column's centerline from the same rails).
     public static func resampleByCount(_ points: [Point2D], count: Int) -> [Point2D] {
-        guard points.count > 1, count > 0 else { return points }
+        guard count > 0 else { return points }
+        // A genuinely degenerate rail (a satin column tip collapsed to a
+        // single point, or no rail at all) used to just return `points`
+        // unchanged here -- breaking this function's own documented
+        // contract of always returning `count + 1` points. A caller
+        // pairing this rail point-for-point against a normal, fully
+        // resampled sibling rail (`SatinColumnGenerator.computeCrossings`)
+        // then indexed both with the same index range, crashing outright
+        // on the length mismatch. Repeating the single point (matching
+        // the identical fallback already used below for a normal-length
+        // but zero-length path) keeps the contract instead. See
+        // CHANGELOG.md.
+        guard points.count > 1 else {
+            return points.first.map { Array(repeating: $0, count: count + 1) } ?? points
+        }
         let total = pathLength(points)
         guard total > 0 else { return Array(repeating: points[0], count: count + 1) }
 
