@@ -41,6 +41,33 @@ struct FillAngleSelectorTests {
         #expect(ys.count > 3, "horizontal rows across a 5mm-tall shape at 0.4mm spacing should produce several distinct row heights")
     }
 
+    /// `ShapeMerger.merge` keeps pieces that don't actually touch as
+    /// separate sub-paths of one shape rather than dropping them (its own
+    /// doc comment) -- e.g. two halves of a letterform split apart by a
+    /// different-colored stripe cutting through it, then rejoined with
+    /// "Merge Shapes". The angle must reflect the *whole* merged shape,
+    /// not just whichever piece happens to be sub-path 0.
+    @Test func combinesEveryDisjointSubPathNotJustTheFirst() {
+        // Sub-path 0 alone: small, wide/short -- elongated along X, so its
+        // own angle would be ~90 (perpendicular, vertical rows). 10x1mm
+        // = 10 sq mm.
+        let smallWideFirst = SubPath(points: [
+            Point2D(0, 0), Point2D(10, 0), Point2D(10, 1), Point2D(0, 1),
+        ], closed: true)
+        // Sub-path 1, positioned right next to (not touching, not
+        // overlapping) sub-path 0 -- tall/narrow, so its own angle would
+        // be ~0/180 (perpendicular, horizontal rows). 5x20mm = 100 sq mm,
+        // ten times sub-path 0's area, so it should dominate the average.
+        let largeTallSecond = SubPath(points: [
+            Point2D(11, -10), Point2D(16, -10), Point2D(16, 10), Point2D(11, 10),
+        ], closed: true)
+        let shape = VectorShape(subPaths: [smallWideFirst, largeTallSecond])
+
+        let angle = FillAngleSelector.selectAngle(for: shape)
+        #expect(angle < 30 || angle > 150,
+                "the much larger second sub-path should dominate the combined angle, not the first sub-path's own 90-degree preference (got \(angle))")
+    }
+
     @Test func automaticSelectionAppliesWhenAngleIsNil() {
         let elongated = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(50, 0), Point2D(50, 5), Point2D(0, 5),
