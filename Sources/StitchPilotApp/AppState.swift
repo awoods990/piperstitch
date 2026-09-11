@@ -69,6 +69,11 @@ final class AppState: ObservableObject {
     /// nothing above its confidence floor.
     @Published var detectedTextRegions: [DetectedTextRegion] = []
 
+    /// Drives the post-import setup sheet (finished size, hoop, fabric,
+    /// color count) -- see `importFile`'s own doc comment on exactly when
+    /// this gets set.
+    @Published var isShowingImportSetup = false
+
     /// Only affects raster import (spec §8) — vector artwork already has
     /// discrete fill colors, nothing to quantize. Changing this re-imports
     /// the last-dropped raster file at the new color count.
@@ -1092,6 +1097,18 @@ final class AppState: ObservableObject {
             // the user needing to know to ask for it (spec: the one-click
             // promise starts at import, not just at export).
             autoDigitize()
+            // Prompt for the handful of settings that most affect the
+            // result -- size, hoop, fabric, color count -- right after a
+            // *real* import (not the internal re-import `colorPreset`'s own
+            // change already triggers, which would otherwise reopen this
+            // sheet on top of itself the moment the user answers the very
+            // question it asks). The live preview above is already
+            // rendering with sensible auto-picked defaults by the time
+            // this shows, so answering these only refines it rather than
+            // gating it. See CHANGELOG.md.
+            if !preserveCurrentSize {
+                isShowingImportSetup = true
+            }
         } catch {
             errorMessage = friendlyMessage(for: error)
         }

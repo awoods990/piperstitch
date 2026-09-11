@@ -87,6 +87,7 @@ struct ContentView: View {
             }
             .background(PSColor.panel)
         }
+        .sheet(isPresented: $app.isShowingImportSetup) { ImportSetupSheet() }
         .sheet(isPresented: $showingMergeColors) { MergeColorsSheet() }
         .sheet(isPresented: $showingThreadLibrary) { ThreadLibrarySheet() }
         .sheet(isPresented: $showingAddLettering) { AddLetteringSheet() }
@@ -962,6 +963,153 @@ private struct ObjectInspectorSection: View {
         case .edgeRun: return "Edge Run"
         case .zigzag: return "Zigzag"
         }
+    }
+}
+
+/// Shown right after a fresh import (not the internal re-import
+/// `colorPreset`'s own change triggers -- see `AppState.importFile`) -- a
+/// short, friendly prompt for the handful of settings that most affect how
+/// a design actually digitizes: finished size, hoop, fabric, and color
+/// count. Every control here binds directly to the same `AppState`
+/// properties the Inspector's own sections already do, so answering these
+/// is just a guided first pass at settings the user could always reach and
+/// change later anyway -- nothing here is a one-time-only choice, and the
+/// live preview (already rendering with sensible auto-picked defaults by
+/// the time this shows) keeps updating underneath while it's open.
+private struct ImportSetupSheet: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    /// Distinguishes "no hoop constraint" from "a specific hoop" from "the
+    /// user doesn't know, so resolve one for them" -- the third case
+    /// immediately resolves to a real hoop (via `HoopProfile.recommended`)
+    /// the moment it's picked, then the picker settles onto showing that
+    /// resolved hoop's own name rather than lingering on the placeholder
+    /// label, so this only exists transiently.
+    private enum HoopChoice: Hashable {
+        case specific(HoopProfile)
+        case recommend
+    }
+
+    /// Same "picker convenience, not synced from the actual fields" role
+    /// as `InspectorView`'s own copy of this -- see that one's doc comment.
+    /// A fresh `@State` here (this sheet is recreated each time it's
+    /// shown, unlike `InspectorView`'s long-lived instance) so it starts
+    /// blank with no stale-label risk to guard against.
+    @State private var selectedSizePreset: GarmentSizePreset?
+    @State private var hoopChoice: HoopChoice?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Set Up This Design").font(.title3).fontWeight(.semibold)
+                Text("A few quick questions to get the best result — you can always change these later in the Inspector.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            Divider()
+
+            Form {
+                Section("Finished Size") {
+                    Picker("Standard Size", selection: $selectedSizePreset) {
+                        Text("Custom").tag(GarmentSizePreset?.none)
+                        ForEach(GarmentSizePreset.standardPresets) { preset in
+                            Text("\(preset.name) (\(cmString(preset.widthMM))×\(cmString(preset.heightMM))cm)").tag(GarmentSizePreset?.some(preset))
+                        }
+                    }
+                    .onChange(of: selectedSizePreset) { newValue in
+                        guard let newValue else { return }
+                        app.applyGarmentSizePreset(newValue)
+                    }
+                    HStack {
+                        TextField("Width (cm)", value: cmBinding($app.physicalWidthMM), format: .number)
+                            .onSubmit { app.applyPhysicalSizeChange() }
+                        Text("×")
+                        TextField("Height (cm)", value: cmBinding($app.physicalHeightMM), format: .number)
+                            .disabled(app.lockAspectRatio)
+                            .onSubmit { app.applyPhysicalSizeChange() }
+                    }
+                    Toggle("Lock aspect ratio", isOn: $app.lockAspectRatio)
+                }
+
+                Section("Hoop") {
+                    Picker("Hoop", selection: $hoopChoice) {
+                        Text("None Selected").tag(HoopChoice?.none)
+                        ForEach(HoopProfile.commonHoops) { hoop in
+                            Text("\(hoop.name) (\(cmString(hoop.widthMM))×\(cmString(hoop.heightMM))cm)").tag(HoopChoice?.some(.specific(hoop)))
+                        }
+                        Text("I Don't Know — Recommend One").tag(HoopChoice?.some(.recommend))
+                    }
+                    .onChange(of: hoopChoice) { newValue in
+                        switch newValue {
+                        case .specific(let hoop):
+                            app.selectedHoop = hoop
+                        case .recommend:
+                            let recommended = HoopProfile.recommended(forDesignWidthMM: app.physicalWidthMM, heightMM: app.physicalHeightMM)
+                            app.selectedHoop = recommended
+                            hoopChoice = .specific(recommended)
+                        case nil:
+                            app.selectedHoop = nil
+                        }
+                    }
+                    Text("Which hoop this design will be sewn in — checked against the design's size so you're warned if it doesn't fit.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Fabric") {
+                    Picker("Fabric Type", selection: $app.selectedFabricType) {
+                        ForEach(FabricType.allCases, id: \.self) { fabric in
+                            Text(fabric.displayName).tag(fabric)
+                        }
+                    }
+                    Text("What this design will actually be sewn on — a stretchier material needs more pull/push compensation to sew out at the intended size than a stable one does.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Thread Colors") {
+                    Picker("Color Reduction", selection: $app.colorPreset) {
+                        ForEach(ColorQuantizationPreset.allCases, id: \.self) { preset in
+                            Text(presetLabel(preset)).tag(preset)
+                        }
+                    }
+                    Toggle("Match to thread library", isOn: $app.matchToThreadLibrary)
+                    Text("Color Reduction only affects images — vector art keeps its own colors. Fewer colors means fewer thread changes and faster, cheaper production.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Use These Settings") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(PSColor.blue500)
+            }
+            .padding()
+        }
+        .frame(width: 480, height: 600)
+        .onAppear {
+            hoopChoice = app.selectedHoop.map { .specific($0) }
+        }
+    }
+
+    private func presetLabel(_ preset: ColorQuantizationPreset) -> String {
+        switch preset {
+        case .preserveArtwork: return "Preserve Artwork"
+        case .normalEmbroidery: return "Normal Embroidery"
+        case .productionEfficient: return "Production Efficient"
+        case .minimalColors: return "Minimal Colors"
+        }
+    }
+
+    private func cmString(_ mm: Double) -> String {
+        let cm = mm / 10
+        return cm.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", cm) : String(format: "%.1f", cm)
     }
 }
 
