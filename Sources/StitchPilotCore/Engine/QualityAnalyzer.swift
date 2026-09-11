@@ -175,7 +175,7 @@ public enum QualityAnalyzer {
     /// problem no amount of coordinate-level pull compensation can
     /// correct for), stretch knit for how much the fabric itself moves
     /// under the hoop.
-    private static let challengingFabrics: Set<FabricType> = [.terry, .stretchKnit]
+    private static let challengingFabrics: Set<FabricType> = [.terry, .stretchKnit, .beanie]
 
     /// Static coordinate-level pull/push compensation (`PullCompensation
     /// Calculator`) is a best-effort estimate, not a physical simulation

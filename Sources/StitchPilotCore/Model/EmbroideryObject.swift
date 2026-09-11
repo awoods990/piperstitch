@@ -68,6 +68,15 @@ public enum FabricType: String, Codable, Sendable, CaseIterable {
     case stretchKnit
     case terry
     case leatherOrVinyl
+    // Headwear. Caps are their own world in embroidery: a structured cap's
+    // buckram-backed front panel is one of the most stable surfaces there
+    // is (little pull, but the curved panel and the seam make registration
+    // the real risk), an unstructured/dad cap is a soft, lightly-stretching
+    // cotton that behaves like a loose woven, and a knit beanie stretches
+    // like an athletic knit and needs the most compensation of anything.
+    case structuredCap
+    case unstructuredCap
+    case beanie
 
     public var displayName: String {
         switch self {
@@ -77,6 +86,18 @@ public enum FabricType: String, Codable, Sendable, CaseIterable {
         case .stretchKnit: return "Stretch Knit (athletic, spandex blend)"
         case .terry: return "Terry / Plush (towel, fleece)"
         case .leatherOrVinyl: return "Leather / Vinyl"
+        case .structuredCap: return "Structured Cap (buckram front)"
+        case .unstructuredCap: return "Unstructured Cap / Dad Hat"
+        case .beanie: return "Knit Beanie / Winter Hat"
+        }
+    }
+
+    /// True for the cap/hat fabrics -- the setup flow groups these
+    /// together and leads with them when the design is a cap front.
+    public var isHeadwear: Bool {
+        switch self {
+        case .structuredCap, .unstructuredCap, .beanie: return true
+        default: return false
         }
     }
 
@@ -90,6 +111,9 @@ public enum FabricType: String, Codable, Sendable, CaseIterable {
         case .stretchKnit: return "Stretch Knit"
         case .terry: return "Terry/Plush"
         case .leatherOrVinyl: return "Leather/Vinyl"
+        case .structuredCap: return "Structured Cap"
+        case .unstructuredCap: return "Soft Cap"
+        case .beanie: return "Beanie"
         }
     }
 
@@ -108,6 +132,9 @@ public enum FabricType: String, Codable, Sendable, CaseIterable {
         case .stretchKnit: return 1.8
         case .terry: return 1.4
         case .leatherOrVinyl: return 0.6
+        case .structuredCap: return 0.8
+        case .unstructuredCap: return 1.1
+        case .beanie: return 1.7
         }
     }
 }

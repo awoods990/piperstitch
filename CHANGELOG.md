@@ -4,6 +4,34 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: the after-import questions are now a stepped flow of choices, and the stitch preview waits for the answers
+
+- **`ImportSetupSheet` rebuilt as a five-step flow** (its own file now,
+  `Views/ImportSetupSheet.swift`): *Where is this going?* (garment
+  placement cards) → *How big?* (standard-for-that-placement vs.
+  recommended-from-the-artwork, plus fields) → *Which hoop?* (cards that
+  say "fits" / "too small", or "Choose one for me") → *What will it be
+  sewn on?* (fabric cards in groups) → *Thread colours* (preset cards +
+  a summary of every choice). Choices are tappable cards with a blue
+  ring, not pickers; the header carries the PiperStitch mark and a
+  progress indicator; the subtitle of each step is written from the
+  previous answers ("Standard for cap / hat front is 11.4 × 5.1 cm…"),
+  and picking a cap placement pre-selects a structured cap and leads
+  the fabric step with the headwear group.
+- **The stitch preview is withheld until the flow finishes.** Import no
+  longer digitizes immediately; `AppState.displayedStitchPlan` /
+  `displayedReadinessReport` return nil while `isShowingImportSetup` is
+  true, and closing the sheet (the Create button, or Escape) runs the
+  deferred `autoDigitize()`. The canvas shows only the imported artwork
+  underneath, so the first stitches the user sees were generated from
+  their answers rather than from defaults they hadn't confirmed. The
+  internal re-import `colorPreset` triggers still digitizes at once.
+- **Three headwear fabrics** in `FabricType`: `structuredCap` (buckram
+  front, ×0.8 compensation), `unstructuredCap` (soft/dad hat, ×1.1) and
+  `beanie` (knit, ×1.7 — also added to `QualityAnalyzer`'s challenging
+  fabrics, alongside terry and stretch knit). `isHeadwear` groups them.
+  Existing `.stitchpilot` files are unaffected (new raw values only).
+
 ## Added: subscription licensing, the marketing website, and the License Admin service
 
 - **In-app subscription gate** (`Sources/StitchPilotCore/Licensing/`,

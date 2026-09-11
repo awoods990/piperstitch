@@ -72,7 +72,24 @@ final class AppState: ObservableObject {
     /// Drives the post-import setup sheet (finished size, hoop, fabric,
     /// color count) -- see `importFile`'s own doc comment on exactly when
     /// this gets set.
-    @Published var isShowingImportSetup = false
+    /// True from a fresh import until the setup flow's final step -- while
+    /// it's up, the canvas shows only the imported artwork, never a stitch
+    /// preview (`displayedStitchPlan`), so the first stitches the user
+    /// sees are generated from *their* answers, not from defaults they
+    /// haven't confirmed yet. Turning it off (the Create button, or just
+    /// closing the sheet) runs the digitize that import deferred.
+    @Published var isShowingImportSetup = false {
+        didSet {
+            guard oldValue, !isShowingImportSetup, digitizeDeferredForSetup else { return }
+            digitizeDeferredForSetup = false
+            autoDigitize()
+        }
+    }
+    private var digitizeDeferredForSetup = false
+    /// What the canvas and status bar should show: nothing while the
+    /// setup flow is still asking its questions, otherwise the real plan.
+    var displayedStitchPlan: StitchPlan? { isShowingImportSetup ? nil : stitchPlan }
+    var displayedReadinessReport: EmbroideryReadinessReport? { isShowingImportSetup ? nil : readinessReport }
 
     /// Only affects raster import (spec §8) — vector artwork already has
     /// discrete fill colors, nothing to quantize. Changing this re-imports
@@ -1096,18 +1113,19 @@ final class AppState: ObservableObject {
             // step -- the preview should reflect what's on screen without
             // the user needing to know to ask for it (spec: the one-click
             // promise starts at import, not just at export).
-            autoDigitize()
             // Prompt for the handful of settings that most affect the
             // result -- size, hoop, fabric, color count -- right after a
             // *real* import (not the internal re-import `colorPreset`'s own
             // change already triggers, which would otherwise reopen this
             // sheet on top of itself the moment the user answers the very
-            // question it asks). The live preview above is already
-            // rendering with sensible auto-picked defaults by the time
-            // this shows, so answering these only refines it rather than
-            // gating it. See CHANGELOG.md.
+            // question it asks). Digitizing is deferred until the flow
+            // finishes: the first stitch preview the user sees comes from
+            // their answers, not from unconfirmed defaults. See CHANGELOG.md.
             if !preserveCurrentSize {
+                digitizeDeferredForSetup = true
                 isShowingImportSetup = true
+            } else {
+                autoDigitize()
             }
         } catch {
             errorMessage = friendlyMessage(for: error)
