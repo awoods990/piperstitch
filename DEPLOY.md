@@ -47,8 +47,11 @@ The `PIPERSTITCH_LICENSE_PRIVATE_KEY` value is `PRIVATE_KEY_B64` in
 **Settings → Volumes → Add volume:** mount path `/data`. (The SQLite
 database lives here; without a volume it is wiped on every deploy.)
 
-**Settings → Networking → Generate domain.** Note the URL — something like
-`https://license-admin-production-xxxx.up.railway.app`. This is
+**Settings → Networking → Generate domain.** When it asks for a port,
+enter **8080** — Railway injects `PORT=8080` into the container and both
+services listen on whatever `PORT` says (the Deploy Logs' "Uvicorn running
+on …:8080" line confirms it). Note the URL — something like
+`https://license-admin-production.up.railway.app`. This is
 `PUBLIC_BASE_URL` for now; `admin.piperstitch.com` comes in step 6.
 
 **Variables** (Variables tab → Raw editor is quickest):
@@ -86,8 +89,8 @@ Deploy (it redeploys on variable changes). **Check:** open
 tells Railway to build `server/Dockerfile` (the Swift server needs the
 whole repo as build context, since it depends on the root package).
 
-**Settings → Networking → Generate domain.** Note the URL. Put it into
-license-admin's `WEB_APP_URL` (step 2).
+**Settings → Networking → Generate domain**, port **8080** again. Note
+the URL. Put it into license-admin's `WEB_APP_URL` (step 2).
 
 **Variables:**
 
@@ -97,7 +100,7 @@ license-admin's `WEB_APP_URL` (step 2).
 | `WEB_API_KEY` | the same value as in license-admin |
 | `SESSION_SECRET` | generated (the app one) |
 
-`PORT` is set by Railway. The first build takes ~10–15 minutes (Swift
+`PORT` is set by Railway (8080). The first build takes ~10–15 minutes (Swift
 compiles Vapor from source once; later builds reuse the cached layers).
 
 **Check:** open the app URL → the sign-in screen. Enter your email → a code
