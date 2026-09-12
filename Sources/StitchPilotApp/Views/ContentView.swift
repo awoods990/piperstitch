@@ -358,7 +358,7 @@ struct ContentView: View {
                 Label("Merge Shapes", systemImage: "puzzlepiece")
             }
             .disabled(!app.canMergeSelectedShapes)
-            .help("Join the selected objects' outlines into one shape -- fixes a letter or detail that came in as several disconnected fragments. Rubber-band or shift-click several objects first.")
+            .help("Join the selected objects' outlines into one shape -- fixes a letter or detail that came in as several disconnected fragments. Rubber-band, or shift- or command-click, several objects first.")
 
             Button {
                 app.isPaintMode.toggle()
@@ -650,8 +650,20 @@ private struct InspectorView: View {
                 }
 
                 PSSection("Density (Entire Project)") {
-                    globalDensitySlider("Satin Density", value: $app.globalSatinDensityMM)
-                    globalDensitySlider("Fill Row Spacing", value: $app.globalFillSpacingMM)
+                    Toggle(isOn: $app.allowExtendedDensityRange) {
+                        Label("Push Past Normal Limits", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(app.allowExtendedDensityRange ? Color.red : PSColor.muted)
+                            .fontWeight(app.allowExtendedDensityRange ? .semibold : .regular)
+                    }
+                    .tint(.red)
+                    .help("Unlocks the sliders below down to this engine's hard floor (0.1mm satin, 0.05mm fill) -- tighter than most machines and thread handle reliably. Meant for a specific job that genuinely needs it, not everyday use.")
+                    if app.allowExtendedDensityRange {
+                        Text("Below the normal range, stitching this tight risks skipped stitches, puckering, or thread breakage on ordinary equipment. Test a small swatch before running a full project.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    globalDensitySlider("Satin Density", value: $app.globalSatinDensityMM, extendedFloorCM: 0.01)
+                    globalDensitySlider("Fill Row Spacing", value: $app.globalFillSpacingMM, extendedFloorCM: 0.005)
                     Text("Applies to every satin or fill object in the project at once. Select an individual object above to fine-tune just that one.")
                         .font(.caption)
                         .foregroundStyle(PSColor.muted)
@@ -773,22 +785,43 @@ private struct InspectorView: View {
     /// Same range/step as the per-object density slider in
     /// `ObjectInspectorSection` (0.2-1.0mm, shown as 0.02-0.10cm) -- this
     /// one just writes to the project-wide value instead of one object's.
+    /// `extendedFloorCM` is this stitch type's own engine floor (satin
+    /// 0.01cm/0.1mm, fill 0.005cm/0.05mm) -- only reachable at all once
+    /// "Push Past Normal Limits" is on, and flagged in red once the
+    /// dragged value actually crosses below the normal 0.02cm floor, so
+    /// it stays obvious *while dragging* that this is no longer a normal
+    /// setting, not just at the toggle above.
     @ViewBuilder
-    private func globalDensitySlider(_ label: String, value: Binding<Double>) -> some View {
+    private func globalDensitySlider(_ label: String, value: Binding<Double>, extendedFloorCM: Double) -> some View {
         let cmValue = cmBinding(value)
+        let normalFloorCM = 0.02
+        // If extended mode is off but the value is already below the
+        // normal floor (set while it was on, then switched off without
+        // changing the value), the range's own lower bound drops to meet
+        // it instead of clipping the slider's thumb -- a *new* drag still
+        // can't go below normalFloorCM again until extended is back on.
+        let range = app.allowExtendedDensityRange ? extendedFloorCM...0.10 : min(normalFloorCM, cmValue.wrappedValue)...0.10
+        let isPushingLimits = cmValue.wrappedValue < normalFloorCM
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text("\(label) (cm)")
                 Spacer()
-                Text(String(format: "%.3f", cmValue.wrappedValue)).foregroundStyle(.secondary).monospacedDigit()
+                if isPushingLimits {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.red)
+                }
+                Text(String(format: "%.3f", cmValue.wrappedValue))
+                    .foregroundStyle(isPushingLimits ? .red : .secondary)
+                    .fontWeight(isPushingLimits ? .semibold : .regular)
+                    .monospacedDigit()
             }
-            Slider(value: cmValue, in: 0.02...0.10, step: 0.005)
+            Slider(value: cmValue, in: range, step: 0.005)
+                .tint(isPushingLimits ? .red : PSColor.blue500)
         }
     }
 }
 
 /// Shown instead of the single-object editor once the user has rubber-band-
-/// or shift-selected more than one object -- editing individual stitch
+/// or shift-/command-selected more than one object -- editing individual stitch
 /// parameters doesn't make sense for several objects at once, but merging
 /// or deleting them together does (spec: fix a letter/logo detail that
 /// digitized as several disconnected fragments without needing to
@@ -813,7 +846,7 @@ private struct MultiSelectionSection: View {
                 Label("Delete Selected", systemImage: "trash")
             }
             .buttonStyle(PSPillButtonStyle(accent: .red, isHighlighted: true))
-            Text("Drag a box around several broken pieces on the canvas (or shift-click them) to select them, then merge.")
+            Text("Drag a box around several broken pieces on the canvas (or shift- or command-click them) to select them, then merge.")
                 .font(.caption)
                 .foregroundStyle(PSColor.muted)
         }
@@ -875,11 +908,11 @@ private struct ObjectInspectorSection: View {
                 case .runningStitch, .tripleRun:
                     TextField("Stitch Length (cm)", value: cmBinding(binding(object, \.parameters.stitchLengthMM)), format: .number)
                 case .satin:
-                    densitySlider("Density", keyPath: \.parameters.satinDensityMM, object: object)
+                    densitySlider("Density", keyPath: \.parameters.satinDensityMM, object: object, extendedFloorCM: 0.01)
                     TextField("Max Width (cm)", value: cmBinding(binding(object, \.parameters.maxSatinWidthMM)), format: .number)
                     TextField("Min Width (cm)", value: cmBinding(binding(object, \.parameters.minSatinWidthMM)), format: .number)
                 case .tatamiFill:
-                    densitySlider("Row Spacing", keyPath: \.parameters.fillSpacingMM, object: object)
+                    densitySlider("Row Spacing", keyPath: \.parameters.fillSpacingMM, object: object, extendedFloorCM: 0.005)
                     optionalDoubleField(object, label: "Fill Angle (°)", keyPath: \.parameters.fillAngleDegrees, defaultManualValue: 0, isAngle: true)
                     Picker("Fill Pattern", selection: binding(object, \.parameters.fillPattern)) {
                         ForEach(FillPattern.allCases, id: \.self) { pattern in
@@ -942,17 +975,31 @@ private struct ObjectInspectorSection: View {
     /// helper every other field here uses, so dragging it already goes
     /// through `AppState.updateSelectedObject` -> `scheduleLiveRegenerate()`
     /// and the canvas updates a moment after the drag settles, with no
-    /// separate wiring needed for "live" here.
+    /// separate wiring needed for "live" here. `extendedFloorCM` mirrors
+    /// `globalDensitySlider`'s own extended-range handling -- shares the
+    /// same project-wide "Push Past Normal Limits" toggle rather than a
+    /// separate one per object, since this is a hardware/thread limit, not
+    /// a per-object preference.
     @ViewBuilder
-    private func densitySlider(_ label: String, keyPath: WritableKeyPath<EmbroideryObject, Double>, object: EmbroideryObject) -> some View {
+    private func densitySlider(_ label: String, keyPath: WritableKeyPath<EmbroideryObject, Double>, object: EmbroideryObject, extendedFloorCM: Double) -> some View {
         let value = cmBinding(binding(object, keyPath))
+        let normalFloorCM = 0.02
+        let range = app.allowExtendedDensityRange ? extendedFloorCM...0.10 : min(normalFloorCM, value.wrappedValue)...0.10
+        let isPushingLimits = value.wrappedValue < normalFloorCM
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text("\(label) (cm)")
                 Spacer()
-                Text(String(format: "%.3f", value.wrappedValue)).foregroundStyle(.secondary).monospacedDigit()
+                if isPushingLimits {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.red)
+                }
+                Text(String(format: "%.3f", value.wrappedValue))
+                    .foregroundStyle(isPushingLimits ? .red : .secondary)
+                    .fontWeight(isPushingLimits ? .semibold : .regular)
+                    .monospacedDigit()
             }
-            Slider(value: value, in: 0.02...0.10, step: 0.005)
+            Slider(value: value, in: range, step: 0.005)
+                .tint(isPushingLimits ? .red : PSColor.blue500)
         }
     }
 
@@ -1433,6 +1480,8 @@ private struct GlossarySheet: View {
         GlossarySection(title: "Stitch Parameters", entries: [
             GlossaryEntry(term: "Density",
                            definition: "How close together the stitches are (satin's crossing spacing, or fill's row spacing). Denser stitching gives fuller coverage and a richer look, but uses more thread, takes longer to sew, and can stiffen or even perforate the fabric if pushed too far."),
+            GlossaryEntry(term: "Push Past Normal Limits",
+                           definition: "A toggle in the Inspector's \"Density (Entire Project)\" section that unlocks the density and row-spacing sliders down past their normal 0.2mm floor, toward this app's hard engine floor (0.1mm for satin, 0.05mm for fill). Off by default on purpose -- that tight a stitch is beyond what most machines and thread handle reliably without skipped stitches, puckering, or breakage. It's meant for a specific job that genuinely calls for it (fine premium lettering, an unusual thread), not a setting to leave on. Once it's on, any slider pushed below the normal floor turns red as a reminder you're in that territory."),
             GlossaryEntry(term: "Stitch Length",
                            definition: "How far apart individual stitch points are along a running/triple-run line. Shorter gives smoother curves and finer detail; longer sews faster but can look choppy on a tight curve."),
             GlossaryEntry(term: "Underlay",
@@ -1506,6 +1555,20 @@ private struct GlossarySheet: View {
             GlossaryEntry(term: "Color Reduction Preset",
                            definition: "Controls how many thread colors an imported *image* is simplified down to (vector art always keeps its own exact colors, untouched). \"Preserve Artwork\" keeps every color the image has; \"Normal Embroidery\" and \"Production Efficient\" simplify progressively more for a faster, cleaner sew-out; \"Minimal Colors\" reduces to as few thread changes as possible."),
         ]),
+        GlossarySection(title: "Troubleshooting: Common Fixes", entries: [
+            GlossaryEntry(term: "Problem: A shaded or gradient area imported as several separate shapes",
+                           definition: "Very common with photos and gradients -- the color quantizer treats each slightly different shade along the gradient as its own shape, so what should be one smooth area comes in as a handful of adjacent fragments. Fix: select all of them (rubber-band a box around them, or shift- or command-click each one), then choose Merge Shapes. That single action both joins their outlines into one continuous piece and gives the result one thread color, so the stitch pattern is recalculated for the whole merged shape at once -- no visible seam between what used to be separate pieces. If the same near-duplicate shade shows up scattered across many unrelated objects elsewhere in the design (not just this one adjacent cluster), use Merge Colors instead -- or first -- to reassign all of them to one target thread color in a single pass."),
+            GlossaryEntry(term: "Problem: A shape assigned Satin looks blank or wrong",
+                           definition: "Satin needs at least four distinct corners to lay its rails along -- a true triangle geometrically can't hold a satin column no matter its size. This app detects that automatically and fills the shape with tatami stitching instead of leaving it blank, but if a triangular detail in your design still needs to look and feel different, set its Stitch Type to Tatami Fill by hand in the Inspector -- there's no reason to fight satin onto a three-sided shape."),
+            GlossaryEntry(term: "Problem: \"Couldn't merge the selected shapes\"",
+                           definition: "Merge Shapes rasterizes the selected pieces to combine them, which has a practical size budget -- this shows up when the pieces are spread far enough apart (or the design is large enough) that the combined bounding box exceeds it. Try merging fewer pieces at a time, or move the pieces closer together first; genuine broken fragments of one letter or logo detail are almost always close enough that this only comes up for pieces that were never really meant to be one shape."),
+            GlossaryEntry(term: "Problem: Way more thread color changes than the artwork looks like it needs",
+                           definition: "Raster imports (photos, JPEGs, scans) often quantize into more colors than the design visually reads as, since anti-aliased edges and compression noise each get their own near-duplicate shade. Use Merge Colors to reassign all of those near-duplicates to one thread color in a single pass, or re-import with a stricter Color Reduction Preset (Production Efficient or Minimal Colors) so it never creates that many colors in the first place."),
+            GlossaryEntry(term: "Problem: Lettering looks fuzzy or jagged instead of sharp",
+                           definition: "Text that came in as part of a raster image was traced from that image's own pixels, so it can never be sharper than the source photo's resolution -- a real limit, not a setting to fix. Delete it and use Add Lettering instead, which generates the letterforms directly from a font's own outline at any size. If the app already noticed the text on import, a \"Detected Text\" banner offers to swap it in one click instead of deleting and retyping."),
+            GlossaryEntry(term: "Problem: The readiness warning says the design doesn't fit the hoop",
+                           definition: "Either pick a larger hoop (Inspector -> Hoop -- the picker includes the standard sizes plus the Cap/Hat and Magnetic hoop options), or shrink the design under Finished Size: \"Recommended for this artwork\" sizes it to the finest detail your artwork actually supports, or a Standard Size preset jumps straight to a common size for that placement."),
+        ]),
         GlossarySection(title: "Quality", entries: [
             GlossaryEntry(term: "Embroidery Readiness Score",
                            definition: "An automatic 0-100 score (shown at the bottom-right of the window and in the Inspector) checking a design for known problem patterns -- stitches that are too long or too short, a design that doesn't fit the selected hoop, and similar issues. Updates live as you edit, so you can watch it improve as you fix what it flags. A high score means fewer surprises at the embroidery machine, not a guarantee of a perfect sew-out."),
@@ -1532,28 +1595,46 @@ private struct GlossarySheet: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
 
-            List {
-                ForEach(filteredSections) { section in
-                    Section(section.title) {
-                        ForEach(section.entries) { entry in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.term).font(.headline)
-                                Text(entry.definition)
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
+            // Deliberately a plain ScrollView + VStack, not a `List`: macOS's
+            // `List` sizes each row from an NSTableView row height that
+            // doesn't reliably grow for multi-line `Text` even with
+            // `fixedSize(vertical:)` applied -- entries kept clipping with
+            // no way to see the rest. A plain VStack lays out and wraps
+            // text the same way any other SwiftUI text does, with no row
+            // height to get wrong.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(filteredSections) { section in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(section.title)
+                                .font(.subheadline).fontWeight(.semibold)
+                                .foregroundStyle(PSColor.blue500)
+                                .textCase(.uppercase)
+                            ForEach(section.entries) { entry in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.term).font(.headline)
+                                    Text(entry.definition)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.vertical, 4)
                             }
-                            .padding(.vertical, 3)
+                            if section.id != filteredSections.last?.id {
+                                Divider()
+                            }
                         }
                     }
+                    if filteredSections.isEmpty {
+                        Text("No terms match \"\(searchText)\".")
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    }
                 }
-                if filteredSections.isEmpty {
-                    Text("No terms match \"\(searchText)\".")
-                        .foregroundStyle(.secondary)
-                        .padding()
-                }
+                .padding(16)
             }
-            .listStyle(.sidebar)
 
             Divider()
             HStack {

@@ -35,11 +35,11 @@ struct StitchCanvasView: View {
     var hoop: HoopProfile?
     /// Every object currently selected in the object list, highlighted in
     /// the canvas so the user can see which shapes they're working on --
-    /// more than one when the user has rubber-band- or shift-selected
-    /// several, e.g. to merge them.
+    /// more than one when the user has rubber-band-, shift-, or
+    /// command-selected several, e.g. to merge them.
     var selectedObjectIDs: Set<EmbroideryObject.ID> = []
     /// Called with the tapped object's id (added to or replacing the
-    /// selection depending on shift), or an empty set when a plain tap
+    /// selection depending on shift/command), or an empty set when a plain tap
     /// missed every object -- lets the user click directly on a shape to
     /// select it, the same selection the object list's own row-tap already
     /// produces. Rubber-band drags go through this too.
@@ -513,11 +513,12 @@ struct StitchCanvasView: View {
     }
 
     /// A plain tap selects just the tapped object (or clears the selection
-    /// if it missed); a shift-tap toggles that one object in/out of
-    /// whatever's already selected, the standard multi-select convention.
-    /// In paint or erase mode a tap instead paints/erases a single dab at
-    /// that point -- the zero-length case of a stroke, using the same code
-    /// path a drag does.
+    /// if it missed); a shift- or command-tap toggles that one object
+    /// in/out of whatever's already selected -- both are the standard
+    /// multi-select convention on macOS, so either modifier does the same
+    /// thing here rather than picking just one. In paint or erase mode a
+    /// tap instead paints/erases a single dab at that point -- the
+    /// zero-length case of a stroke, using the same code path a drag does.
     private func handleTap(at location: CGPoint, in size: CGSize) {
         guard let document, let transform = computeTransform(document: document, size: size) else { return }
         let point = docPoint(from: location, document: document, transform: transform)
@@ -530,7 +531,7 @@ struct StitchCanvasView: View {
             return
         }
         let hit = objectID(at: point, in: document)
-        if NSEvent.modifierFlags.contains(.shift) {
+        if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command) {
             guard let hit else { return }
             var updated = selectedObjectIDs
             if updated.contains(hit) { updated.remove(hit) } else { updated.insert(hit) }
@@ -620,7 +621,8 @@ struct StitchCanvasView: View {
             // selects nothing rather than everything under a 1x1 box at
             // the pointer.
             guard rect.width > 2 || rect.height > 2 else { return }
-            onSelectionChange(NSEvent.modifierFlags.contains(.shift) ? selectedObjectIDs.union(hits) : hits)
+            let addToSelection = NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command)
+            onSelectionChange(addToSelection ? selectedObjectIDs.union(hits) : hits)
         case .moveSelection:
             defer { liveMoveDeltaMM = (0, 0) }
             guard liveMoveDeltaMM.dx != 0 || liveMoveDeltaMM.dy != 0 else { return }

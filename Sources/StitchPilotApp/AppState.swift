@@ -1223,6 +1223,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Unlocks the density/row-spacing sliders (both the project-wide ones
+    /// here and each object's own in the Inspector) down past the normal
+    /// 0.2mm floor -- toward the engine's own hard floor of 0.1mm for satin
+    /// and 0.05mm for fill (`SatinColumnGenerator`/`TatamiFillGenerator`
+    /// already clamp there regardless of this flag, so nothing can go
+    /// tighter than that no matter what's dragged in). Off by default: that
+    /// tight a stitch is outside what most machines and threads handle
+    /// reliably without skipped stitches, puckering, or breakage, so it's
+    /// an explicit opt-in for a specific job rather than something anyone
+    /// stumbles into by dragging a slider a bit too far.
+    @Published var allowExtendedDensityRange: Bool = false
+
     private func applyGlobalSatinDensity() {
         guard var current = document, current.objects.contains(where: { $0.stitchType == .satin }) else { return }
         beginUndoableChange()
