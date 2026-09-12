@@ -1,7 +1,9 @@
 import Foundation
+#if canImport(Vision)
 import Vision
 import CoreGraphics
 import ImageIO
+#endif
 
 /// A rough weight guess (bold vs regular) for a detected text region, from
 /// how much of its own tight bounding box is actually covered by ink --
@@ -76,6 +78,7 @@ public enum TextDetector {
     /// measurement -- see `estimateWeight`.
     private static let boldInkFractionThreshold = 0.28
 
+    #if canImport(Vision)
     public static func detectTextRegions(from data: Data, minConfidence: Float = defaultMinConfidence) throws -> [DetectedTextRegion] {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -157,4 +160,13 @@ public enum TextDetector {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         return pixels
     }
+    #else
+    /// Vision is Apple-only. The Linux server build (see server/) has no OCR;
+    /// the web app will offer text detection from the browser side instead.
+    /// Returning nothing here matches how the Mac app already treats a
+    /// detection failure: an enhancement that quietly didn't apply.
+    public static func detectTextRegions(from data: Data, minConfidence: Float = defaultMinConfidence) throws -> [DetectedTextRegion] {
+        return []
+    }
+    #endif
 }

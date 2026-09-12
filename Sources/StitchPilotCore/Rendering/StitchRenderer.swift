@@ -1,3 +1,8 @@
+// Raster preview rendering is a CoreGraphics concern. The Linux server
+// build (see server/) never renders -- the browser draws the stitch plan
+// itself -- so this whole file compiles only where CoreGraphics exists.
+// On Apple platforms the code below is unchanged.
+#if canImport(CoreGraphics)
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
@@ -189,3 +194,4 @@ public enum StitchRenderer {
         return data as Data
     }
 }
+#endif

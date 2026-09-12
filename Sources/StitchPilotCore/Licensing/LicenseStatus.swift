@@ -1,3 +1,8 @@
+// The licensing client is a desktop-app concern (see LICENSING.md). The
+// Linux server build (see server/) has no use for it, and CryptoKit /
+// URLSession differ there, so the whole file compiles only on Apple
+// platforms. The code below is unchanged.
+#if canImport(CryptoKit)
 import Foundation
 
 /// Where this Mac stands, decided purely from local facts (trial start,
@@ -51,3 +56,4 @@ public enum LicenseEvaluator {
         return remaining > 0 ? .trial(daysRemaining: remaining) : .trialExpired
     }
 }
+#endif

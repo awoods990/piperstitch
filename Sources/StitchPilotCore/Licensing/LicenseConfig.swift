@@ -1,3 +1,8 @@
+// The licensing client is a desktop-app concern (see LICENSING.md). The
+// Linux server build (see server/) has no use for it, and CryptoKit /
+// URLSession differ there, so the whole file compiles only on Apple
+// platforms. The code below is unchanged.
+#if canImport(CryptoKit)
 import Foundation
 
 /// Everything the licensing client needs to know about the outside world,
@@ -65,3 +70,4 @@ public struct LicenseConfig: Sendable {
         updateFeedURL: nil
     )
 }
+#endif

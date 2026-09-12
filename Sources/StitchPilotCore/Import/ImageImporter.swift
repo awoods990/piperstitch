@@ -1,6 +1,10 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(ImageIO)
 import ImageIO
+#endif
 
 public enum ImageImportError: Error, LocalizedError {
     case cannotDecode
@@ -49,6 +53,7 @@ public enum ImageImporter {
     /// Douglas-Peucker epsilon, in source pixels.
     private static let simplifyEpsilonPixels: Double = 1.5
 
+    #if canImport(ImageIO)
     public static func importShapes(from data: Data, maxColors: Int = ColorQuantizationPreset.normalEmbroidery.defaultMaxColors) throws -> ImageImportResult {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -60,6 +65,19 @@ public enum ImageImporter {
 
         var pixels = try renderRGBA(cgImage, width: width, height: height)
         unpremultiply(&pixels, width: width, height: height)
+        return try importShapes(rgba: pixels, width: width, height: height, maxColors: maxColors)
+    }
+    #endif
+
+    /// The platform-neutral half of `importShapes(from:)`: everything after
+    /// decoding. `rgba` is straight (not premultiplied) 8-bit RGBA, row-major,
+    /// row 0 at the top. On Apple platforms `importShapes(from:)` decodes an
+    /// encoded file with ImageIO and lands here; the Linux server (see
+    /// server/) has no image decoder and instead receives pixels the browser
+    /// already decoded and downscaled, so this is its only way in. Either
+    /// way, every result downstream of this line is computed identically.
+    public static func importShapes(rgba pixels: [UInt8], width: Int, height: Int, maxColors: Int = ColorQuantizationPreset.normalEmbroidery.defaultMaxColors) throws -> ImageImportResult {
+        guard width > 1, height > 1, pixels.count == width * height * 4 else { throw ImageImportError.cannotDecode }
         let foregroundMask = try computeForegroundMask(pixels: pixels, width: width, height: height)
 
         var foregroundColors: [RGBColor] = []
@@ -332,6 +350,7 @@ public enum ImageImporter {
 
     // MARK: - Pixel access
 
+    #if canImport(CoreGraphics)
     private static func renderRGBA(_ cgImage: CGImage, width: Int, height: Int) throws -> [UInt8] {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -349,6 +368,7 @@ public enum ImageImporter {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         return pixels
     }
+    #endif
 
     /// `renderRGBA` draws into a *premultiplied*-alpha context (the only
     /// kind `CGContext` supports as a drawing destination), so every

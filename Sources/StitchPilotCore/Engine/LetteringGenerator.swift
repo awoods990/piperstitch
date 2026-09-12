@@ -1,6 +1,8 @@
 import Foundation
+#if canImport(CoreText)
 import CoreText
 import CoreGraphics
+#endif
 
 /// How a run of lettering follows its own baseline. `.arc` is the common
 /// "ring text" case (a badge's curved title, wrapping the top of a
@@ -75,6 +77,7 @@ public enum LetteringGenerationError: Error, LocalizedError {
 /// still picks satin for a normal bold letter and running stitch for an
 /// unusually thin stroke; `SatinColumnGenerator` gets a genuinely single
 /// column to fit rails to, not a whole disconnected word.
+#if canImport(CoreText)
 public enum LetteringGenerator {
     /// How many samples per glyph outline's bezier curve segment when
     /// flattening it to a polyline -- matches `SVGPathParser`'s own
@@ -263,3 +266,15 @@ public enum LetteringGenerator {
         return font
     }
 }
+#else
+/// CoreText is Apple-only. The Linux server build (see server/) generates no
+/// glyph outlines itself; the web app produces them in the browser (from the
+/// same font files) and submits finished `VectorShape`s, so this stub only
+/// exists so the type resolves. Calling it is a programming error there.
+public enum LetteringGenerator {
+    public static func generateShapes(spec: LetteringSpec) throws -> [VectorShape] {
+        guard !spec.text.isEmpty else { throw LetteringGenerationError.emptyText }
+        throw LetteringGenerationError.fontNotFound(spec.fontPostScriptName)
+    }
+}
+#endif

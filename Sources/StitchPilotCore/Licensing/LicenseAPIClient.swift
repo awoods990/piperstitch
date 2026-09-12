@@ -1,3 +1,8 @@
+// The licensing client is a desktop-app concern (see LICENSING.md). The
+// Linux server build (see server/) has no use for it, and CryptoKit /
+// URLSession differ there, so the whole file compiles only on Apple
+// platforms. The code below is unchanged.
+#if canImport(CryptoKit)
 import Foundation
 
 /// The app's side of License Admin's `/api/app/*` JSON endpoints. Pure
@@ -120,3 +125,4 @@ public struct LicenseAPIClient: Sendable {
         }
     }
 }
+#endif

@@ -1,0 +1,36 @@
+import Vapor
+
+func configure(_ app: Application) throws {
+    // Raw RGBA uploads from the browser: a 2000x2000 image is 16 MB before
+    // the browser gzips it (flat-color artwork compresses 20-50x). The
+    // browser also downscales anything larger than the pipeline can use
+    // (see web/src/engine/decode.ts), so this ceiling is generous, not
+    // routine.
+    app.routes.defaultMaxBodySize = "48mb"
+    app.http.server.configuration.requestDecompression = .enabled(limit: .size(64 * 1024 * 1024))
+    app.http.server.configuration.responseCompression = .enabled
+    app.http.server.configuration.port = Environment.get("PORT").flatMap(Int.init) ?? 8080
+    app.http.server.configuration.hostname = Environment.get("HOST") ?? "0.0.0.0"
+
+    // Development: the Vite dev server (another origin) talks to us
+    // directly. Production serves the built web app from this same process
+    // (see below), so cross-origin requests are normally none at all.
+    let allowedOrigins = (Environment.get("CORS_ORIGINS") ?? "http://localhost:5173,http://127.0.0.1:5173")
+        .split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+    let cors = CORSMiddleware(configuration: .init(
+        allowedOrigin: .any(allowedOrigins),
+        allowedMethods: [.GET, .POST, .OPTIONS],
+        allowedHeaders: [.accept, .contentType, .contentEncoding, .origin, .authorization, "X-Requested-With"]
+    ))
+    app.middleware.use(cors, at: .beginning)
+
+    // The built web app, when present (Docker copies web/dist here). Any
+    // path that isn't an API route falls through to index.html so the
+    // browser router can take it from there.
+    let publicDir = app.directory.publicDirectory
+    if FileManager.default.fileExists(atPath: publicDir + "index.html") {
+        app.middleware.use(FileMiddleware(publicDirectory: publicDir, defaultFile: "index.html"))
+    }
+
+    try routes(app)
+}

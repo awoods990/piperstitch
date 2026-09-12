@@ -1,3 +1,8 @@
+// The licensing client is a desktop-app concern (see LICENSING.md). The
+// Linux server build (see server/) has no use for it, and CryptoKit /
+// URLSession differ there, so the whole file compiles only on Apple
+// platforms. The code below is unchanged.
+#if canImport(CryptoKit)
 import Foundation
 
 /// Reads the update feed the website hosts (updates/piperstitch-mac.json)
@@ -51,3 +56,4 @@ public enum UpdateChecker {
         return availableUpdate(from: data, currentVersion: currentVersion)
     }
 }
+#endif
