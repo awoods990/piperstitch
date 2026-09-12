@@ -1453,8 +1453,16 @@ private struct GlossarySheet: View {
                            definition: "Joins several selected objects' outlines into one combined shape. Fixes a letter or detail that came in as multiple disconnected fragments (common with a raster/photo import) so it sews as one clean piece instead of several overlapping ones."),
             GlossaryEntry(term: "Paint Tool",
                            definition: "Draws in missing coverage by hand -- extends the selected object with a brush stroke, or creates a new shape if nothing's selected. Useful for patching a gap the automatic import missed."),
+            GlossaryEntry(term: "Erase Tool",
+                           definition: "Removes coverage by hand -- draw over whatever's wrong and it comes out of whichever object(s) the stroke touches, regardless of what's currently selected. The opposite of the Paint Tool: use it to take away stitching that shouldn't be there instead of adding stitching that's missing."),
+            GlossaryEntry(term: "Brush Size",
+                           definition: "The slider that appears next to Paint and Erase -- sets how wide a stroke either tool draws. A smaller brush is easier to keep precise around fine detail; a larger one covers a big gap faster."),
             GlossaryEntry(term: "Add Lettering",
                            definition: "Generates clean letterforms directly from a font's own outline instead of tracing a raster image of text -- sharp at any size, unlike text that came in as part of an imported photo or logo file."),
+            GlossaryEntry(term: "Curve Along a Ring",
+                           definition: "A toggle inside Add Lettering that wraps the text along an arc -- a badge's curved title, a cap's front-panel arch -- instead of sewing it in a straight line. Set the curve radius to control how tight the arc is."),
+            GlossaryEntry(term: "Thread Library",
+                           definition: "Your own list of thread colors to match designs against, instead of a generic color wheel -- useful if you sew with one manufacturer's numbered thread set and want the app's automatic color matching to only ever suggest colors you actually own."),
             GlossaryEntry(term: "Applique",
                            definition: "A technique where a separate piece of fabric is placed on the garment and secured with stitching, rather than filling the whole shape with thread -- lighter, faster to sew for large areas, and gives a distinct fabric-texture look. This app can generate the placement outline and tack-down stitching that guide where to lay and secure the fabric by hand."),
             GlossaryEntry(term: "Fabric Type",
@@ -1470,9 +1478,33 @@ private struct GlossarySheet: View {
             GlossaryEntry(term: "Tie-In / Tie-Off",
                            definition: "A few small anchor stitches sewn at the start and end of each thread color, locking the thread in place so it can't work loose or pull out -- standard practice, applied automatically here."),
             GlossaryEntry(term: "Hoop",
-                           definition: "The frame that holds fabric taut while it's being sewn. A design must fit within the hoop's usable sewing area -- this app checks the current design against your selected hoop and flags it if it doesn't fit."),
+                           definition: "The frame that holds fabric taut while it's being sewn. A design must fit within the hoop's usable sewing area -- this app checks the current design against your selected hoop and flags it if it doesn't fit. Alongside the standard square/rectangular sizes, the hoop list also includes a Cap/Hat Hoop (the narrow curved frame used for embroidering caps) and a couple of Magnetic (\"Magic\") Hoop sizes, for machines fitted with a magnet-clamped hoop instead of a screw-tightened one."),
             GlossaryEntry(term: "Stitch Count",
                            definition: "The total number of individual needle penetrations in the design. Roughly proportional to how long the design takes to sew and how much thread it uses -- a useful sanity check before sending a design to production."),
+        ]),
+        GlossarySection(title: "Toolbar & File Actions", entries: [
+            GlossaryEntry(term: "New",
+                           definition: "Starts a fresh project. If nothing's open yet, it immediately asks you to choose an image or SVG to start from. If a project is already open, it asks you to confirm first -- starting over closes the current design without saving."),
+            GlossaryEntry(term: "Start Over",
+                           definition: "Discards every edit made since the artwork was imported -- color merges, per-object overrides, deletions -- and regenerates the design fresh from the original file. Only available once you've actually imported something."),
+            GlossaryEntry(term: "Open",
+                           definition: "\"Open Artwork...\" imports a new image or SVG file to digitize. \"Open Project...\" reopens a project you saved earlier from this app, with all your edits intact."),
+            GlossaryEntry(term: "Save",
+                           definition: "Saves the current project -- the artwork, every object, and all your edits -- as a project file you can reopen later in this app. This is different from Download/Send below, which write a machine-readable embroidery file instead."),
+            GlossaryEntry(term: "Back (Undo)",
+                           definition: "Undoes the last edit. Works for both automatic changes (a re-import, a size change) and manual ones (a merge, a paint stroke, a per-object parameter tweak)."),
+            GlossaryEntry(term: "Create Embroidery File",
+                           definition: "The main action: digitizes the current artwork and produces a finished stitch file in one click. In practice you rarely need to press it -- every edit already regenerates the preview moments later on its own -- but it's here as the explicit \"I'm done, finalize this\" step."),
+            GlossaryEntry(term: "Download",
+                           definition: "Saves the finished design to disk as a machine embroidery file, in the format your embroidery machine reads. Pick the format that matches your machine's brand: Tajima (.dst), Brother/Baby Lock (.pes), Melco (.exp), or Janome (.jef) -- all four contain the same stitches, just packaged differently."),
+            GlossaryEntry(term: "Send",
+                           definition: "Shares the finished design as a file via AirDrop, Mail, Messages, or any other app your Mac can share to -- the same format choices as Download, but for getting the file to another device or person instead of saving it locally."),
+            GlossaryEntry(term: "Delete Object (trash icon)",
+                           definition: "Removes the currently selected object from the design entirely. Unlike Erase, which removes just the stitching a brush stroke touches, this removes the whole object -- there's no undo-by-brush here, only Back (Undo)."),
+            GlossaryEntry(term: "Standard Size",
+                           definition: "A picker of common finished sizes for typical placements (left chest, cap front, jacket back, and similar) -- pick one to instantly resize the design to that standard instead of typing width and height by hand. Choose \"Custom\" to set your own."),
+            GlossaryEntry(term: "Color Reduction Preset",
+                           definition: "Controls how many thread colors an imported *image* is simplified down to (vector art always keeps its own exact colors, untouched). \"Preserve Artwork\" keeps every color the image has; \"Normal Embroidery\" and \"Production Efficient\" simplify progressively more for a faster, cleaner sew-out; \"Minimal Colors\" reduces to as few thread changes as possible."),
         ]),
         GlossarySection(title: "Quality", entries: [
             GlossaryEntry(term: "Embroidery Readiness Score",
@@ -1509,6 +1541,7 @@ private struct GlossarySheet: View {
                                 Text(entry.definition)
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .padding(.vertical, 3)
                         }
@@ -1531,6 +1564,6 @@ private struct GlossarySheet: View {
             }
             .padding()
         }
-        .frame(width: 480, height: 560)
+        .frame(minWidth: 480, idealWidth: 560, maxWidth: 720, minHeight: 480, idealHeight: 640, maxHeight: 800)
     }
 }

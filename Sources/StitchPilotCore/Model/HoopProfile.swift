@@ -23,6 +23,22 @@ public struct HoopProfile: Identifiable, Hashable, Sendable {
         HoopProfile(name: "8\" × 8\"", widthMM: 200, heightMM: 200),
         HoopProfile(name: "9\" × 9\"", widthMM: 240, heightMM: 240),
         HoopProfile(name: "10\" × 10\"", widthMM: 260, heightMM: 260),
+        // Appended after the standard sizes above rather than inserted --
+        // AppState keeps its default hoop as a fixed index into this array,
+        // so a new entry always belongs at the end, never in the middle.
+        //
+        // Cap/hat hoop: the narrow curved frame used for embroidering
+        // caps, common across home and commercial multi-needle machines
+        // (e.g. Brother's cap frames) at roughly this sewing area.
+        HoopProfile(name: "Cap/Hat Hoop", widthMM: 130, heightMM: 60),
+        // "Magic hoop" / magnetic hoop: a magnet-clamped hoop that needs no
+        // screws, sold under names like Mighty Hoop and MaggieFrame in a
+        // few sizes that don't match the standard sizes above -- sewing
+        // area is generally a little smaller than the hoop's own nominal
+        // size, so these lean conservative rather than overstating what
+        // actually fits.
+        HoopProfile(name: "Magnetic (\"Magic\") Hoop 5.5\" × 5.5\"", widthMM: 110, heightMM: 110),
+        HoopProfile(name: "Magnetic (\"Magic\") Hoop 8\" × 13\"", widthMM: 175, heightMM: 305),
     ]
 
     /// Picks a sensible hoop for a design of this size, for a user who
