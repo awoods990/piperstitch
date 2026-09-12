@@ -705,6 +705,14 @@ def create_activation_code(*, email: str, code_hash: str, device_id: str, ttl_mi
         return cur.lastrowid
 
 
+def delete_activation_code(code_row_id: int) -> None:
+    """A code that could not be emailed never existed as far as the
+    customer is concerned -- removing it keeps a broken mail setup from
+    counting toward the per-hour limit and locking the address out."""
+    with connection() as conn:
+        conn.execute("DELETE FROM activation_codes WHERE id = ?", (code_row_id,))
+
+
 def latest_activation_code(email: str, device_id: str) -> Optional[sqlite3.Row]:
     with connection() as conn:
         return conn.execute(

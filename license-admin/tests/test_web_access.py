@@ -111,3 +111,13 @@ def test_web_routes_require_the_shared_key(isolated_db, test_keypair, fake_smtp,
     assert r.json() == {"projects": []}
     r = client.post("/api/web/billing-portal", json={"token": token}, headers={"X-API-Key": "secret"})
     assert r.status_code == 404 and r.json()["error"] == "no_billing"
+
+
+def test_failed_sends_do_not_count_toward_the_rate_limit(isolated_db, test_keypair, fake_smtp):
+    fake_smtp.fail = True
+    for _ in range(activation.MAX_CODES_PER_HOUR + 2):
+        with pytest.raises(activation.ActivationError) as e:
+            web_access.request_code(email="broken@example.com")
+        assert e.value.code == "email_failed"
+    fake_smtp.fail = False
+    assert web_access.request_code(email="broken@example.com")["sent"] is True

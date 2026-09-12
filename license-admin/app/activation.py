@@ -83,10 +83,11 @@ def request_code(*, email: str, device_id: str, device_name: str) -> dict:
         raise ActivationError("rate_limited", "Too many codes requested for this address — wait an hour, or use a code already in your inbox.")
 
     code = f"{secrets.randbelow(1_000_000):06d}"
-    db.create_activation_code(email=email, code_hash=_hash(code), device_id=device_id.strip(), ttl_minutes=config.ACTIVATION_CODE_TTL_MINUTES)
+    code_row_id = db.create_activation_code(email=email, code_hash=_hash(code), device_id=device_id.strip(), ttl_minutes=config.ACTIVATION_CODE_TTL_MINUTES)
     try:
         email_sender.send_activation_code_email(to_email=email, code=code, device_name=device_name.strip())
     except email_sender.EmailSendError as e:
+        db.delete_activation_code(code_row_id)
         raise ActivationError("email_failed", f"We couldn't send the code: {e}") from e
     return {"sent": True, "reason": "ok", "expires_in_minutes": config.ACTIVATION_CODE_TTL_MINUTES}
 
