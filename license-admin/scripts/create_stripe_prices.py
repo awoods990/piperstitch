@@ -20,11 +20,18 @@ from app import config  # noqa: E402
 
 
 def main() -> None:
-    if not config.STRIPE_SECRET_KEY:
-        print("STRIPE_SECRET_KEY is not set — put it in .env first.", file=sys.stderr)
+    secret_key = config.STRIPE_SECRET_KEY
+    if not secret_key:
+        # No key in .env: ask for it here, hidden, so it never has to be
+        # typed into a command line or a chat.
+        import getpass
+
+        secret_key = getpass.getpass("Stripe secret key (sk_test_… or sk_live_…): ").strip()
+    if not secret_key.startswith("sk_"):
+        print("That doesn't look like a Stripe secret key (they start with sk_test_ or sk_live_).", file=sys.stderr)
         sys.exit(1)
-    stripe.api_key = config.STRIPE_SECRET_KEY
-    mode = "TEST" if config.STRIPE_SECRET_KEY.startswith("sk_test_") else "LIVE"
+    stripe.api_key = secret_key
+    mode = "TEST" if secret_key.startswith("sk_test_") else "LIVE"
     print(f"Creating PiperStitch product + monthly price in {mode} mode…")
 
     product = stripe.Product.create(
