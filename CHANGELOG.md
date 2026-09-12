@@ -4,6 +4,19 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: Railway deployment config and guide
+
+- `DEPLOY.md`: the whole first deploy step by step — two services from
+  this repo (**app** = `server/Dockerfile` at the repo root, **license-admin**
+  = its own new `Dockerfile`), every environment variable for each with
+  where it comes from, the Stripe price and webhook setup, custom
+  domains at GoDaddy, the nightly reconcile as a cron service, backups,
+  costs, and a troubleshooting list.
+- `license-admin/Dockerfile` (python:3.12-slim, non-root, `/data` for the
+  SQLite volume), `.dockerignore`, and `railway.json` files for both
+  services (health checks on `/health` and `/api/v1/health`, restart on
+  failure). License Admin gains `GET /health` for the platform's check.
+
 ## Added: accounts, the 14-day trial, subscribing and saved projects on the web
 
 - **License Admin gains `/api/web/*`** (`app/web_access.py`): sign-in by

@@ -181,6 +181,15 @@ class WebProjectIn(BaseModel):
 # --------------------------------------------------------------- public ---
 
 
+@app.get("/health")
+def health():
+    """For the hosting platform's health check (Railway, a load balancer):
+    the process is up and the database opens. Nothing about Stripe."""
+    with db.connection() as conn:
+        conn.execute("SELECT 1")
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 def root():
     return RedirectResponse("/subscribe", status_code=303)
