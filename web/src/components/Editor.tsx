@@ -28,6 +28,10 @@ interface Props {
   onRedo: () => void;
   onExport: (format: string) => void;
   onStartOver: () => void;
+  accountMenu: React.ReactNode;
+  canSave: boolean;
+  savedAt: number | null;
+  onSave: () => void;
 }
 
 const STITCH_LABELS: Record<StitchType, string> = {
@@ -54,7 +58,13 @@ export default function Editor(p: Props) {
         <div className="doc-name" title={doc.name}>{doc.name}</div>
         <div className="grow" />
         {p.busy && <span className="busy-pill"><span className="spinner small" />{p.busy}</span>}
+        {p.canSave && (
+          <button className="btn" onClick={p.onSave} disabled={!!p.busy} title={p.savedAt ? `Saved ${new Date(p.savedAt).toLocaleTimeString()}` : "Save this project to your account"}>
+            {p.savedAt ? "Saved ✓" : "Save project"}
+          </button>
+        )}
         <button className="btn ghost" onClick={p.onStartOver}>Start over</button>
+        {p.accountMenu}
       </header>
 
       {p.error && <div className="error-bar">{p.error}</div>}

@@ -7,6 +7,12 @@ func routes(_ app: Application) throws {
 
     api.get("health") { _ in ["status": "ok"] }
 
+    // Accounts, billing and saved projects (see Auth.swift). The engine
+    // routes below require a signed-in, entitled account whenever License
+    // Admin is configured.
+    authRoutes(api)
+    let engine = api.grouped(EntitlementGate())
+
     api.get("catalog") { _ -> CatalogResponse in
         CatalogResponse(
             hoops: HoopProfile.commonHoops.map { CatalogSize(name: $0.name, widthMM: $0.widthMM, heightMM: $0.heightMM) },
@@ -29,7 +35,7 @@ func routes(_ app: Application) throws {
     // place the web edition diverges from the Mac app's file-in path:
     // decoding happens in the browser, everything after that is the same
     // code (`ImageImporter.importShapes(rgba:...)`).
-    api.on(.POST, "import", "raster", body: .collect(maxSize: "48mb")) { req -> ImportResponse in
+    engine.on(.POST, "import", "raster", body: .collect(maxSize: "48mb")) { req -> ImportResponse in
         struct Query: Content { var width: Int; var height: Int; var maxColors: Int?; var hoopWidthMM: Double?; var hoopHeightMM: Double? }
         let q = try req.query.decode(Query.self)
         guard q.width > 1, q.height > 1, q.width * q.height <= 16_000_000 else {
@@ -49,7 +55,7 @@ func routes(_ app: Application) throws {
     }
 
     // SVG import: the file's text, as-is.
-    api.on(.POST, "import", "svg", body: .collect(maxSize: "16mb")) { req -> ImportResponse in
+    engine.on(.POST, "import", "svg", body: .collect(maxSize: "16mb")) { req -> ImportResponse in
         struct Query: Content { var hoopWidthMM: Double?; var hoopHeightMM: Double? }
         let q = try req.query.decode(Query.self)
         guard var buffer = req.body.data, let bytes = buffer.readBytes(length: buffer.readableBytes), !bytes.isEmpty else {
@@ -64,7 +70,7 @@ func routes(_ app: Application) throws {
     // Source shapes + the user's answers (size, fabric, palette) -> a
     // document of classified objects. Also how a size change on a fresh
     // import is applied: same call, new size.
-    api.post("build") { req -> DocumentResponse in
+    engine.post("build") { req -> DocumentResponse in
         let body = try req.content.decode(BuildRequest.self)
         guard body.widthMM > 0, body.heightMM > 0, !body.source.shapes.isEmpty else {
             throw Abort(.badRequest, reason: "A size and at least one shape are required.")
@@ -79,7 +85,7 @@ func routes(_ app: Application) throws {
 
     // Resize a document that no longer has source shapes behind it (a
     // saved project), re-fitting from its own bounds.
-    api.post("resize") { req -> DocumentResponse in
+    engine.post("resize") { req -> DocumentResponse in
         let body = try req.content.decode(ResizeRequest.self)
         guard body.widthMM > 0, body.heightMM > 0 else { throw Abort(.badRequest, reason: "Size must be positive.") }
         let document = try await Engine.run { DocumentBuilder.resize(body.document, widthMM: body.widthMM, heightMM: body.heightMM) }
@@ -88,7 +94,7 @@ func routes(_ app: Application) throws {
 
     // The digitize step itself: document -> stitch plan + color sequence +
     // readiness report, all in one pass (see flattenWithColors).
-    api.post("digitize") { req -> DigitizeResponse in
+    engine.post("digitize") { req -> DigitizeResponse in
         let body = try req.content.decode(DigitizeRequest.self)
         let started = Date()
         let (plan, colors, report) = try await Engine.run { () throws -> (StitchPlan, [ThreadColor], EmbroideryReadinessReport) in
@@ -108,7 +114,7 @@ func routes(_ app: Application) throws {
 
     // Machine file: re-flatten (0.4 s, and guarantees the file matches the
     // document rather than a stale plan) and encode.
-    api.post("export", ":format") { req -> Response in
+    engine.post("export", ":format") { req -> Response in
         guard let format = req.parameters.get("format").flatMap({ ExportFormat(rawValue: $0.lowercased()) }) else {
             throw Abort(.notFound, reason: "Unknown export format. Use one of: \(ExportFormat.allCases.map(\.rawValue).joined(separator: ", ")).")
         }

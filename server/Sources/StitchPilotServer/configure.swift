@@ -11,6 +11,7 @@ func configure(_ app: Application) throws {
     app.http.server.configuration.responseCompression = .enabled
     app.http.server.configuration.port = Environment.get("PORT").flatMap(Int.init) ?? 8080
     app.http.server.configuration.hostname = Environment.get("HOST") ?? "0.0.0.0"
+    app.auth = AuthConfig.fromEnvironment(app)
 
     // Development: the Vite dev server (another origin) talks to us
     // directly. Production serves the built web app from this same process
@@ -20,7 +21,8 @@ func configure(_ app: Application) throws {
     let cors = CORSMiddleware(configuration: .init(
         allowedOrigin: .any(allowedOrigins),
         allowedMethods: [.GET, .POST, .OPTIONS],
-        allowedHeaders: [.accept, .contentType, .contentEncoding, .origin, .authorization, "X-Requested-With"]
+        allowedHeaders: [.accept, .contentType, .contentEncoding, .origin, .authorization, "X-Requested-With"],
+        allowCredentials: true
     ))
     app.middleware.use(cors, at: .beginning)
 

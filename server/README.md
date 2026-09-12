@@ -21,6 +21,37 @@ Environment: `PORT` (8080), `HOST` (0.0.0.0), `CORS_ORIGINS`
 production the server serves the built browser app from `Public/` on the
 same origin, so CORS is normally moot.
 
+### Accounts
+
+With `LICENSE_ADMIN_URL` unset the server runs **without accounts**: every
+route is open and `/api/v1/auth/me` reports `authEnabled: false`. Fine for
+development, never for production. To turn accounts on:
+
+| Variable | Meaning |
+|---|---|
+| `LICENSE_ADMIN_URL` | Base URL of License Admin (e.g. `https://admin.piperstitch.com`) |
+| `WEB_API_KEY` | The same value as License Admin's `WEB_API_KEY` |
+| `SESSION_SECRET` | 32+ random characters; signs the browser's session cookie |
+
+License Admin is the authority (customers, the 14-day trial, Stripe's
+mirror, saved projects); this server calls its `/api/web/*` endpoints
+server-to-server and gives the browser an HttpOnly, signed `ps_session`
+cookie carrying the License Admin session token plus a cached copy of the
+account's standing, re-checked every 2 hours or as soon as the cached
+period expires. The engine routes require a signed-in, entitled account;
+`catalog` and `health` never do. See `LICENSING.md` → "The web edition".
+
+To run the whole thing locally, start License Admin with a file outbox
+so sign-in codes land in a folder instead of a mailbox:
+
+```bash
+cd license-admin && EMAIL_OUTBOX_DIR=./outbox WEB_API_KEY=devwebkey DATABASE_PATH=./dev.db .venv/bin/python -m uvicorn app.main:app --port 8000
+```
+
+```bash
+cd server && LICENSE_ADMIN_URL=http://localhost:8000 WEB_API_KEY=devwebkey SESSION_SECRET=0123456789abcdef0123456789abcdef .build/release/StitchPilotServer serve
+```
+
 ## Build for Linux (Docker, from the repo root)
 
 ```bash
@@ -52,6 +83,16 @@ bytes in) and export (file bytes out).
 | `POST /api/v1/resize` | `{document, widthMM, heightMM}` | `{document}` |
 | `POST /api/v1/digitize` | `{document, hoopWidthMM?, hoopHeightMM?}` | `{plan:{commands:[[code,x,y]…]}, colors, report, stats, elapsedMS}` |
 | `POST /api/v1/export/{dst|pes|jef|exp|vp3}` | `{document}` | the machine file (`Content-Disposition: attachment`) |
+| `GET /api/v1/auth/me[?refresh=1]` | — | `{authEnabled, signedIn, account?}` |
+| `POST /api/v1/auth/request` | `{email}` | `{sent}` — emails a six-digit code |
+| `POST /api/v1/auth/verify` | `{email, code}` | sets the session cookie; same shape as `me`. First verified sign-in starts the trial |
+| `POST /api/v1/auth/signout` | — | 204, cookie cleared |
+| `POST /api/v1/auth/checkout` | — | `{url}` — Stripe Checkout for this account |
+| `POST /api/v1/auth/billing-portal` | — | `{url}` — Stripe's portal (404 on a trial) |
+| `GET /api/v1/projects` | — | `[{id, name, widthMM, heightMM, objectCount, createdAt, updatedAt}]` |
+| `GET /api/v1/projects/{id}` | — | `{id, name, updatedAt, document}` |
+| `PUT /api/v1/projects/{id}` | `{name, document}` | `{created}` — id is the browser's UUID, so a re-save is idempotent |
+| `DELETE /api/v1/projects/{id}` | — | `{deleted}` |
 
 Plan command codes: 0 stitch, 1 jump, 2 colour change, 3 trim, 4 stop,
 5 end. Coordinates are design millimetres rounded to 0.01.

@@ -110,3 +110,37 @@ export interface Catalog {
   exportFormats: string[];
   defaultParameters: StitchGenerationParameters;
 }
+
+// --- accounts (server/Sources/StitchPilotServer/Auth.swift) ---
+
+export interface AccountState {
+  customer_id: number;
+  email: string;
+  name: string;
+  /** 'active' | 'trialing' | 'past_due' | 'comp' | 'none' | 'ended' */
+  status: string;
+  entitled: boolean;
+  valid_until: string | null;
+  period_end: string | null;
+  cancel_at_period_end: boolean;
+  has_billing: boolean;
+  price_cents: number;
+  currency: string;
+  trial_days: number;
+}
+
+export interface MeResponse {
+  authEnabled: boolean;
+  signedIn: boolean;
+  account?: AccountState | null;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  widthMM: number;
+  heightMM: number;
+  objectCount: number;
+  createdAt: string;
+  updatedAt: string;
+}

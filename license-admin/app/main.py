@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, stripe_client, subscriptions, website_publish
+from . import activation, auth, config, db, email_sender, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -154,6 +154,28 @@ class ActivateVerifyIn(BaseModel):
 
 class DeviceTokenIn(BaseModel):
     device_token: str
+
+
+class WebEmailIn(BaseModel):
+    email: str
+
+
+class WebVerifyIn(BaseModel):
+    email: str
+    code: str
+    user_agent: str = ""
+
+
+class WebTokenIn(BaseModel):
+    token: str
+
+
+class WebProjectIn(BaseModel):
+    token: str
+    id: str
+    name: str = ""
+    document: dict
+
 
 
 # --------------------------------------------------------------- public ---
@@ -420,6 +442,117 @@ def api_billing_portal(body: DeviceTokenIn):
         log.error("Billing portal session failed for customer %s: %s", customer["id"], e)
         return JSONResponse({"error": "stripe", "message": "Couldn't open the billing page right now."}, status_code=502)
     return {"url": session.url}
+
+
+# ------------------------------------------------------------ web edition ---
+# Server-to-server from the Swift web server (repo: server/), never from a
+# browser: every route requires the WEB_API_KEY shared secret. Same JSON
+# error shape as the app API. See web_access.py for the trial rule.
+
+
+def _require_web_key(x_api_key: Optional[str]) -> None:
+    if not config.WEB_API_KEY or not x_api_key or not hmac.compare_digest(x_api_key, config.WEB_API_KEY):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+@app.post("/api/web/signin/request")
+def api_web_signin_request(body: WebEmailIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.request_code(email=body.email)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=429 if e.code == "rate_limited" else 400)
+
+
+@app.post("/api/web/signin/verify")
+def api_web_signin_verify(body: WebVerifyIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=400)
+    return {"token": session.token, **web_access.state(token=session.token)}
+
+
+@app.post("/api/web/session")
+def api_web_session(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.state(token=body.token)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+
+
+@app.post("/api/web/signout")
+def api_web_signout(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    return {"ok": web_access.sign_out(token=body.token)}
+
+
+@app.post("/api/web/checkout")
+def api_web_checkout(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return {"url": web_access.checkout_url(token=body.token)}
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
+    except stripe.error.StripeError as e:
+        log.error("Web checkout session creation failed: %s", e)
+        return JSONResponse({"error": "stripe", "message": "Payment setup failed — please try again in a moment."}, status_code=502)
+
+
+@app.post("/api/web/billing-portal")
+def api_web_billing_portal(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        url = web_access.billing_portal_url(token=body.token)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+    except stripe.error.StripeError as e:
+        log.error("Web billing portal session failed: %s", e)
+        return JSONResponse({"error": "stripe", "message": "Couldn't open the billing page right now."}, status_code=502)
+    if url is None:
+        return JSONResponse({"error": "no_billing", "message": "There's no billing to manage yet — this account is on a free trial."}, status_code=404)
+    return {"url": url}
+
+
+@app.post("/api/web/projects/list")
+def api_web_projects_list(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return {"projects": web_access.list_projects(token=body.token)}
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+
+
+@app.post("/api/web/projects/get")
+def api_web_projects_get(body: WebTokenIn, id: str, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        project = web_access.get_project(token=body.token, project_id=id)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+    if project is None:
+        return JSONResponse({"error": "not_found", "message": "That project doesn't exist."}, status_code=404)
+    return project
+
+
+@app.post("/api/web/projects/save")
+def api_web_projects_save(body: WebProjectIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.save_project(token=body.token, project_id=body.id, name=body.name, document=body.document)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
+
+
+@app.post("/api/web/projects/delete")
+def api_web_projects_delete(body: WebTokenIn, id: str, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return {"deleted": web_access.delete_project(token=body.token, project_id=id)}
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
 
 
 # -------------------------------------------------------- stripe webhook ---

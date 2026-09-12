@@ -4,10 +4,11 @@
 // so everything the Mac app holds in memory lives here instead.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { ApiError, api } from "./api";
 import { decodeImage, isSVGFile, type DecodedImage } from "./decode";
-import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, FabricType, ImportResponse, StitchDocument, StitchType } from "./types";
+import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, FabricType, ImportResponse, MeResponse, ProjectSummary, StitchDocument, StitchType } from "./types";
 import DropZone from "./components/DropZone";
+import { AccountMenu, SignIn, SubscribeWall } from "./components/Account";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
 import Editor from "./components/Editor";
 
@@ -28,6 +29,11 @@ const DEFAULT_HOOP_INDEX = 2;
 
 export default function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [me, setMe] = useState<MeResponse | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("start");
   const [imported, setImported] = useState<Imported | null>(null);
   const [answers, setAnswers] = useState<SetupAnswers | null>(null);
@@ -42,9 +48,43 @@ export default function App() {
 
   useEffect(() => {
     api.catalog().then(setCatalog).catch((e) => setError(`Couldn't reach the PiperStitch server: ${e.message}`));
+    // Back from Stripe Checkout: re-check the account with the server so
+    // the new subscription shows without a sign-out/sign-in.
+    const params = new URLSearchParams(window.location.search);
+    const subscribed = params.get("subscribed");
+    if (subscribed !== null) window.history.replaceState(null, "", window.location.pathname);
+    api.me(subscribed !== null).then((m) => {
+      setMe(m);
+      if (subscribed === "1" && m.account?.status === "active") setNotice("You're subscribed — thank you! Everything's unlocked.");
+    }).catch((e) => setError(`Couldn't reach the PiperStitch server: ${e.message}`));
   }, []);
 
-  const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+  const signedInAndEntitled = !!me && (!me.authEnabled || (me.signedIn && !!me.account?.entitled));
+
+  useEffect(() => {
+    if (signedInAndEntitled && me?.authEnabled && phase === "start") {
+      api.listProjects().then(setProjects).catch(() => setProjects([]));
+    }
+  }, [signedInAndEntitled, me?.authEnabled, phase]);
+
+  const refreshMe = async () => {
+    try { setMe(await api.me(true)); } catch (e) { fail(e); }
+  };
+
+  const onSignedIn = (account: AccountState) => { setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); };
+
+  const onSignOut = async () => {
+    try { await api.signOut(); } catch { /* the cookie is cleared regardless */ }
+    onStartOver();
+    setProjects(null);
+    setMe({ authEnabled: true, signedIn: false, account: null });
+  };
+
+  /** Any error; an account problem (signed out, trial over) re-checks the account. */
+  const fail = (e: unknown) => {
+    setError(e instanceof Error ? e.message : String(e));
+    if (e instanceof ApiError && e.isAccountProblem) refreshMe();
+  };
 
   // --- digitize (debounced, latest-wins) -------------------------------
 
@@ -71,6 +111,7 @@ export default function App() {
 
   const updateDocument = (next: StitchDocument, hoop = answers?.hoop ?? null) => {
     setDocument(next);
+    setSavedAt(null);
     scheduleDigitize(next, hoop);
   };
 
@@ -243,7 +284,50 @@ export default function App() {
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
 
+  // --- projects -------------------------------------------------------
+
+  const onOpenProject = async (summary: ProjectSummary) => {
+    if (!catalog) return;
+    setError(null);
+    setBusy("Opening project…");
+    try {
+      const project = await api.getProject(summary.id);
+      const doc = project.document;
+      const fabric = (doc.objects[0]?.parameters.fabricType ?? "standard") as FabricType;
+      const hoop = catalog.hoops[DEFAULT_HOOP_INDEX] ?? null;
+      setImported(null);
+      setProjectId(project.id);
+      setSavedAt(Date.now());
+      setAnswers({ placement: "custom", widthMM: doc.physicalWidthMM, heightMM: doc.physicalHeightMM, lockAspect: false, hoop, hoopMode: "specific", fabric, colorPreset: "normalEmbroidery" });
+      setDocument(doc);
+      setDigitized(null);
+      setPhase("editor");
+      await digitizeNow(doc, hoop);
+    } catch (e) { fail(e); } finally { setBusy(null); }
+  };
+
+  const onSaveProject = async () => {
+    if (!document) return;
+    const id = projectId ?? crypto.randomUUID();
+    setBusy("Saving…");
+    try {
+      await api.saveProject(id, document.name, document);
+      setProjectId(id);
+      setSavedAt(Date.now());
+    } catch (e) { fail(e); } finally { setBusy(null); }
+  };
+
+  const onDeleteProject = async (summary: ProjectSummary) => {
+    if (!window.confirm(`Delete "${summary.name}"? This can't be undone.`)) return;
+    try {
+      await api.deleteProject(summary.id);
+      setProjects((p) => (p ?? []).filter((x) => x.id !== summary.id));
+    } catch (e) { fail(e); }
+  };
+
   const onStartOver = () => {
+    setProjectId(null);
+    setSavedAt(null);
     generation.current++;
     if (imported?.decoded) URL.revokeObjectURL(imported.decoded.previewURL);
     setImported(null); setAnswers(null); setDocument(null); setDigitized(null); setError(null); setStale(false);
@@ -252,9 +336,19 @@ export default function App() {
 
   // --- render -----------------------------------------------------------
 
-  if (!catalog) {
+  if (!catalog || !me) {
     return <div className="start"><div className="start-brand"><img src="/icon.png" alt="" width={64} height={64} /><h1>PiperStitch</h1>{error ? <p className="error-text">{error}</p> : <p>Loading…</p>}</div></div>;
   }
+
+  if (me.authEnabled && !me.signedIn) {
+    return <SignIn onSignedIn={onSignedIn} />;
+  }
+
+  if (me.authEnabled && me.account && !me.account.entitled) {
+    return <SubscribeWall account={me.account} onSignOut={onSignOut} onRefresh={refreshMe} />;
+  }
+
+  const accountMenu = me.authEnabled && me.account ? <AccountMenu account={me.account} onSignOut={onSignOut} /> : null;
 
   if (phase === "setup" && imported && answers) {
     return (
@@ -272,14 +366,17 @@ export default function App() {
         isVector={imported?.isVector ?? true} hasSource={!!imported} matchToThreadLibrary={matchToThreadLibrary}
         previewURL={imported?.decoded?.previewURL ?? null}
         onResize={onResize} onHoop={onHoop} onFabric={onFabric} onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary}
-        onObjectStitchType={onObjectStitchType} onDeleteObject={onDeleteObject} onRedo={onRedo} onExport={onExport} onStartOver={onStartOver} />
+        onObjectStitchType={onObjectStitchType} onDeleteObject={onDeleteObject} onRedo={onRedo} onExport={onExport} onStartOver={onStartOver}
+        accountMenu={accountMenu} canSave={me.authEnabled} savedAt={savedAt} onSave={onSaveProject} />
     );
   }
 
   return (
     <>
       {error && <div className="error-bar floating">{error}</div>}
-      <DropZone onFile={onFile} busy={busy} />
+      {notice && <div className="notice-bar floating" onClick={() => setNotice(null)}>{notice}</div>}
+      {accountMenu && <div className="start-account">{accountMenu}</div>}
+      <DropZone onFile={onFile} busy={busy} projects={me.authEnabled ? projects : null} onOpenProject={onOpenProject} onDeleteProject={onDeleteProject} />
     </>
   );
 }

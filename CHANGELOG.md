@@ -4,6 +4,35 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: accounts, the 14-day trial, subscribing and saved projects on the web
+
+- **License Admin gains `/api/web/*`** (`app/web_access.py`): sign-in by
+  email + code for any address; the first verified sign-in starts a
+  14-day `trialing` subscription row (one per email, ever); Stripe takes
+  over from it through the existing webhook path; a Mac subscriber signs
+  in with no trial. New tables `web_sessions` (no device limit) and
+  `projects` (the `StitchDocument` JSON per account, 200 max, 6 MB each).
+  Checkout and Billing Portal links return to `WEB_APP_URL`. All routes
+  require the `WEB_API_KEY` shared secret (server-to-server only).
+  `EMAIL_OUTBOX_DIR` writes emails to files for local development. 7 new
+  tests; 78 pass.
+- **The Swift server gates the engine** (`Auth.swift`, `AuthRoutes.swift`):
+  an HMAC-signed HttpOnly `ps_session` cookie carries the License Admin
+  session token and a cached account standing, re-checked every 2 h or
+  as soon as its cached period expires; `import/build/resize/digitize/
+  export` return 401 (signed out) or 402 (trial or subscription over).
+  `/auth/{me,request,verify,signout,checkout,billing-portal}` and
+  `/projects` CRUD. With `LICENSE_ADMIN_URL` unset, accounts are off
+  (development).
+- **Browser:** sign-in screen (email → code), the trial-ended /
+  subscribe wall (Stripe Checkout, "check again", manage billing), an
+  account menu with days left in the trial, "Save project" in the
+  editor, and "Your saved projects" on the start screen (open, delete).
+  Returning from Stripe (`?subscribed=1`) re-checks the account and
+  unlocks without a fresh sign-in. Verified end to end in the browser:
+  sign-in → trial → expiry wall → subscription synced → unlocked, and a
+  saved project reopens to the identical stitch count.
+
 ## Added: the web edition — the same engine, served to a browser (`server/` + `web/`)
 
 - **Decision:** PiperStitch launches first as a fully online web app (no

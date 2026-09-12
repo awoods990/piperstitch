@@ -1,0 +1,253 @@
+"""The web edition's sign-in, trial and account operations -- what the
+Swift web server (repo: server/) calls on a browser's behalf. The Mac
+app's counterpart is activation.py; the two differ in one deliberate
+way: a Mac gets its free trial from the install (the clock runs on the
+Mac, no account needed), while a browser can't be trusted to keep a
+trial clock, so here the trial belongs to the *account* and starts the
+first time an email is verified. Everything downstream -- validity,
+Stripe, comps, the admin -- is the same code and the same tables.
+
+Never called by a browser directly: the routes in main.py require the
+WEB_API_KEY shared secret, and the web server holds the session token in
+an HttpOnly cookie of its own."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import secrets
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from . import config, db, email_sender, stripe_client, subscriptions
+from .activation import MAX_CODES_PER_HOUR, MAX_VERIFY_ATTEMPTS, ActivationError
+
+# activation_codes rows are keyed by (email, device_id); every browser
+# shares this one pseudo-device so the newest code always wins, exactly
+# like a single Mac requesting twice.
+WEB_DEVICE_ID = "web"
+TRIAL_NOTE = "Web free trial"
+MAX_PROJECTS = 200
+MAX_PROJECT_BYTES = 6 * 1024 * 1024
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _expired(iso: str) -> bool:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")) <= _now()
+
+
+# ------------------------------------------------------------- sign-in ---
+
+
+def request_code(*, email: str) -> dict:
+    """Emails a code to any plausible address -- unlike the Mac's
+    request_code, an unknown email is welcome here: verifying it is how
+    the trial starts. Rate limits are shared with the Mac path."""
+    email = email.strip().lower()
+    if not email or "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        raise ActivationError("invalid_email", "That doesn't look like an email address.")
+    if db.count_recent_activation_codes(email, minutes=60) >= MAX_CODES_PER_HOUR:
+        raise ActivationError("rate_limited", "Too many codes requested for this address — wait an hour, or use a code already in your inbox.")
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    db.create_activation_code(email=email, code_hash=_hash(code), device_id=WEB_DEVICE_ID, ttl_minutes=config.ACTIVATION_CODE_TTL_MINUTES)
+    try:
+        email_sender.send_activation_code_email(to_email=email, code=code, device_name="the web")
+    except email_sender.EmailSendError as e:
+        raise ActivationError("email_failed", f"We couldn't send the code: {e}") from e
+    return {"sent": True, "expires_in_minutes": config.ACTIVATION_CODE_TTL_MINUTES}
+
+
+@dataclass(frozen=True)
+class WebSession:
+    token: str
+    customer_id: int
+    session_row_id: int
+
+
+def verify_code(*, email: str, code: str, user_agent: str = "") -> WebSession:
+    email = email.strip().lower()
+    row = db.latest_activation_code(email, WEB_DEVICE_ID)
+    if row is None or _expired(row["expires_at"]):
+        raise ActivationError("code_invalid", "That code has expired or was never sent — request a new one.")
+    if row["attempts"] >= MAX_VERIFY_ATTEMPTS:
+        raise ActivationError("code_invalid", "Too many wrong attempts — request a new code.")
+    if not hmac.compare_digest(row["code_hash"], _hash(code.strip())):
+        db.bump_activation_attempts(row["id"])
+        raise ActivationError("code_wrong", "That code isn't right. Check the email and try again.")
+    db.consume_activation_code(row["id"])
+
+    customer = db.get_customer_by_email(email)
+    if customer is None:
+        # First contact. The name is a placeholder the customer can fix
+        # at checkout; Stripe's name then flows back through the webhook.
+        customer_id = db.upsert_customer(name=email.split("@", 1)[0].replace(".", " ").title(), email=email, source="web_trial")
+        customer = db.get_customer(customer_id)
+    _start_trial_if_first_visit(customer)
+
+    token = secrets.token_urlsafe(32)
+    session_row_id = db.create_web_session(customer_id=customer["id"], token_hash=_hash(token), user_agent=user_agent)
+    db.add_event(customer_id=customer["id"], subscription_id=None, kind="web_signed_in", detail="Signed in on the web.")
+    return WebSession(token=token, customer_id=customer["id"], session_row_id=session_row_id)
+
+
+def _start_trial_if_first_visit(customer) -> Optional[int]:
+    """One trial per email, ever: only an account with no subscription row
+    of any kind (never trialed, never paid, never comped) gets one."""
+    if db.best_subscription_for_customer(customer["id"]) is not None:
+        return None
+    now = _now()
+    until = now + timedelta(days=config.TRIAL_DAYS)
+    subscription_id = db.upsert_subscription(
+        customer_id=customer["id"],
+        stripe_subscription_id=None,
+        stripe_customer_id=None,
+        status="trialing",
+        current_period_start=_iso(now),
+        current_period_end=_iso(until),
+        cancel_at_period_end=True,  # a trial never renews itself; it's replaced by a Stripe subscription
+        canceled_at=None,
+        ended_at=None,
+        source="manual",
+        amount_cents=0,
+        notes=TRIAL_NOTE,
+    )
+    db.add_event(customer_id=customer["id"], subscription_id=subscription_id, kind="trial_started", detail=f"{config.TRIAL_DAYS}-day web trial through {_iso(until)[:10]}.")
+    return subscription_id
+
+
+# --------------------------------------------------------------- state ---
+
+
+def _session(token: str):
+    row = db.get_web_session_by_token_hash(_hash(token))
+    if row is None:
+        raise ActivationError("session_revoked", "You were signed out. Sign in again to continue.")
+    return row
+
+
+def _expire_stale_trial(customer_id: int) -> None:
+    """A trial row past its end still ranks as 'entitled status' in
+    best_subscription_for_customer's ordering (harmless for validity,
+    which checks the date, but noisy in the admin). Close it out."""
+    sub = db.best_subscription_for_customer(customer_id)
+    if sub is None or sub["status"] != "trialing" or sub["source"] != "manual" or sub["notes"] != TRIAL_NOTE:
+        return
+    if sub["current_period_end"] and _expired(sub["current_period_end"]):
+        with db.connection() as conn:
+            conn.execute("UPDATE subscriptions SET status = 'canceled', ended_at = ?, updated_at = ? WHERE id = ?", (db.now_iso(), db.now_iso(), sub["id"]))
+
+
+def state(*, token: str) -> dict:
+    """What the web server caches in its cookie: who this is and whether
+    they may use the app right now. Cheap -- database only."""
+    session = _session(token)
+    db.touch_web_session(session["id"])
+    _expire_stale_trial(session["customer_id"])
+    customer = db.get_customer(session["customer_id"])
+    validity = subscriptions.validity_for(customer["id"])
+    return {
+        "customer_id": customer["id"],
+        "email": customer["email"],
+        "name": customer["name"],
+        "status": validity.status,
+        "entitled": validity.entitled,
+        "valid_until": _iso(validity.valid_until) if validity.valid_until else None,
+        "period_end": _iso(validity.period_end) if validity.period_end else None,
+        "cancel_at_period_end": validity.cancel_at_period_end,
+        "has_billing": bool(customer["stripe_customer_id"]),
+        "price_cents": config.MONTHLY_PRICE_CENTS,
+        "currency": config.CURRENCY,
+        "trial_days": config.TRIAL_DAYS,
+    }
+
+
+def sign_out(*, token: str) -> bool:
+    row = db.get_web_session_by_token_hash(_hash(token))
+    if row is None:
+        return False
+    db.revoke_web_session(row["id"])
+    return True
+
+
+# ------------------------------------------------------------- billing ---
+
+
+def checkout_url(*, token: str) -> str:
+    """Starts Stripe Checkout for this account from inside the app. The
+    trial-to-paid path is the normal one, so a trialing account is
+    allowed through; an account already paying is sent to the portal."""
+    session = _session(token)
+    customer = db.get_customer(session["customer_id"])
+    validity = subscriptions.validity_for(customer["id"])
+    if validity.entitled and validity.status in ("active", "past_due"):
+        raise ActivationError("already_subscribed", "This account already has an active subscription — use Manage billing instead.")
+    checkout = stripe_client.create_subscription_checkout(
+        customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"],
+        success_url=f"{config.WEB_APP_URL}/?subscribed=1", cancel_url=f"{config.WEB_APP_URL}/?subscribed=0",
+    )
+    db.create_checkout_session(stripe_session_id=checkout.id, customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"])
+    return checkout.url
+
+
+def billing_portal_url(*, token: str) -> Optional[str]:
+    session = _session(token)
+    customer = db.get_customer(session["customer_id"])
+    if not customer["stripe_customer_id"]:
+        return None
+    return stripe_client.create_billing_portal_session(stripe_customer_id=customer["stripe_customer_id"], return_url=f"{config.WEB_APP_URL}/").url
+
+
+# ------------------------------------------------------------ projects ---
+
+
+def list_projects(*, token: str) -> list[dict]:
+    session = _session(token)
+    return [dict(row) for row in db.list_projects(session["customer_id"])]
+
+
+def get_project(*, token: str, project_id: str) -> Optional[dict]:
+    session = _session(token)
+    row = db.get_project(session["customer_id"], project_id)
+    if row is None:
+        return None
+    out = dict(row)
+    out["document"] = json.loads(out["document"])
+    return out
+
+
+def save_project(*, token: str, project_id: str, name: str, document: dict) -> dict:
+    session = _session(token)
+    if not project_id or len(project_id) > 64 or not project_id.replace("-", "").isalnum():
+        raise ActivationError("invalid_project", "That project id isn't valid.")
+    encoded = json.dumps(document, separators=(",", ":"))
+    if len(encoded) > MAX_PROJECT_BYTES:
+        raise ActivationError("project_too_large", "This project is too large to save.")
+    if db.get_project(session["customer_id"], project_id) is None and db.count_projects(session["customer_id"]) >= MAX_PROJECTS:
+        raise ActivationError("project_limit", f"You've reached the limit of {MAX_PROJECTS} saved projects — delete one to save another.")
+    try:
+        created = db.save_project(
+            customer_id=session["customer_id"], project_id=project_id, name=(name.strip() or "Untitled")[:120], document=encoded,
+            width_mm=float(document.get("physicalWidthMM") or 0), height_mm=float(document.get("physicalHeightMM") or 0),
+            object_count=len(document.get("objects") or []),
+        )
+    except PermissionError:
+        raise ActivationError("invalid_project", "That project id isn't available.")
+    return {"id": project_id, "created": created}
+
+
+def delete_project(*, token: str, project_id: str) -> bool:
+    session = _session(token)
+    return db.delete_project(session["customer_id"], project_id)

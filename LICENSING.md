@@ -25,6 +25,30 @@ Ed25519-signed *entitlement* from License Admin, and refreshes it silently
 in the background. Cancelling keeps the app working to the end of the paid
 period; exported files are ordinary files and keep working forever.
 
+## The web edition
+
+The browser app (repo: `web/`, served by `server/`) uses the **same
+License Admin, the same Stripe subscription and the same customer
+record** as the Mac app -- one email, one $19/month, either edition.
+The difference is where the free trial lives: a Mac gets its 14 days
+from the install with no account, but a browser can't be trusted to
+keep a trial clock, so on the web the trial belongs to the *account* and
+starts the first time an email is verified. It's a `trialing`
+subscription row (`source = manual`, notes "Web free trial") that never
+renews; one per email, ever. A Stripe subscription later takes over
+from it through the normal webhook path, and a customer who already
+subscribed on the Mac simply signs in on the web with no trial.
+
+Sign-in is the same email + six-digit code, but any address may request
+a code (verifying it is how the trial starts). The web server holds the
+resulting session token in its own HttpOnly cookie and asks License
+Admin's `/api/web/*` endpoints -- server-to-server, with the `WEB_API_KEY`
+shared secret -- for the account's standing, Stripe Checkout / Billing
+Portal links, and saved projects (`projects` table: the design's JSON,
+per account). Browser sessions don't count toward the two-Mac device
+limit. In the admin, a web trial shows as a `trialing` subscription and
+`web_signed_in` / `trial_started` events on the customer.
+
 ## The pieces
 
 ```

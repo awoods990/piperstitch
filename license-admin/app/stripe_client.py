@@ -22,7 +22,7 @@ from . import config
 stripe.api_key = config.STRIPE_SECRET_KEY
 
 
-def create_subscription_checkout(*, customer_name: str, customer_email: str, customer_id: int) -> "stripe.checkout.Session":
+def create_subscription_checkout(*, customer_name: str, customer_email: str, customer_id: int, success_url: Optional[str] = None, cancel_url: Optional[str] = None) -> "stripe.checkout.Session":
     """Starts a hosted Checkout for the one monthly Price. `customer_id`
     (our own database id) rides along in the subscription's metadata so
     every later webhook about it can be tied back to our record even if
@@ -32,8 +32,8 @@ def create_subscription_checkout(*, customer_name: str, customer_email: str, cus
         line_items=[{"price": config.STRIPE_PRICE_MONTHLY, "quantity": 1}],
         customer_email=customer_email,
         allow_promotion_codes=True,
-        success_url=f"{config.PUBLIC_BASE_URL}/subscribe/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{config.PUBLIC_BASE_URL}/subscribe/cancel",
+        success_url=success_url or f"{config.PUBLIC_BASE_URL}/subscribe/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=cancel_url or f"{config.PUBLIC_BASE_URL}/subscribe/cancel",
         metadata={"customer_id": str(customer_id), "customer_name": customer_name, "customer_email": customer_email},
         subscription_data={"metadata": {"customer_id": str(customer_id), "customer_email": customer_email}},
     )

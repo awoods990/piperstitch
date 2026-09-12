@@ -71,6 +71,10 @@ REPLY_TO_EMAIL = os.environ.get("REPLY_TO_EMAIL", "")
 # of SMTP — the same service Amerus uses for its sequence mail. Dormant
 # until set. See email_postmark.py for why PiperStitch sends everything
 # (not just marketing) through it when it's configured.
+# Development only: instead of sending, write every email to
+# ./outbox/<timestamp>.eml and log its subject -- so the sign-in code flow
+# can be exercised locally with no mail server. Ignored when empty.
+EMAIL_OUTBOX_DIR = os.environ.get("EMAIL_OUTBOX_DIR", "")
 POSTMARK_API_TOKEN = os.environ.get("POSTMARK_API_TOKEN", "")
 # From address at a domain verified in Postmark, e.g. "PiperStitch <hello@piperstitch.com>".
 # Falls back to SMTP_FROM if blank.
@@ -105,6 +109,14 @@ CORS_ALLOWED_ORIGINS = [
     for o in os.environ.get("CORS_ALLOWED_ORIGINS", "https://piperstitch.com,https://www.piperstitch.com").split(",")
     if o.strip()
 ]
+
+# The web edition (see the repo's server/ and web/): its Swift server
+# calls this service's /api/web/* endpoints server-to-server, identified
+# by this shared secret in X-API-Key. Never given to a browser.
+WEB_API_KEY = os.environ.get("WEB_API_KEY", "")
+# Where the web app lives, for Stripe's return URLs after checkout and
+# the billing portal.
+WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:5173").rstrip("/")
 
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./license_admin.db")
 
@@ -159,6 +171,6 @@ def require_for_serving() -> list[str]:
         "INTAKE_API_KEY": INTAKE_API_KEY,
     }
     missing = [name for name, value in required.items() if not value]
-    if not SMTP_HOST and not POSTMARK_API_TOKEN:
+    if not SMTP_HOST and not POSTMARK_API_TOKEN and not EMAIL_OUTBOX_DIR:
         missing.append("SMTP_HOST (or POSTMARK_API_TOKEN)")
     return missing

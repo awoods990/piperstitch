@@ -29,7 +29,18 @@ class EmailSendError(Exception):
 
 def _send_smtp(msg: EmailMessage) -> None:
     """Despite the name, the one send path: Postmark's HTTP API when
-    POSTMARK_API_TOKEN is set, plain SMTP otherwise."""
+    POSTMARK_API_TOKEN is set, plain SMTP otherwise -- or, in development,
+    a file in EMAIL_OUTBOX_DIR."""
+    if config.EMAIL_OUTBOX_DIR:
+        import logging, time
+        from pathlib import Path
+
+        outbox = Path(config.EMAIL_OUTBOX_DIR)
+        outbox.mkdir(parents=True, exist_ok=True)
+        path = outbox / f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.eml"
+        path.write_bytes(bytes(msg))
+        logging.getLogger("license_admin").info("EMAIL_OUTBOX_DIR: wrote %s (%s -> %s)", path.name, msg["Subject"], msg["To"])
+        return
     if config.POSTMARK_API_TOKEN:
         from . import email_postmark
 

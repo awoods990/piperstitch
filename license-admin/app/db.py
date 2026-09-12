@@ -137,6 +137,30 @@ CREATE TABLE IF NOT EXISTS account_links (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS web_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    token_hash TEXT NOT NULL UNIQUE,    -- sha256 of the bearer token the web server holds in its cookie
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_customer ON web_sessions(customer_id);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,                -- the web app's own id (uuid) so a save is idempotent
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    name TEXT NOT NULL,
+    document TEXT NOT NULL,             -- the StitchDocument as JSON, exactly as the app holds it
+    width_mm REAL NOT NULL DEFAULT 0,
+    height_mm REAL NOT NULL DEFAULT 0,
+    object_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_projects_customer ON projects(customer_id, updated_at);
+
 CREATE TABLE IF NOT EXISTS stripe_events (
     id TEXT PRIMARY KEY,                -- Stripe's evt_... id; Stripe retries, we don't double-apply
     type TEXT NOT NULL,
@@ -742,3 +766,87 @@ def list_published_updates(limit: int = 25) -> list[sqlite3.Row]:
 def latest_published_update() -> Optional[sqlite3.Row]:
     with connection() as conn:
         return conn.execute("SELECT * FROM published_updates ORDER BY published_at DESC LIMIT 1").fetchone()
+
+
+# --------------------------------------------------------- web sessions --
+# The web edition's equivalent of `devices`: one row per signed-in
+# browser, token stored hashed. No device limit -- a browser session is
+# cheap to create and easy to end from the account page.
+
+
+def create_web_session(*, customer_id: int, token_hash: str, user_agent: str) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO web_sessions (customer_id, token_hash, user_agent, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+            (customer_id, token_hash, user_agent[:200], _now(), _now()),
+        )
+        return cur.lastrowid
+
+
+def get_web_session_by_token_hash(token_hash: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM web_sessions WHERE token_hash = ? AND revoked_at IS NULL", (token_hash,)).fetchone()
+
+
+def touch_web_session(session_row_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE web_sessions SET last_seen_at = ? WHERE id = ?", (_now(), session_row_id))
+
+
+def revoke_web_session(session_row_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE web_sessions SET revoked_at = ? WHERE id = ?", (_now(), session_row_id))
+
+
+def list_active_web_sessions(customer_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM web_sessions WHERE customer_id = ? AND revoked_at IS NULL ORDER BY last_seen_at DESC", (customer_id,)).fetchall()
+
+
+# -------------------------------------------------------------- projects --
+
+
+def list_projects(customer_id: int) -> list[sqlite3.Row]:
+    """Everything but the document itself -- a list is shown, not loaded."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT id, customer_id, name, width_mm, height_mm, object_count, created_at, updated_at FROM projects WHERE customer_id = ? ORDER BY updated_at DESC",
+            (customer_id,),
+        ).fetchall()
+
+
+def count_projects(customer_id: int) -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM projects WHERE customer_id = ?", (customer_id,)).fetchone()[0]
+
+
+def get_project(customer_id: int, project_id: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM projects WHERE id = ? AND customer_id = ?", (project_id, customer_id)).fetchone()
+
+
+def save_project(*, customer_id: int, project_id: str, name: str, document: str, width_mm: float, height_mm: float, object_count: int) -> bool:
+    """Insert or replace. Returns True when created. A project id that
+    belongs to another customer is simply not theirs to overwrite."""
+    now = _now()
+    with connection() as conn:
+        existing = conn.execute("SELECT customer_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if existing is not None and existing["customer_id"] != customer_id:
+            raise PermissionError("project belongs to another customer")
+        if existing is None:
+            conn.execute(
+                "INSERT INTO projects (id, customer_id, name, document, width_mm, height_mm, object_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, customer_id, name, document, width_mm, height_mm, object_count, now, now),
+            )
+            return True
+        conn.execute(
+            "UPDATE projects SET name = ?, document = ?, width_mm = ?, height_mm = ?, object_count = ?, updated_at = ? WHERE id = ?",
+            (name, document, width_mm, height_mm, object_count, now, project_id),
+        )
+        return False
+
+
+def delete_project(customer_id: int, project_id: str) -> bool:
+    with connection() as conn:
+        cur = conn.execute("DELETE FROM projects WHERE id = ? AND customer_id = ?", (project_id, customer_id))
+        return cur.rowcount > 0

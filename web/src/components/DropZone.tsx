@@ -1,6 +1,17 @@
 import { useCallback, useRef, useState } from "react";
+import type { ProjectSummary } from "../types";
+import { cm } from "../format";
 
-export default function DropZone({ onFile, busy }: { onFile: (file: File) => void; busy: string | null }) {
+interface Props {
+  onFile: (file: File) => void;
+  busy: string | null;
+  /** null: accounts are off or still loading; []: none saved yet. */
+  projects: ProjectSummary[] | null;
+  onOpenProject: (p: ProjectSummary) => void;
+  onDeleteProject: (p: ProjectSummary) => void;
+}
+
+export default function DropZone({ onFile, busy, projects, onOpenProject, onDeleteProject }: Props) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
@@ -38,6 +49,22 @@ export default function DropZone({ onFile, busy }: { onFile: (file: File) => voi
           </>
         )}
       </div>
+      {projects && projects.length > 0 && (
+        <div className="projects">
+          <div className="section-label">Your saved projects</div>
+          <ul>
+            {projects.map((p) => (
+              <li key={p.id}>
+                <button className="project" onClick={() => onOpenProject(p)} disabled={!!busy}>
+                  <b>{p.name}</b>
+                  <span>{cm(p.widthMM)} × {cm(p.heightMM)} cm · {p.objectCount} object{p.objectCount === 1 ? "" : "s"} · {new Date(p.updatedAt).toLocaleDateString()}</span>
+                </button>
+                <button className="icon-btn" title="Delete project" onClick={() => onDeleteProject(p)}>×</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="start-hints">
         <div><strong>Best results:</strong> clean logos with flat colours on a plain background.</div>
         <div><strong>Your files stay yours:</strong> the finished DST/PES/JEF file downloads straight to your computer.</div>
