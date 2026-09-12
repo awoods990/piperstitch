@@ -1,0 +1,16 @@
+.build
+.swiftpm
+server/.build
+web/node_modules
+web/dist
+web/public/_test
+dist
+DerivedData
+TestArtwork
+Logo
+Resources
+license-admin
+website
+docs
+.git
+*.md

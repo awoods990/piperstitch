@@ -212,8 +212,10 @@ public enum QualityAnalyzer {
         guard let narrowest else { return }
         issues.append(QualityIssue(
             severity: .warning,
-            message: String(format: "Fine detail (as narrow as %.1fmm) on %@ fabric often doesn't sew cleanly -- the pile or stretch can swallow or distort thin satin/fill in a way this preview can't show. Consider a bolder design, a larger size, or a stabilizer topping.",
-                             narrowest.widthMM, narrowest.fabric.shortName),
+            // Interpolated rather than `%@`-formatted: identical text, but
+            // `%@` with a Swift String is Darwin-only bridging the Linux
+            // server build (see server/) can't rely on.
+            message: "Fine detail (as narrow as \(String(format: "%.1f", narrowest.widthMM))mm) on \(narrowest.fabric.shortName) fabric often doesn't sew cleanly -- the pile or stretch can swallow or distort thin satin/fill in a way this preview can't show. Consider a bolder design, a larger size, or a stabilizer topping.",
             scorePenalty: 8
         ))
     }

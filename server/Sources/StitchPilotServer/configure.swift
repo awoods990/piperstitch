@@ -29,8 +29,26 @@ func configure(_ app: Application) throws {
     // browser router can take it from there.
     let publicDir = app.directory.publicDirectory
     if FileManager.default.fileExists(atPath: publicDir + "index.html") {
+        app.middleware.use(SPAFallback(indexPath: publicDir + "index.html"))
         app.middleware.use(FileMiddleware(publicDirectory: publicDir, defaultFile: "index.html"))
     }
 
     try routes(app)
+}
+
+/// A GET for a path that is neither an API route nor a real file gets the
+/// app's index.html, so a deep link (a saved project's URL, say) loads the
+/// app and lets its router show the right thing.
+struct SPAFallback: AsyncMiddleware {
+    let indexPath: String
+
+    func respond(to request: Request, chainingTo next: AsyncResponder) async throws -> Response {
+        do {
+            return try await next.respond(to: request)
+        } catch let error as AbortError where error.status == .notFound
+            && request.method == .GET && !request.url.path.hasPrefix("/api/")
+            && !(request.url.path.split(separator: "/").last?.contains(".") ?? false) {  // a missing asset stays a 404
+            return try await request.fileio.asyncStreamFile(at: indexPath)
+        }
+    }
 }

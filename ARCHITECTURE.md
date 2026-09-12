@@ -184,11 +184,50 @@ Sources/StitchPilotCore/       Swift library — the engine, no UI dependency
   Formats/                     One file per machine format; each is an adapter
                                 consuming/producing StitchPlan + metadata only
 Sources/StitchPilotApp/        SwiftUI app (thin — delegates to StitchPilotCore)
+Sources/DigitizeCLI/           No-GUI harness around the same pipeline (diagnostics)
 Tests/StitchPilotCoreTests/    Unit + round-trip + cross-validation tests
+server/                        Web edition: Vapor HTTP API around StitchPilotCore (Linux)
+web/                           Web edition: the browser app (React + TypeScript)
 ```
 
 `StitchPilotCore` has no dependency on AppKit/SwiftUI and can be fully unit
 tested headlessly (`swift test`), including on CI with no display attached.
+
+## The web edition (`server/` + `web/`)
+
+PiperStitch launches first as a browser app, with the Mac app kept fully
+intact for a later release. Both are the *same engine*: `server/` is a
+separate SwiftPM package that depends on this one by path and wraps
+`DigitizePipeline` and friends in a small, stateless JSON API (Vapor),
+built for Linux in Docker; `web/` is the browser UI that drives it. The
+root package, and the Mac app inside it, are not modified for the web's
+sake — the server is a *sibling* of `StitchPilotApp`, not a fork of it.
+
+What made this cheap: the engine was already platform-neutral apart from
+four files, each of which now compiles its Apple-framework code under
+`#if canImport(...)` so the Mac build is byte-identical and Linux skips
+it:
+
+| File | Apple dependency | Web edition instead |
+|---|---|---|
+| `Import/ImageImporter` | ImageIO decodes the file | The browser decodes and downsizes; the server receives straight RGBA via the platform-neutral `importShapes(rgba:width:height:)` — every step after decoding is the same code |
+| `Rendering/StitchRenderer` | CoreGraphics draws the preview | The browser draws the plan on a `<canvas>` with the same thread-width/shade technique (`web/src/render.ts`) |
+| `Engine/LetteringGenerator` | CoreText glyph outlines | Not yet on the web (planned: outlines from the browser, submitted as shapes) |
+| `Engine/TextDetector` | Vision OCR | Not yet on the web (returns no regions on Linux) |
+
+The `Licensing/` client is desktop-only and is likewise skipped on Linux.
+
+The browser holds the document (all model types are `Codable`, so
+`StitchDocument` crosses the wire as JSON) and the server keeps nothing
+between requests, mirroring `AppState`'s lifecycle as endpoints:
+`import/raster` or `import/svg` (→ source shapes + a recommended size),
+`build` (`regenerateFromStoredGeometry`), `resize`
+(`applyPhysicalSizeChange`), `digitize` (`flattenWithColors` +
+`QualityAnalyzer`), `export/{dst,pes,jef,exp,vp3}`, and `catalog` (the
+UI's pick-lists straight from the engine's tables). A full digitize is
+~0.4 s, so only re-digitizing actions round-trip; pan/zoom/select are
+local. Engine improvements land in `StitchPilotCore` once and reach both
+editions. See `server/README.md` and `web/README.md` to run them.
 
 ## Format adapters
 

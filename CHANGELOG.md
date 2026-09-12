@@ -4,6 +4,48 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: the web edition — the same engine, served to a browser (`server/` + `web/`)
+
+- **Decision:** PiperStitch launches first as a fully online web app (no
+  download); the Mac app stays intact for a later launch. Both run the
+  *same* `StitchPilotCore`. See `ARCHITECTURE.md` → "The web edition".
+- **`StitchPilotCore` now compiles on Linux.** The four Apple-framework
+  files (`ImageImporter`, `StitchRenderer`, `LetteringGenerator`,
+  `TextDetector`) and the desktop-only `Licensing/` client guard their
+  Apple code with `#if canImport(...)`; the Mac build is unchanged
+  (all 301 tests pass, `DigitizeCLI` output is identical). One additive
+  entry point: `ImageImporter.importShapes(rgba:width:height:maxColors:)`,
+  the platform-neutral half of `importShapes(from:)`, so a decoder-less
+  server can take pixels the browser already decoded. One text-only
+  change in `QualityAnalyzer` (`%@` → interpolation, same message).
+- **`server/`** — a separate SwiftPM package (Vapor) depending on the root
+  package by path, so `Package.swift` and the Mac app are untouched.
+  Stateless JSON API mirroring `AppState`: `import/raster` (gzipped RGBA
+  from the browser), `import/svg`, `build`, `resize`, `digitize`
+  (compact `[code,x,y]` plan + colour sequence + readiness report),
+  `export/{dst,pes,jef,exp,vp3}`, `catalog`, `health`. CPU work runs off
+  the event loop, at most one job per core. Verified against the CLI on
+  `multi_color_badge.svg`: identical stitch count, colours, trims, max
+  stitch length, thread length and readiness score. Dockerfile
+  (multi-stage, serves the built web app from the same process) and a
+  GitHub Actions workflow that builds the server on Linux, the web app,
+  and the container image.
+- **`web/`** — React + TypeScript (Vite). Start screen with drag-and-drop;
+  the browser decodes any image it can open, downsizes to ≤2400 px, and
+  uploads straight-alpha RGBA gzipped in-browser. The same five-step
+  after-import flow as the Mac's `ImportSetupSheet` (same copy, same
+  placement → fabric prediction, same hoop fit checks, preview withheld
+  until the last step). Editor: `<canvas>` stitch preview using
+  `StitchRenderer`'s thread-width/alternating-shade/offset-highlight
+  technique, pan/zoom, hoop frame, readiness card, stats, colour
+  sequence, size (with garment chips), hoop, fabric, colour preset,
+  thread-library toggle, per-object stitch-type override, delete, redo
+  from original, one-click downloads in all five formats. Edits
+  re-digitize with a 250 ms debounce and latest-wins.
+- **Not yet on the web:** lettering, text detection, applique, merge /
+  translate / scale / paint / erase, undo, custom thread library,
+  project save/load, accounts and the subscription gate.
+
 ## Changed: the after-import questions are now a stepped flow of choices, and the stitch preview waits for the answers
 
 - **`ImportSetupSheet` rebuilt as a five-step flow** (its own file now,
