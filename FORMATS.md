@@ -13,8 +13,9 @@ what's implemented, how each was validated, and known losses/limitations.
 | PES | Brother/Baby Lock | ✅ | ✅ | Implemented, Phase 3 (moved up from Phase 6) |
 | JEF | Janome | ✅ | ✅ | Implemented, Phase 6 (moved up) |
 | EXP | Melco/Bernina-compatible | ✅ | ✅ | Implemented, Phase 6 (moved up) |
-| VP3 | Husqvarna Viking/Pfaff | — | — | Planned, Phase 6 |
+| VP3 | Husqvarna Viking/Pfaff | ✅ | ✅ | Implemented |
 | XXX | Singer/Compucon | — | — | Planned, Phase 6 |
+| JPX | Janome (newer/larger machines) | — | — | Deliberately not attempted — see note below |
 | PEC | (Brother, embedded in PES) | ✅ | ✅ | Implemented as part of PES (see below); not offered as a standalone .pec export yet |
 | U01 | — | — | — | Planned, Phase 6 |
 | TBF | Barudan | — | — | Investigate, Phase 6 |
@@ -211,6 +212,67 @@ nearest index, `buildPalette` excludes that index from the second color's
 search so it falls to its own second-nearest match instead — otherwise two
 colors the design actually distinguishes would trigger the same "insert
 thread #NN" prompt on the machine, silently losing the distinction.
+
+## VP3 (Husqvarna Viking, Pfaff)
+
+**Implemented in:** `VP3Format.swift`. Both writer and reader.
+
+**Layout:** a nested, length-prefixed binary structure — a file block
+containing one design block, containing one colorblock per thread color,
+each colorblock containing a stitches sub-block. Every block after its own
+3-byte marker carries a 4-byte big-endian length (bytes remaining in that
+block, measured from immediately after the length field), so a reader can
+skip straight past a block it doesn't need. Two different numeric scales
+appear in the same file: in-stream stitch deltas use the same 0.1mm-per-unit
+convention DST/EXP/JEF all use, while every other numeric field (the
+design's overall extends, its center, and each colorblock's own
+start-position-from-center and block-shift) uses a ten-times-finer
+0.001mm-per-unit convention. VP3 has no jump record at all — a `.jump` is
+simply dropped, relying on the next real stitch's own delta to span the
+distance instead — and `.trim`/`.end` share one identical 2-byte marker,
+since the file's own nested block structure (not an in-stream byte) is
+what actually ends a design.
+
+**Correctness approach:** unlike DST/PES/EXP/JEF, reading `Vp3Writer.py`/
+`Vp3Reader.py` (pyembroidery, MIT license) alone was actively misleading
+about the true unit scale and coordinate sign — the source's own `* 100`
+looks like a simple ×100 scale until you notice it's applied on top of
+pyembroidery's already-0.1mm-per-unit internal representation (net ×1000
+relative to real mm, not ×100), and its Y fields' explicit sign flips only
+make sense once you know pyembroidery's internal Y convention is itself
+the negation of StitchPilot's. Both facts were confirmed empirically before
+writing any Swift: generating patterns of known real-world size and
+position with pyembroidery's own writer (with `pyembroidery` installed
+locally), inspecting the raw output bytes field-by-field, and separately
+feeding a real `.dst` file — decoded through this project's own trusted
+`validate_dst.py` oracle — into `pyembroidery`'s VP3 writer to confirm the
+header sign convention against known-correct StitchPilot-convention
+coordinates, not derived by algebra alone. `VP3FormatTests.crossValidationAgainstPyembroidery`
+round-trips a real `.vp3` file through pyembroidery's own independent
+reader when it's available locally.
+
+**Known limitation:** `.stop` has no VP3 representation at all (silently
+dropped, matching the reference writer's own behavior) — the same way EXP
+carries no design name.
+
+## JPX (Janome, newer/larger machines) — not implemented
+
+Deliberately not attempted. JPX is Janome's newest, most complex format —
+it embeds an actual JPEG background image alongside the stitch data plus
+metadata for machine-specific features (Cutwork, AcuFil), not just a
+stitch list. `pyembroidery`, the reference this project's other formats
+were all verified against, ships a **reader** for JPX but no writer at
+all — even the most complete open-source cross-format embroidery library
+has never reverse-engineered the format well enough to produce a valid
+file. Writing one from scratch without a trustworthy reference would mean
+guessing at a real machine's proprietary structure, exactly the failure
+mode this document's whole approach (verify against a real independent
+implementation, never reconstruct from memory) exists to avoid — a
+"file that opens but sews incorrectly," or simply fails to open, on real
+hardware. Most Janome machines that accept JPX also accept the already-
+implemented JEF format for a plain stitch design (no background image or
+Cutwork/AcuFil data) — use that instead until a trustworthy reference for
+writing JPX surfaces.
 
 ## Adding a new format
 

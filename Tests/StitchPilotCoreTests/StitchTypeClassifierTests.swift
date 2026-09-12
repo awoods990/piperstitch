@@ -248,4 +248,90 @@ struct StitchTypeClassifierTests {
         let plan = try DigitizePipeline.flatten(doc)
         #expect(plan.stitchCount > 0)
     }
+
+    /// A self-intersecting "bowtie" quad has zero signed area (the two
+    /// triangular lobes cancel in the shoelace formula) despite a normal
+    /// 20x20mm bounding box -- exactly the kind of raster-tracing artifact
+    /// a branching letterform like "T" or "H" can produce, which
+    /// `classify` alone sends to `.runningStitch` via its `area > 0` guard
+    /// regardless of how large the shape actually is.
+    private func bowtieShape(sizeMM: Double = 20) -> VectorShape {
+        VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(sizeMM, sizeMM), Point2D(sizeMM, 0), Point2D(0, sizeMM),
+        ], closed: true)])
+    }
+
+    private func solidSquare(sizeMM: Double, at origin: Point2D = .zero) -> VectorShape {
+        VectorShape(subPaths: [SubPath(points: [
+            Point2D(origin.x, origin.y), Point2D(origin.x + sizeMM, origin.y),
+            Point2D(origin.x + sizeMM, origin.y + sizeMM), Point2D(origin.x, origin.y + sizeMM),
+        ], closed: true)])
+    }
+
+    /// The main case this exists for: an outlier that independently
+    /// classifies as `.runningStitch` despite real bulk, grouped by color
+    /// with enough same-color siblings that already agree on one bulkier
+    /// stitch type, is corrected to match them.
+    @Test func bulkyOutlierSharingAColorWithSeveralTatamiSiblingsIsCorrected() {
+        let color = RGBColor(hex: 0x102040)
+        let outlier = bowtieShape()
+        #expect(StitchTypeClassifier.classify(shape: outlier, parameters: defaultParams) == .runningStitch,
+                "the bowtie fixture must actually reproduce the independent-misclassification bug this test guards")
+
+        var objects = [EmbroideryObject(name: "Outlier", shape: outlier, stitchType: .runningStitch, threadColor: .generic(color))]
+        for i in 0..<3 {
+            let square = solidSquare(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
+            let type = StitchTypeClassifier.classify(shape: square, parameters: defaultParams)
+            objects.append(EmbroideryObject(name: "Sibling\(i)", shape: square, stitchType: type, threadColor: .generic(color)))
+        }
+        #expect(objects.dropFirst().allSatisfy { $0.stitchType == .tatamiFill })
+
+        let reconciled = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
+        #expect(reconciled[0].stitchType == .tatamiFill)
+    }
+
+    /// A genuinely tiny same-color shape (a real hairline accent, not a
+    /// misclassified bulky one) must be left alone -- correcting it would
+    /// force fill coverage onto something that may have been deliberately
+    /// thin.
+    @Test func tinyOutlierIsLeftAlone() {
+        let color = RGBColor(hex: 0x102040)
+        let tinyLine = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(1, 0.2)], closed: false)])
+        var objects = [EmbroideryObject(name: "Tiny", shape: tinyLine, stitchType: .runningStitch, threadColor: .generic(color))]
+        for i in 0..<3 {
+            let square = solidSquare(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
+            objects.append(EmbroideryObject(name: "Sibling\(i)", shape: square, stitchType: .tatamiFill, threadColor: .generic(color)))
+        }
+        let reconciled = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
+        #expect(reconciled[0].stitchType == .runningStitch)
+    }
+
+    /// Only one same-color sibling already agreeing on a bulkier type
+    /// isn't a real consensus -- the outlier stays as independently
+    /// classified rather than following a single coincidental match.
+    @Test func singleSiblingIsNotEnoughConsensusToCorrect() {
+        let color = RGBColor(hex: 0x102040)
+        let outlier = bowtieShape()
+        let square = solidSquare(sizeMM: 20)
+        let objects = [
+            EmbroideryObject(name: "Outlier", shape: outlier, stitchType: .runningStitch, threadColor: .generic(color)),
+            EmbroideryObject(name: "OnlySibling", shape: square, stitchType: .tatamiFill, threadColor: .generic(color)),
+        ]
+        let reconciled = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
+        #expect(reconciled[0].stitchType == .runningStitch)
+    }
+
+    /// Siblings of a *different* color must never influence an outlier --
+    /// grouping is by thread color specifically because that's what
+    /// raster import uses to signal "these belong together."
+    @Test func differentColoredSiblingsDoNotInfluenceAnOutlier() {
+        let outlier = bowtieShape()
+        var objects = [EmbroideryObject(name: "Outlier", shape: outlier, stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: 0x102040)))]
+        for i in 0..<3 {
+            let square = solidSquare(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
+            objects.append(EmbroideryObject(name: "Sibling\(i)", shape: square, stitchType: .tatamiFill, threadColor: .generic(RGBColor(hex: 0xA0A0A0))))
+        }
+        let reconciled = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
+        #expect(reconciled[0].stitchType == .runningStitch)
+    }
 }

@@ -197,6 +197,97 @@ public enum StitchTypeClassifier {
         return .tatamiFill
     }
 
+    /// A shape below this size in either dimension is small enough that
+    /// `.runningStitch`/`.tripleRun` is plausibly the right call on its own
+    /// merits (a genuine hairline accent, a tiny dot) -- `reconcileRunning
+    /// StitchOutliers` below leaves anything this small alone rather than
+    /// forcing it to match bulkier siblings it may never have been meant to
+    /// match.
+    private static let minimumBulkDimensionMM = 3.0
+    /// How many same-color siblings already agreeing on one of `.satin`/
+    /// `.tatamiFill` counts as a real consensus, not a coincidence -- one
+    /// matching sibling alone isn't enough to override an independent
+    /// per-shape classification.
+    private static let minimumSiblingConsensusCount = 2
+
+    /// Corrects a shape that `classify(shape:parameters:)` independently
+    /// routed to `.runningStitch`/`.tripleRun` when it's actually one of a
+    /// group of same-color siblings that mostly came out `.satin` or
+    /// `.tatamiFill` instead -- both real stitch types with genuine
+    /// "dimension or bulk," unlike a thin outline.
+    ///
+    /// This exists for raster-imported text specifically: `classify` looks
+    /// at one shape's own geometry in isolation, with no notion of "this is
+    /// one letter of a word that should all sew the same way" the way
+    /// `classifyLetteringRun`/`classifyGlyphInRun` above give text typed
+    /// through Add Lettering (see their own doc comments) -- raster import
+    /// never goes through that path at all, so a single letter whose own
+    /// outline confuses the per-shape heuristics (a branching letterform
+    /// like T or H, whose crossbar can pull its principal-axis width
+    /// calculation down well below `minSatinWidthMM` even though the glyph
+    /// itself is large and bold) can come back `.runningStitch` while every
+    /// other letter of the same word, in the same color, correctly reads as
+    /// `.tatamiFill`/`.satin` -- visibly wrong the same way a mixed-stitch
+    /// lettering run is wrong there: one letter in a different, thinner
+    /// texture than the word around it, not a defensible independent
+    /// choice. Found directly against a real raster-traced logo whose "T"s
+    /// sewed as a thin outline while the rest of the word sewed solid.
+    ///
+    /// Grouping by thread color rather than adjacency/position is
+    /// deliberate: raster import already assigns one color per detected
+    /// region, so shapes sharing a color are almost always literal letters
+    /// of the same word or repeated elements of the same design, not an
+    /// incidental coincidence -- the same signal `mergeColors` already
+    /// treats as "these belong together" for bulk color reassignment.
+    ///
+    /// An outlier only gets corrected when it clears `minimumBulkDimensionMM`
+    /// in both directions (so a shape that's genuinely tiny/hairline, and
+    /// really might belong in a thinner stitch type, is left alone) and its
+    /// color has at least `minimumSiblingConsensusCount` siblings already
+    /// agreeing on one bulkier stitch type. Correcting toward `.satin`
+    /// still re-checks the same structural requirements `classify` itself
+    /// enforces (a single boundary, or one hole, that
+    /// `SatinColumnGenerator` can actually rail as one column) -- a shape
+    /// that fails those falls back to `.tatamiFill` instead, exactly as
+    /// `classify` would have decided for it directly.
+    public static func reconcileRunningStitchOutliers(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
+        var groupsByColor: [RGBColor: [Int]] = [:]
+        for (index, object) in objects.enumerated() {
+            groupsByColor[object.threadColor.rgb, default: []].append(index)
+        }
+
+        var result = objects
+        for indices in groupsByColor.values {
+            guard indices.count > 1 else { continue }
+            var satinCount = 0
+            var tatamiCount = 0
+            for index in indices {
+                switch objects[index].stitchType {
+                case .satin: satinCount += 1
+                case .tatamiFill: tatamiCount += 1
+                case .runningStitch, .tripleRun: break
+                }
+            }
+            guard max(satinCount, tatamiCount) >= minimumSiblingConsensusCount else { continue }
+            let consensusType: StitchType = tatamiCount >= satinCount ? .tatamiFill : .satin
+
+            for index in indices {
+                let object = objects[index]
+                guard object.stitchType == .runningStitch || object.stitchType == .tripleRun else { continue }
+                let box = object.shape.boundingBox
+                guard box.width >= minimumBulkDimensionMM, box.height >= minimumBulkDimensionMM else { continue }
+
+                if consensusType == .satin,
+                   object.shape.subPaths.count > 2 || !SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: object.shape, parameters: object.parameters) {
+                    result[index].stitchType = .tatamiFill
+                } else {
+                    result[index].stitchType = consensusType
+                }
+            }
+        }
+        return result
+    }
+
     /// Samples the shape's local width at several points along its
     /// principal axis by casting a perpendicular ray through the outer
     /// boundary — a coarse, classification-only measurement (not the

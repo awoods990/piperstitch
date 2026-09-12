@@ -218,6 +218,7 @@ struct ContentView: View {
                 Button("Brother/Baby Lock (.pes)") { app.exportPES() }
                 Button("Melco (.exp)") { app.exportEXP() }
                 Button("Janome (.jef)") { app.exportJEF() }
+                Button("Husqvarna Viking/Pfaff (.vp3)") { app.exportVP3() }
             } label: {
                 pillLabel("Download", systemImage: "square.and.arrow.down")
             }
@@ -230,6 +231,7 @@ struct ContentView: View {
                 Button("Brother/Baby Lock (.pes)") { app.shareCurrentFile(format: .pes) }
                 Button("Melco (.exp)") { app.shareCurrentFile(format: .exp) }
                 Button("Janome (.jef)") { app.shareCurrentFile(format: .jef) }
+                Button("Husqvarna Viking/Pfaff (.vp3)") { app.shareCurrentFile(format: .vp3) }
             } label: {
                 pillLabel("Send", systemImage: "square.and.arrow.up")
             }
@@ -1545,7 +1547,7 @@ private struct GlossarySheet: View {
             GlossaryEntry(term: "Create Embroidery File",
                            definition: "The main action: digitizes the current artwork and produces a finished stitch file in one click. In practice you rarely need to press it -- every edit already regenerates the preview moments later on its own -- but it's here as the explicit \"I'm done, finalize this\" step."),
             GlossaryEntry(term: "Download",
-                           definition: "Saves the finished design to disk as a machine embroidery file, in the format your embroidery machine reads. Pick the format that matches your machine's brand: Tajima (.dst), Brother/Baby Lock (.pes), Melco (.exp), or Janome (.jef) -- all four contain the same stitches, just packaged differently."),
+                           definition: "Saves the finished design to disk as a machine embroidery file, in the format your embroidery machine reads. Pick the format that matches your machine's brand: Tajima (.dst), Brother/Baby Lock (.pes), Melco (.exp), Janome (.jef), or Husqvarna Viking/Pfaff (.vp3) -- all five contain the same stitches, just packaged differently."),
             GlossaryEntry(term: "Send",
                            definition: "Shares the finished design as a file via AirDrop, Mail, Messages, or any other app your Mac can share to -- the same format choices as Download, but for getting the file to another device or person instead of saving it locally."),
             GlossaryEntry(term: "Delete Object (trash icon)",

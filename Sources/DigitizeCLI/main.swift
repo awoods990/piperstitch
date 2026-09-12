@@ -176,6 +176,7 @@ do {
         objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))
     }
+    objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
     checkpoint("Built \(objects.count) objects")
 
     if let onlyStr = ProcessInfo.processInfo.environment["ONLY_OBJECT"], let only = Int(onlyStr), only >= 1, only <= objects.count {

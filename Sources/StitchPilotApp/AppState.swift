@@ -950,14 +950,29 @@ final class AppState: ObservableObject {
         }
         do {
             let (plan, colors) = try await generation.value
-            guard !Task.isCancelled else { return }
+            // `Task.isCancelled` alone doesn't catch every way this result
+            // can be stale: `newProject()`, opening a different project,
+            // and a fresh import all replace `document` without cancelling
+            // whatever `liveRegenerateTask`/detached compute happened to
+            // already be in flight for the *previous* document -- found
+            // directly against a real report of starting a new project
+            // with a different file and having the old project's design
+            // reappear in the preview a moment later. `documentEditGeneration`
+            // already bumps on every single `document` assignment
+            // (see its own doc comment) for exactly this kind of check, but
+            // nothing actually compared against it before this -- it was
+            // only ever read for the UI's "preview is stale" badge. Comparing
+            // it here is what actually stops a slow, superseded background
+            // digitize from clobbering whatever a newer one (or a brand new
+            // project) already correctly put on screen.
+            guard !Task.isCancelled, capturedGeneration == documentEditGeneration else { return }
             stitchPlan = plan
             stitchPlanGeneration = capturedGeneration
             lastColorSequence = colors
             readinessReport = QualityAnalyzer.analyze(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM, document: document)
             statusMessage = "\(plan.stitchCount) stitches, \(plan.colorChangeCount) color change(s)."
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, capturedGeneration == documentEditGeneration else { return }
             errorMessage = friendlyMessage(for: error)
         }
     }
@@ -971,6 +986,7 @@ final class AppState: ObservableObject {
     func newProject() {
         commitImmediateUndoSnapshot()
         liveRegenerateTask?.cancel()
+        liveRegenerateTask = nil
         document = nil
         stitchPlan = nil
         stitchPlanGeneration = nil
@@ -1049,6 +1065,13 @@ final class AppState: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         commitImmediateUndoSnapshot()
+        // Stops a live-regenerate left over from editing whatever was open
+        // before this import from doing pointless work for a document that's
+        // about to be replaced -- `autoDigitizeInBackground`'s own generation
+        // check would discard its result regardless, but there's no reason
+        // to let it keep computing toward a result nobody will ever see.
+        liveRegenerateTask?.cancel()
+        liveRegenerateTask = nil
         lastImportedURL = url
 
         do {
@@ -1272,6 +1295,13 @@ final class AppState: ObservableObject {
                                            threadColor: threadColor, parameters: parameters)
             objects.append(object)
         }
+        // Each shape above was classified purely on its own geometry, with
+        // no notion that several of them are letters of the same word --
+        // this pass corrects a same-color outlier (e.g. a branching "T" or
+        // "H" whose own outline confused the width heuristics) that landed
+        // on running/triple-run stitch back to whatever its bulkier
+        // siblings actually sew as. See its own doc comment.
+        objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
         document = StitchDocument(name: lastName, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: objects)
     }
 
@@ -1352,7 +1382,8 @@ final class AppState: ObservableObject {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = document.name + ".dst"
         panel.allowedContentTypes = [UTType(filenameExtension: "dst") ?? .data, UTType(filenameExtension: "pes") ?? .data,
-                                      UTType(filenameExtension: "exp") ?? .data, UTType(filenameExtension: "jef") ?? .data]
+                                      UTType(filenameExtension: "exp") ?? .data, UTType(filenameExtension: "jef") ?? .data,
+                                      UTType(filenameExtension: "vp3") ?? .data]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let data: Data
@@ -1366,6 +1397,9 @@ final class AppState: ObservableObject {
             case "jef":
                 data = try JEFFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
                 _ = try JEFFormat.read(data)
+            case "vp3":
+                data = try VP3Format.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+                _ = try VP3Format.read(data)
             default:
                 data = try DSTFormat.write(plan, designName: document.name)
                 _ = try DSTFormat.read(data)
@@ -1457,10 +1491,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    func exportVP3() {
+        guard let plan = stitchPlan, let document else {
+            errorMessage = "Import artwork first — PiperStitch digitizes it automatically."
+            return
+        }
+        do {
+            let data = try VP3Format.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+            // Self-validate before ever handing the file to the user (spec §59).
+            _ = try VP3Format.read(data)
+            saveExportedFile(data, suggestedName: document.name + hoopFileNameSuffix + ".vp3", extension: "vp3")
+        } catch {
+            errorMessage = friendlyMessage(for: error)
+        }
+    }
+
     // MARK: - Sharing (spec: let the user send the file, not just save it
     // locally -- AirDrop, Mail, Messages, etc. via the system share sheet).
 
-    enum ShareFormat { case dst, pes, exp, jef }
+    enum ShareFormat { case dst, pes, exp, jef, vp3 }
 
     /// `NSSharingServicePicker` isn't retained by AppKit once `show` returns
     /// -- Apple's own guidance (and long-standing Cocoa developer knowledge)
@@ -1507,6 +1556,10 @@ final class AppState: ObservableObject {
                 data = try JEFFormat.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
                 _ = try JEFFormat.read(data)
                 ext = "jef"
+            case .vp3:
+                data = try VP3Format.write(plan, designName: document.name, threadColors: lastColorSequence.map { $0.rgb })
+                _ = try VP3Format.read(data)
+                ext = "vp3"
             }
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(document.name + hoopFileNameSuffix)
@@ -1560,6 +1613,8 @@ final class AppState: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         commitImmediateUndoSnapshot()
+        liveRegenerateTask?.cancel()
+        liveRegenerateTask = nil
         do {
             let loaded = try ProjectFileFormat.read(try Data(contentsOf: url))
             document = loaded
