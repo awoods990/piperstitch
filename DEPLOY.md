@@ -15,8 +15,11 @@ below is a one-time setup; after it, every push to `main` redeploys.
 
 - The repo is on GitHub (`awoods990/piperstitch`) and the CI workflow is
   green — Railway builds the same Dockerfiles CI does.
-- Have ready: a Stripe account (test mode is fine), and either a Postmark
-  server token or the Microsoft 365 SMTP details for `hello@piperstitch.com`.
+- Have ready: a Stripe account (test mode is fine), and a Postmark server
+  token — Postmark sends as `hello@piperstitch.com` (replies redirect to
+  `contact@piperstitch.com`, a real Microsoft 365/GoDaddy mailbox); see
+  license-admin/README.md's "Email deliverability" section for the DNS
+  records Postmark needs before mail actually arrives anywhere.
 - Generate the secrets you'll paste in (run each, keep the output somewhere
   safe — never in git or in chat):
 

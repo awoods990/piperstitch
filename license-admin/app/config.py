@@ -64,8 +64,12 @@ SMTP_USE_SSL = _bool("SMTP_USE_SSL")
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "PiperStitch <hello@piperstitch.com>")
-# Where replies to any email land. Left empty, no Reply-To header is set.
-REPLY_TO_EMAIL = os.environ.get("REPLY_TO_EMAIL", "")
+# Where replies to any email land. Postmark sends as hello@piperstitch.com,
+# which has no real inbox behind it -- contact@piperstitch.com (GoDaddy/
+# Microsoft 365) is the address that actually receives mail, so replies
+# should go there instead. Left empty, no Reply-To header is set and mail
+# clients reply to SMTP_FROM (hello@) instead, which bounces.
+REPLY_TO_EMAIL = os.environ.get("REPLY_TO_EMAIL", "contact@piperstitch.com")
 
 # Optional: route ALL outgoing email through Postmark's HTTP API instead
 # of SMTP — the same service Amerus uses for its sequence mail. Dormant

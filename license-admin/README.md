@@ -78,8 +78,9 @@ cp .env.example .env    # then fill in .env — see below
 | `STRIPE_PUBLISHABLE_KEY` / `STRIPE_SECRET_KEY` | Stripe Dashboard → Developers → API keys. A **new Stripe account** for PiperStitch, or a separate product in the existing one — either way, test keys until you go live. |
 | `STRIPE_PRICE_MONTHLY` | `python3 scripts/create_stripe_prices.py` (needs `STRIPE_SECRET_KEY`). Once in test mode, once more in live mode. |
 | `STRIPE_WEBHOOK_SECRET` | See "Stripe webhook" below. |
-| `SMTP_*` | A Microsoft 365 mailbox for `hello@piperstitch.com` (same as Amerus's setup): `smtp.office365.com`, port 587, `SMTP_USE_SSL=false`, the mailbox's address/app password. |
-| `POSTMARK_*` (optional) | Postmark server token + a From address at a domain verified in Postmark. When set, **all** email goes through Postmark instead of SMTP. |
+| `SMTP_*` (fallback, not what's live) | A Microsoft 365 mailbox, same pattern as Amerus's setup: `smtp.office365.com`, port 587, `SMTP_USE_SSL=false`, the mailbox's address/app password. Only used when `POSTMARK_API_TOKEN` is unset. |
+| `POSTMARK_*` | **This is what actually sends production email.** Postmark server token + `POSTMARK_FROM=PiperStitch <hello@piperstitch.com>`. See "Email deliverability" below — Postmark needs its own DNS records added before mail from hello@ will actually arrive anywhere. |
+| `REPLY_TO_EMAIL` | `contact@piperstitch.com` — hello@ (above) has no real inbox behind it; this is what puts a working reply address on every outgoing email. |
 | `PUBLIC_BASE_URL` | Where this service is reachable — `http://127.0.0.1:8000` locally, `https://admin.piperstitch.com` deployed. |
 | `WEBSITE_BASE_URL` | The marketing site. |
 | `INTAKE_API_KEY` / `DOWNLOAD_LINK_SECRET` | Random hex; the SAME values go in the website's `register.php` / `get.php`. |
@@ -97,6 +98,49 @@ and put the printed `whsec_…` in `.env`.
 `customer.subscription.updated`, `customer.subscription.deleted`,
 `invoice.paid`, `invoice.payment_failed`. Copy the signing secret into
 `.env` and restart.
+
+### Email deliverability
+
+The intended split: **Postmark sends** every transactional email as
+`hello@piperstitch.com` (no real inbox behind that address — it's a
+sending identity only); **replies go to `contact@piperstitch.com`**, a
+real mailbox on GoDaddy/Microsoft 365 (`REPLY_TO_EMAIL`, above). Getting
+this actually working needs DNS changes beyond just setting the app's own
+env vars:
+
+1. **Verify the sending domain in Postmark** — Postmark dashboard →
+   Sending → Domains → add `piperstitch.com`. It gives you a DKIM `TXT`
+   record (`<selector>._domainkey.piperstitch.com`) to add in GoDaddy's
+   DNS. Without this, mail isn't signed at all.
+2. **Add Postmark to the domain's SPF record.** As of this writing,
+   piperstitch.com's SPF is `v=spf1 include:secureserver.net -all` —
+   GoDaddy only, hard fail, no Postmark include. Add Postmark's include
+   (Postmark's domain setup page gives the exact value) to the *existing*
+   record rather than replacing it — a domain can only have one SPF
+   `TXT` record: `v=spf1 include:secureserver.net include:<postmark's value> -all`.
+3. **Check DMARC.** Current policy is `p=quarantine` — mail failing both
+   SPF and DKIM gets quarantined or dropped by any receiving server that
+   honors DMARC (Gmail, Outlook.com, ...), which is exactly what was
+   happening with neither of the above in place. Once DKIM is added and
+   aligned, DMARC passes on DKIM alone even if some SPF edge case still
+   fails, but do both.
+4. **Confirm `contact@piperstitch.com` is a real, provisioned mailbox**
+   in the Microsoft 365 admin center (not just a DNS entry) — an address
+   can resolve via MX and still bounce if nothing's actually provisioned
+   for it. Consider also adding `hello@` as an alias that forwards to
+   `contact@`, so a direct email to hello@ (not just a reply) still
+   reaches someone, in case `REPLY_TO_EMAIL` isn't honored by every
+   mail client.
+5. **After DNS changes propagate** (can take a few hours), send a real
+   test signup/sign-in through the live app and confirm the code
+   arrives and that replying lands in the contact@ inbox. Postmark's
+   own Activity log (dashboard) also shows per-message delivery status
+   and any bounce/spam-complaint reason directly — check there first
+   if something still isn't arriving.
+
+None of this lives in the app's own config — it's DNS (GoDaddy) and the
+Postmark/Microsoft 365 dashboards, so it has to be done by whoever holds
+those accounts.
 
 ### Stripe Billing Portal
 
