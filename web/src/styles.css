@@ -195,3 +195,67 @@ button, input, select { font: inherit; color: inherit; }
 .project:hover:not(:disabled) { border-color: var(--blue200); }
 .project b { color: var(--navy800); }
 .project span { font-size: 12px; color: var(--muted); }
+
+/* --- editor toolbars, status bar, inspector, modals (parity pass) --- */
+.toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--rowline); flex-wrap: wrap; }
+.toolbar.edit { background: #fbfaf7; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; color: var(--ink2); cursor: pointer; white-space: nowrap; }
+.pill:hover:not(:disabled) { border-color: var(--blue200); color: var(--navy800); }
+.pill:disabled { opacity: .45; cursor: default; }
+.pill.on { background: var(--blue500); border-color: var(--blue500); color: #fff; }
+.pill.danger.on { background: var(--critText); border-color: var(--critText); }
+.pill.primary { background: var(--blue500); border-color: var(--blue500); color: #fff; font-weight: 600; }
+.pill.select-pill select { border: none; background: transparent; font: inherit; color: var(--navy800); font-weight: 600; padding: 0; }
+.sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.brush { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.brush input[type=range] { width: 110px; }
+.brush input[type=color] { width: 28px; height: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; }
+.menu-anchor { position: relative; }
+.menu-anchor .menu { left: 0; right: auto; }
+.status-bar { display: flex; gap: 14px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel); font-size: 12px; }
+.status-msg { color: var(--ink2); }
+.readiness-badge { padding: 3px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+.readiness-badge.ready { background: var(--readyBG); color: var(--readyText); border: 1px solid var(--readyBorder); }
+.readiness-badge.review { background: var(--warnBG); color: var(--warnText); border: 1px solid var(--warnBorder); }
+.panel.selected { border-color: var(--blue200); background: #f7faff; }
+.panel h3 .icon-btn { margin-left: auto; }
+.icon-btn.danger:hover { background: var(--critBG); color: var(--critText); }
+.row { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.row select, .row input[type=number], .row input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font-size: 13px; }
+.row-inline { display: flex; gap: 6px; align-items: center; }
+.row-inline input[type=text], .row-inline input:not([type]) { flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn.danger { color: var(--critText); }
+.slider-row { display: flex; flex-direction: column; gap: 2px; }
+.slider-head { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
+.slider-head b { color: var(--navy800); font-weight: 600; }
+.slider-row input[type=range] { width: 100%; }
+.auto-row { display: flex; flex-direction: column; gap: 4px; }
+.warn-text { color: var(--warnText); }
+.color-pick { display: flex; gap: 6px; align-items: center; }
+.color-pick input[type=color] { width: 36px; height: 30px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; }
+.color-pick select { flex: 1; }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(8,26,51,0.35); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+.modal { width: min(520px, 100%); max-height: 90vh; display: flex; flex-direction: column; background: var(--panel); border-radius: 14px; box-shadow: 0 20px 60px rgba(8,26,51,0.25); }
+.modal.wide { width: min(760px, 100%); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--rowline); }
+.modal-head h2 { font-size: 17px; }
+.modal-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--rowline); margin-top: 4px; }
+.search { padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
+.help-section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--label); margin: 10px 0 6px; }
+.help-entry { padding: 8px 0; border-bottom: 1px solid var(--rowline); }
+.help-entry b { color: var(--navy800); }
+.help-entry p { margin: 3px 0 0; color: var(--ink2); font-size: 13px; line-height: 1.5; }
+.lettering-preview { min-height: 90px; display: flex; align-items: center; justify-content: center; background: var(--paper); border-radius: 8px; padding: 10px; }
+.lettering-preview svg { max-width: 100%; max-height: 120px; }
+.merge-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.merge-list li { display: flex; align-items: center; gap: 8px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tabs button { background: none; border: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 13px; }
+.tabs button.on { color: var(--navy800); border-bottom-color: var(--blue500); font-weight: 600; }
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--rowline); font-size: 13px; }
+.kv span { color: var(--muted); }
+.start-account { position: fixed; top: 10px; right: 12px; z-index: 4; display: flex; gap: 4px; align-items: center; }
+.field select { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 14px; }

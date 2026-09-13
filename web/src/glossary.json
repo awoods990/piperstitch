@@ -1,0 +1,238 @@
+[
+ {
+  "title": "Stitch Types",
+  "entries": [
+   {
+    "term": "Running Stitch",
+    "definition": "A single line of stitches tracing an outline, evenly spaced. The lightest-weight stitch type -- good for fine detail or a hairline stroke too thin for satin to hold cleanly, but reads as a thin line, not a filled shape."
+   },
+   {
+    "term": "Triple Run",
+    "definition": "The same outline sewn three times (forward, back, forward) instead of once. Reads as a bolder, more solid line than a single running stitch -- this app uses it automatically for lettering too small for satin to hold a clean column, since it stays legible at any size."
+   },
+   {
+    "term": "Satin (Satin Stitch / Satin Column)",
+    "definition": "Dense zigzag stitching between two \"rails\" running the length of a narrow shape -- a letter stroke, a logo outline segment. Gives a smooth, glossy, filled look, but only works well on a genuinely narrow column (roughly 1.5-12mm); too wide and it can gap, pucker, or snag."
+   },
+   {
+    "term": "Tatami Fill",
+    "definition": "Parallel rows of stitching that solidly cover a wider area -- a background shape, a bold block letter, anywhere satin would be too wide to sew cleanly. Matte rather than glossy, and handles holes/counters (like a letter's own counter) correctly, which satin in this engine can't unless it's a single simple ring."
+   }
+  ]
+ },
+ {
+  "title": "Fill Patterns",
+  "entries": [
+   {
+    "term": "Rows",
+    "definition": "Tatami fill's default texture: straight parallel rows at one angle. Simple and reliable for most shapes."
+   },
+   {
+    "term": "Cross-Hatch",
+    "definition": "Two overlapping row passes at right angles to each other, each at half density -- a lattice texture instead of parallel lines. Useful when plain rows show a faint directional sheen you'd rather avoid."
+   },
+   {
+    "term": "Basket Weave",
+    "definition": "Splits a large fill area into a checkerboard of cells, alternating the fill angle 90° between neighboring cells. The standard technique for breaking up the \"grain\" a big flat area can show under one uniform fill direction -- most useful on genuinely large regions, not small detail."
+   }
+  ]
+ },
+ {
+  "title": "Stitch Parameters",
+  "entries": [
+   {
+    "term": "Density",
+    "definition": "How close together the stitches are (satin's crossing spacing, or fill's row spacing). Denser stitching gives fuller coverage and a richer look, but uses more thread, takes longer to sew, and can stiffen or even perforate the fabric if pushed too far."
+   },
+   {
+    "term": "Push Past Normal Limits",
+    "definition": "A toggle in the Inspector's \"Density (Entire Project)\" section that unlocks the density and row-spacing sliders down past their normal 0.2mm floor, toward this app's hard engine floor (0.1mm for satin, 0.05mm for fill). Off by default on purpose -- that tight a stitch is beyond what most machines and thread handle reliably without skipped stitches, puckering, or breakage. It's meant for a specific job that genuinely calls for it (fine premium lettering, an unusual thread), not a setting to leave on. Once it's on, any slider pushed below the normal floor turns red as a reminder you're in that territory."
+   },
+   {
+    "term": "Stitch Length",
+    "definition": "How far apart individual stitch points are along a running/triple-run line. Shorter gives smoother curves and finer detail; longer sews faster but can look choppy on a tight curve."
+   },
+   {
+    "term": "Underlay",
+    "definition": "A lighter foundation layer of stitching sewn *underneath* the visible stitching, before it. Stabilizes the fabric and keeps the top stitching from sinking into it -- without underlay, satin especially can look thin, uneven, or let the fabric show through. This app picks a sensible underlay automatically unless you override it (None, Center Run, Edge Run, or Zigzag)."
+   },
+   {
+    "term": "Pull Compensation",
+    "definition": "How much a shape is widened before sewing to counteract fabric pulling inward, perpendicular to the stitching, as it's sewn -- without it, a design can sew narrower than digitized. Denser stitching and narrower shapes need more; this app estimates it automatically per object (and per fabric type), or you can set it by hand."
+   },
+   {
+    "term": "Push Compensation",
+    "definition": "Pull compensation's counterpart along the stitching direction instead of across it -- fabric pushes apart lengthwise as it sews, so a shape can end up longer than digitized unless shortened first to compensate."
+   },
+   {
+    "term": "Fill Angle",
+    "definition": "The direction tatami fill's rows run. Affects how light catches the finished stitching and how the fill interacts with neighboring shapes -- this app picks a sensible angle automatically (perpendicular to the shape's own elongation) unless you set one explicitly."
+   },
+   {
+    "term": "Max / Min Satin Width",
+    "definition": "The practical width range satin can sew cleanly within (roughly 1.5-12mm by default). Narrower than the minimum sews as running/triple-run instead; wider than the maximum converts to tatami fill -- both automatic, so a shape is never left un-sewable just because its width falls outside satin's comfort zone."
+   }
+  ]
+ },
+ {
+  "title": "Editing Tools",
+  "entries": [
+   {
+    "term": "Merge Colors",
+    "definition": "Reassigns several objects to the same thread color at once. Most real logos use only a handful of thread colors, not a separate one for every distinct shape a raster import detected -- merging keeps the color count sewable and the thread changes to a minimum."
+   },
+   {
+    "term": "Merge Shapes",
+    "definition": "Joins several selected objects' outlines into one combined shape. Fixes a letter or detail that came in as multiple disconnected fragments (common with a raster/photo import) so it sews as one clean piece instead of several overlapping ones."
+   },
+   {
+    "term": "Paint Tool",
+    "definition": "Draws in missing coverage by hand -- extends the selected object with a brush stroke, or creates a new shape if nothing's selected. Useful for patching a gap the automatic import missed."
+   },
+   {
+    "term": "Erase Tool",
+    "definition": "Removes coverage by hand -- draw over whatever's wrong and it comes out of whichever object(s) the stroke touches, regardless of what's currently selected. The opposite of the Paint Tool: use it to take away stitching that shouldn't be there instead of adding stitching that's missing."
+   },
+   {
+    "term": "Brush Size",
+    "definition": "The slider that appears next to Paint and Erase -- sets how wide a stroke either tool draws. A smaller brush is easier to keep precise around fine detail; a larger one covers a big gap faster."
+   },
+   {
+    "term": "Add Lettering",
+    "definition": "Generates clean letterforms directly from a font's own outline instead of tracing a raster image of text -- sharp at any size, unlike text that came in as part of an imported photo or logo file."
+   },
+   {
+    "term": "Curve Along a Ring",
+    "definition": "A toggle inside Add Lettering that wraps the text along an arc -- a badge's curved title, a cap's front-panel arch -- instead of sewing it in a straight line. Set the curve radius to control how tight the arc is."
+   },
+   {
+    "term": "Thread Library",
+    "definition": "Your own list of thread colors to match designs against, instead of a generic color wheel -- useful if you sew with one manufacturer's numbered thread set and want the app's automatic color matching to only ever suggest colors you actually own."
+   },
+   {
+    "term": "Applique",
+    "definition": "A technique where a separate piece of fabric is placed on the garment and secured with stitching, rather than filling the whole shape with thread -- lighter, faster to sew for large areas, and gives a distinct fabric-texture look. This app can generate the placement outline and tack-down stitching that guide where to lay and secure the fabric by hand."
+   },
+   {
+    "term": "Fabric Type",
+    "definition": "Adjusts the automatic pull/push compensation estimate for how stretchy or stable the target material is -- a stretch knit needs meaningfully more correction than a stable woven fabric like twill or canvas to sew out at the intended size."
+   }
+  ]
+ },
+ {
+  "title": "Machine & Production Terms",
+  "entries": [
+   {
+    "term": "Trim",
+    "definition": "A command that cuts the thread. Inserted automatically between color changes and across a long gap between same-color objects, so the machine doesn't drag a visible strand of thread across exposed fabric."
+   },
+   {
+    "term": "Jump",
+    "definition": "The needle moves to a new position without stitching -- a \"travel\" move. A jump that's too long (and not trimmed) can leave a visible thread strand across the design, which is exactly what a trim before it prevents."
+   },
+   {
+    "term": "Color Change",
+    "definition": "A stop point where the machine pauses for a thread color swap. Fewer color changes means faster, less error-prone production -- part of why merging colors and choosing a sensible object sewing order both matter."
+   },
+   {
+    "term": "Tie-In / Tie-Off",
+    "definition": "A few small anchor stitches sewn at the start and end of each thread color, locking the thread in place so it can't work loose or pull out -- standard practice, applied automatically here."
+   },
+   {
+    "term": "Hoop",
+    "definition": "The frame that holds fabric taut while it's being sewn. A design must fit within the hoop's usable sewing area -- this app checks the current design against your selected hoop and flags it if it doesn't fit. Alongside the standard square/rectangular sizes, the hoop list also includes a Cap/Hat Hoop (the narrow curved frame used for embroidering caps) and a couple of Magnetic (\"Magic\") Hoop sizes, for machines fitted with a magnet-clamped hoop instead of a screw-tightened one."
+   },
+   {
+    "term": "Stitch Count",
+    "definition": "The total number of individual needle penetrations in the design. Roughly proportional to how long the design takes to sew and how much thread it uses -- a useful sanity check before sending a design to production."
+   }
+  ]
+ },
+ {
+  "title": "Toolbar & File Actions",
+  "entries": [
+   {
+    "term": "New",
+    "definition": "Starts a fresh project. If nothing's open yet, it immediately asks you to choose an image or SVG to start from. If a project is already open, it asks you to confirm first -- starting over closes the current design without saving."
+   },
+   {
+    "term": "Start Over",
+    "definition": "Discards every edit made since the artwork was imported -- color merges, per-object overrides, deletions -- and regenerates the design fresh from the original file. Only available once you've actually imported something."
+   },
+   {
+    "term": "Open",
+    "definition": "\"Open Artwork...\" imports a new image or SVG file to digitize. \"Open Project...\" reopens a project you saved earlier from this app, with all your edits intact."
+   },
+   {
+    "term": "Save",
+    "definition": "Saves the current project -- the artwork, every object, and all your edits -- as a project file you can reopen later in this app. This is different from Download/Send below, which write a machine-readable embroidery file instead."
+   },
+   {
+    "term": "Back (Undo)",
+    "definition": "Undoes the last edit. Works for both automatic changes (a re-import, a size change) and manual ones (a merge, a paint stroke, a per-object parameter tweak)."
+   },
+   {
+    "term": "Create Embroidery File",
+    "definition": "The main action: digitizes the current artwork and produces a finished stitch file in one click. In practice you rarely need to press it -- every edit already regenerates the preview moments later on its own -- but it's here as the explicit \"I'm done, finalize this\" step."
+   },
+   {
+    "term": "Download",
+    "definition": "Saves the finished design to disk as a machine embroidery file, in the format your embroidery machine reads. Pick the format that matches your machine's brand: Tajima (.dst), Brother/Baby Lock (.pes), Melco (.exp), Janome (.jef), or Husqvarna Viking/Pfaff (.vp3) -- all five contain the same stitches, just packaged differently."
+   },
+   {
+    "term": "Send",
+    "definition": "Shares the finished design as a file via AirDrop, Mail, Messages, or any other app your Mac can share to -- the same format choices as Download, but for getting the file to another device or person instead of saving it locally."
+   },
+   {
+    "term": "Delete Object (trash icon)",
+    "definition": "Removes the currently selected object from the design entirely. Unlike Erase, which removes just the stitching a brush stroke touches, this removes the whole object -- there's no undo-by-brush here, only Back (Undo)."
+   },
+   {
+    "term": "Standard Size",
+    "definition": "A picker of common finished sizes for typical placements (left chest, cap front, jacket back, and similar) -- pick one to instantly resize the design to that standard instead of typing width and height by hand. Choose \"Custom\" to set your own."
+   },
+   {
+    "term": "Color Reduction Preset",
+    "definition": "Controls how many thread colors an imported *image* is simplified down to (vector art always keeps its own exact colors, untouched). \"Preserve Artwork\" keeps every color the image has; \"Normal Embroidery\" and \"Production Efficient\" simplify progressively more for a faster, cleaner sew-out; \"Minimal Colors\" reduces to as few thread changes as possible."
+   }
+  ]
+ },
+ {
+  "title": "Troubleshooting: Common Fixes",
+  "entries": [
+   {
+    "term": "Problem: A shaded or gradient area imported as several separate shapes",
+    "definition": "Very common with photos and gradients -- the color quantizer treats each slightly different shade along the gradient as its own shape, so what should be one smooth area comes in as a handful of adjacent fragments. Fix: select all of them (rubber-band a box around them, or shift- or command-click each one), then choose Merge Shapes. That single action both joins their outlines into one continuous piece and gives the result one thread color, so the stitch pattern is recalculated for the whole merged shape at once -- no visible seam between what used to be separate pieces. If the same near-duplicate shade shows up scattered across many unrelated objects elsewhere in the design (not just this one adjacent cluster), use Merge Colors instead -- or first -- to reassign all of them to one target thread color in a single pass."
+   },
+   {
+    "term": "Problem: A shape assigned Satin looks blank or wrong",
+    "definition": "Satin needs at least four distinct corners to lay its rails along -- a true triangle geometrically can't hold a satin column no matter its size. This app detects that automatically and fills the shape with tatami stitching instead of leaving it blank, but if a triangular detail in your design still needs to look and feel different, set its Stitch Type to Tatami Fill by hand in the Inspector -- there's no reason to fight satin onto a three-sided shape."
+   },
+   {
+    "term": "Problem: \"Couldn't merge the selected shapes\"",
+    "definition": "Merge Shapes rasterizes the selected pieces to combine them, which has a practical size budget -- this shows up when the pieces are spread far enough apart (or the design is large enough) that the combined bounding box exceeds it. Try merging fewer pieces at a time, or move the pieces closer together first; genuine broken fragments of one letter or logo detail are almost always close enough that this only comes up for pieces that were never really meant to be one shape."
+   },
+   {
+    "term": "Problem: Way more thread color changes than the artwork looks like it needs",
+    "definition": "Raster imports (photos, JPEGs, scans) often quantize into more colors than the design visually reads as, since anti-aliased edges and compression noise each get their own near-duplicate shade. Use Merge Colors to reassign all of those near-duplicates to one thread color in a single pass, or re-import with a stricter Color Reduction Preset (Production Efficient or Minimal Colors) so it never creates that many colors in the first place."
+   },
+   {
+    "term": "Problem: Lettering looks fuzzy or jagged instead of sharp",
+    "definition": "Text that came in as part of a raster image was traced from that image's own pixels, so it can never be sharper than the source photo's resolution -- a real limit, not a setting to fix. Delete it and use Add Lettering instead, which generates the letterforms directly from a font's own outline at any size. If the app already noticed the text on import, a \"Detected Text\" banner offers to swap it in one click instead of deleting and retyping."
+   },
+   {
+    "term": "Problem: The readiness warning says the design doesn't fit the hoop",
+    "definition": "Either pick a larger hoop (Inspector -> Hoop -- the picker includes the standard sizes plus the Cap/Hat and Magnetic hoop options), or shrink the design under Finished Size: \"Recommended for this artwork\" sizes it to the finest detail your artwork actually supports, or a Standard Size preset jumps straight to a common size for that placement."
+   }
+  ]
+ },
+ {
+  "title": "Quality",
+  "entries": [
+   {
+    "term": "Embroidery Readiness Score",
+    "definition": "An automatic 0-100 score (shown at the bottom-right of the window and in the Inspector) checking a design for known problem patterns -- stitches that are too long or too short, a design that doesn't fit the selected hoop, and similar issues. Updates live as you edit, so you can watch it improve as you fix what it flags. A high score means fewer surprises at the embroidery machine, not a guarantee of a perfect sew-out."
+   }
+  ]
+ }
+]

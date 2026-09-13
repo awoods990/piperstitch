@@ -1,4 +1,7 @@
-import type { Catalog, DigitizeResponse, FabricType, ImportResponse, MeResponse, ProjectSummary, StitchDocument, ThreadColor } from "./types";
+import type { Catalog, DigitizeResponse, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, VectorShape } from "./types";
+
+export interface EditResponse { document: StitchDocument; selectedIDs: string[]; status: string }
+export interface PendingMerge { pendingMerge: { targetID: string; targetName: string } }
 
 const BASE = "/api/v1";
 
@@ -92,6 +95,18 @@ export const api = {
 
   digitize: (document: StitchDocument, hoopWidthMM?: number, hoopHeightMM?: number) =>
     postJSON<DigitizeResponse>("/digitize", { document, hoopWidthMM, hoopHeightMM }),
+
+  // --- editing that needs the engine's geometry (server/EditRoutes.swift) ---
+  mergeShapes: (document: StitchDocument, objectIDs: string[]) => postJSON<EditResponse>("/edit/merge-shapes", { document, objectIDs }),
+  erase: (document: StitchDocument, points: Point2D[], radiusMM: number, selectedIDs: string[]) =>
+    postJSON<EditResponse>("/edit/erase", { document, points, radiusMM, selectedIDs }),
+  paint: (body: {
+    document: StitchDocument; points: Point2D[]; radiusMM: number; mode?: "auto" | "extend" | "separate"; targetID?: string;
+    selectedID?: string; paintColor: RGBColor; matchToThreadLibrary: boolean; palette?: ThreadColor[];
+  }) => postJSON<EditResponse | PendingMerge>("/edit/paint", body),
+  classify: (document: StitchDocument, objectIDs: string[]) => postJSON<EditResponse>("/edit/classify", { document, objectIDs }),
+  lettering: (body: { document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D; replaceIDs?: string[] }) =>
+    postJSON<EditResponse>("/edit/lettering", body),
 
   async export(document: StitchDocument, format: string): Promise<Blob> {
     const res = await fetch(`${BASE}/export/${format}`, {

@@ -4,6 +4,50 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: the web editor reaches the Mac app's editing tools, plus Help and Settings
+
+- **Canvas tools** (`web/src/components/StitchCanvas.tsx`): click / shift-
+  or ⌘-click / rubber-band selection with outline highlight and corner
+  handles; drag to move, corner-drag to resize (re-classified on the
+  server like `AppState.scaleSelection`); Pan tool or Space+drag; Paint
+  and Erase strokes with brush size and colour; Delete/Backspace, ⌘Z,
+  Escape.
+- **Object inspector** (`Inspector.tsx`), mirroring `ObjectInspectorSection`:
+  thread colour from the palette, stitch type (marks the manual override),
+  appliqué, stitch length, satin density / max / min width, fill row
+  spacing / pattern / angle, underlay, pull and push compensation with
+  Automatic toggles; multi-selection with Merge shapes and Delete;
+  project-wide size (garment presets, lock aspect), density sliders with
+  "Push past normal limits", hoop, colour reduction, thread matching,
+  production statistics.
+- **Two toolbar rows** like the Mac (`Editor.tsx`): New, Start over, Save,
+  Back (undo, 50 levels), Download menu, Help, Settings; Select, Pan,
+  Merge colours, Thread library, Fabric, Add lettering, Merge shapes,
+  Paint, Erase. Status bar with the readiness badge.
+- **Server edit operations** (`server/.../EditRoutes.swift`): merge-shapes,
+  erase, paint (with the Mac's "extend this object or keep separate?"
+  question), classify, lettering — each a document-in/document-out
+  mirror of the corresponding `AppState` method, on the same
+  `ShapeMerger` / `StitchTypeClassifier` code.
+- **Lettering in the browser** (`web/src/lettering.ts`): a port of
+  `LetteringGenerator` on opentype.js — same cap-height sizing, 28-segment
+  curve flattening, letter spacing and ring-arc remap — with 12 bundled
+  OFL fonts (Roboto, Open Sans, Montserrat, Oswald, Anton, Bebas Neue,
+  Playfair Display, Merriweather, Alfa Slab One, Lobster, Pacifico,
+  Dancing Script) and a live outline preview; the server classifies the
+  run (`classifyLetteringRun`) and builds the objects, optionally
+  replacing selected raster-traced text.
+- **Help**: the Mac glossary, all 49 entries in 8 sections, extracted
+  verbatim into `web/src/glossary.json`, searchable.
+- **Settings**: Account & billing (plan status, Subscribe, Manage billing /
+  cancel via Stripe's portal, sign out), Preferences (default hoop,
+  fabric, colour reduction, thread matching, extended density, show
+  jumps — stored in the browser), and the Thread library editor (custom
+  colours used for matching and the colour pickers). Merge colours and
+  Thread library sheets from the toolbar too.
+- Not yet: text detection (Vision has no browser equivalent wired up),
+  Send/share, drag-and-drop of objects between colour groups.
+
 ## Added: Railway deployment config and guide
 
 - `DEPLOY.md`: the whole first deploy step by step — two services from

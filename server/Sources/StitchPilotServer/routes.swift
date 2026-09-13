@@ -12,6 +12,7 @@ func routes(_ app: Application) throws {
     // Admin is configured.
     authRoutes(api)
     let engine = api.grouped(EntitlementGate())
+    editRoutes(engine)
 
     api.get("catalog") { _ -> CatalogResponse in
         CatalogResponse(
