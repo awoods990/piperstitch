@@ -34,7 +34,7 @@ export function HelpSheet({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Help — digitizing terms" onClose={onClose} wide>
       <input className="search" autoFocus placeholder="Search terms and definitions…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <p className="hint">Every term this app uses, what it means, and why it matters for how a design sews out. Same reference as the Mac app.</p>
+      <p className="hint">Every term this app uses, what it means, and why it matters for how a design sews out.</p>
       {sections.length === 0 && <p className="hint">Nothing matches "{q}".</p>}
       {sections.map((s) => (
         <section key={s.title} className="help-section">

@@ -84,6 +84,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
   });
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
+  const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,6 +92,13 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
     e.preventDefault();
     setBusy(true); setError(null);
     try { await api.requestCode(email); setSent(true); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
+
+  const resend = async () => {
+    setBusy(true); setError(null); setResent(false);
+    try { await api.requestCode(email); setCode(""); setResent(true); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   };
@@ -122,13 +130,14 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
           </>
         ) : (
           <>
-            <div className="auth-sent">We emailed a six-digit code to <b>{email}</b>. It's good for 15 minutes.</div>
+            <div className="auth-sent">{resent ? <>We sent a fresh code to <b>{email}</b>.</> : <>We emailed a six-digit code to <b>{email}</b>.</>} It's good for 15 minutes.</div>
             <label className="field">Sign-in code
               <input inputMode="numeric" pattern="[0-9]*" maxLength={6} required autoFocus autoComplete="one-time-code" placeholder="123456" value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} className="code" />
+                onChange={(e) => { setCode(e.target.value.replace(/\D/g, "")); setResent(false); }} className="code" />
             </label>
             <button className="btn primary wide" disabled={busy || code.length !== 6}>{busy ? "Checking…" : "Sign in"}</button>
-            <button type="button" className="btn ghost wide" disabled={busy} onClick={() => { setSent(false); setCode(""); setError(null); }}>Use a different email</button>
+            <button type="button" className="btn ghost wide" disabled={busy} onClick={resend}>{busy ? "Sending…" : "Resend code"}</button>
+            <button type="button" className="btn ghost wide" disabled={busy} onClick={() => { setSent(false); setCode(""); setResent(false); setError(null); }}>Use a different email</button>
           </>
         )}
         {error && <div className="error-text">{error}</div>}
@@ -136,7 +145,6 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
       </form>
       <div className="start-hints">
         <div><strong>No password:</strong> a fresh code is emailed each time you sign in.</div>
-        <div><strong>Already subscribed on the Mac app?</strong> Use the same email — it's one subscription.</div>
       </div>
     </div>
   );
