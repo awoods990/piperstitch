@@ -36,7 +36,11 @@ def main() -> None:
 
     product = stripe.Product.create(
         name="PiperStitch",
-        description="Automatic embroidery digitizing for Mac. Monthly subscription, cancel any time.",
+        description="Automatic embroidery digitizing. Monthly subscription, cancel any time.",
+        # "Software as a service (SaaS) - personal use". Required when the
+        # account has Stripe's Managed Payments on (the default for new
+        # accounts); harmless otherwise.
+        tax_code="txcd_10103000",
     )
     price = stripe.Price.create(
         product=product.id,
