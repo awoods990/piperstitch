@@ -162,8 +162,10 @@ const catalogCache = new Map<string, CatalogColor[]>();
 
 /** A browsable, searchable view of one supplier's catalog (fetched from
  *  web/public/thread-catalogs/*.json on first use, cached after that),
- *  each color a click away from landing in the user's own library. */
-function ThreadCatalogBrowser({ supplier, onAdd }: { supplier: ThreadSupplier; onAdd: (name: string, rgb: RGBColor) => void }) {
+ *  each color a click away from landing in the user's own library --
+ *  already-added ones show a checkmark and a tinted row instead of the
+ *  add button, so it's obvious at a glance which ones are saved. */
+function ThreadCatalogBrowser({ supplier, library, onAdd }: { supplier: ThreadSupplier; library: ThreadColor[]; onAdd: (name: string, rgb: RGBColor) => void }) {
   const [lineIndex, setLineIndex] = useState(0);
   const [colors, setColors] = useState<CatalogColor[] | null>(null);
   const [query, setQuery] = useState("");
@@ -203,14 +205,19 @@ function ThreadCatalogBrowser({ supplier, onAdd }: { supplier: ThreadSupplier; o
       {!colors && !error && <p className="hint">Loading catalog…</p>}
       {colors && (
         <ul className="catalog-list">
-          {shown.map((c) => (
-            <li key={c.number + c.name}>
-              <span className="swatch" style={{ background: `rgb(${c.r},${c.g},${c.b})` }} />
-              <span className="catalog-name">{c.name}{c.number && <span className="muted"> · {c.number}</span>}</span>
-              <button type="button" className="icon-btn" title="Add to my thread library"
-                onClick={() => onAdd(`${supplier.name}${line.label !== supplier.name ? " " + line.label : ""} ${c.number} ${c.name}`.trim(), { r: c.r, g: c.g, b: c.b })}>+</button>
-            </li>
-          ))}
+          {shown.map((c) => {
+            const colorName = `${supplier.name}${line.label !== supplier.name ? " " + line.label : ""} ${c.number} ${c.name}`.trim();
+            const added = library.some((x) => x.name === colorName);
+            return (
+              <li key={c.number + c.name} className={added ? "added" : undefined}>
+                <span className="swatch" style={{ background: `rgb(${c.r},${c.g},${c.b})` }} />
+                <span className="catalog-name">{c.name}{c.number && <span className="muted"> · {c.number}</span>}</span>
+                {added
+                  ? <span className="added-check" title="Already in your thread library">✓</span>
+                  : <button type="button" className="icon-btn" title="Add to my thread library" onClick={() => onAdd(colorName, { r: c.r, g: c.g, b: c.b })}>+</button>}
+              </li>
+            );
+          })}
           {filtered.length > shown.length && <li className="hint">Showing the first {shown.length} of {filtered.length.toLocaleString()} matches — keep typing to narrow it down.</li>}
           {query && filtered.length === 0 && <li className="hint">No colours match "{query}".</li>}
         </ul>
@@ -262,7 +269,7 @@ export function ThreadLibraryEditor({ library, onChange, suppliers, onSuppliersC
             ))}
           </div>
         )}
-        {browsingSupplier && <ThreadCatalogBrowser supplier={browsingSupplier} onAdd={addColor} />}
+        {browsingSupplier && <ThreadCatalogBrowser supplier={browsingSupplier} library={library} onAdd={addColor} />}
       </div>
       <p className="hint">Your own thread inventory. When it has colours, imports and the colour pickers match against <b>only</b> these instead of the built-in palette. Leave it empty to use the built-in palette. Pull colours from a catalog above, or add your own by eye or against a physical color card.</p>
       <ul className="merge-list">
