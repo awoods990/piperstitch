@@ -7,6 +7,8 @@ import { useMemo, useState } from "react";
 import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType } from "../types";
 import { approx, cm } from "../format";
 
+export type ThreadWeight = "standard" | "fine";
+
 export interface SetupAnswers {
   placement: CatalogSize | "custom" | null;
   widthMM: number;
@@ -16,6 +18,7 @@ export interface SetupAnswers {
   hoopMode: "specific" | "recommend" | "none";
   fabric: FabricType;
   colorPreset: ColorPresetId;
+  threadWeight: ThreadWeight;
 }
 
 interface Props {
@@ -249,6 +252,17 @@ export default function SetupFlow(props: Props) {
                   : props.matchToThreadLibrary
                     ? "On: each detected colour is snapped to the nearest colour in your thread library (or a generic palette, if you haven't set one up). Turn this off to keep the exact colours from your file instead."
                     : "Off: keeps the exact colours detected in your file. Turn this on to snap them to real thread colours you can actually stitch with."}
+              </div>
+              <div className="choices two">
+                <Choice title="Standard (40wt)" subtitle="the usual weight — works for almost everything" selected={a.threadWeight === "standard"}
+                  onClick={() => setA({ ...a, threadWeight: "standard" })} />
+                <Choice title="Fine (60wt)" subtitle="thinner thread — small lettering, delicate detail" selected={a.threadWeight === "fine"}
+                  onClick={() => setA({ ...a, threadWeight: "fine" })} />
+              </div>
+              <div className="hint">
+                {a.threadWeight === "fine"
+                  ? "Fine thread sews best a bit denser than standard 40wt — density starts tighter for this design. You can still adjust it by hand afterward."
+                  : "40wt is what most digitizing assumes by default and what the density settings below are tuned for. Switch to Fine only if you're actually sewing with 60wt thread."}
               </div>
               <div className="summary">
                 {placementName} · {cm(a.widthMM)} × {cm(a.heightMM)} cm · {hoopName} · {fabricName} · {isVector ? "artwork colours" : PRESET_LABELS[a.colorPreset][0]}

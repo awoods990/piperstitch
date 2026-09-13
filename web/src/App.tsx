@@ -164,7 +164,7 @@ export default function App() {
       if (imp.response.source.shapes.length === 0) throw new Error("No usable shapes were found in this file.");
       setImported(imp);
       setAnswers({ placement: null, widthMM: imp.response.recommendedWidthMM, heightMM: imp.response.recommendedHeightMM, lockAspect: true,
-        hoop: defaultHoop, hoopMode: defaultHoop ? "specific" : "none", fabric: prefs.defaultFabric, colorPreset: preset });
+        hoop: defaultHoop, hoopMode: defaultHoop ? "specific" : "none", fabric: prefs.defaultFabric, colorPreset: preset, threadWeight: "standard" });
       setDocument(null); setDigitized(null); setSelectedIDs(new Set()); setUndoStack([]); setProjectId(null); setSavedAt(null);
       setPhase("setup");
     } catch (e) { fail(e); } finally { setBusy(null); }
@@ -184,13 +184,26 @@ export default function App() {
     return { ...imp, response, maxColors };
   };
 
+  // 40wt is the standard weight most digitizing (including this app's own
+  // default density) already assumes; 60wt is meaningfully thinner and
+  // conventionally sewn a bit denser for full coverage -- see SetupFlow's
+  // own note on the choice. Still well within the normal 0.2-1.0mm range,
+  // no "push past normal limits" override needed.
+  const THREAD_WEIGHT_DENSITY_MM: Record<SetupAnswers["threadWeight"], number> = { standard: 0.32, fine: 0.25 };
+
   const onSetupFinish = async (a: SetupAnswers) => {
     if (!imported) return;
     setError(null); setBusy("Creating embroidery…");
     try {
       const imp = await reimportIfNeeded(imported, a.colorPreset, a.hoop);
       setImported(imp); setAnswers(a);
-      const doc = await buildFrom(imp, a);
+      let doc = await buildFrom(imp, a);
+      const densityMM = THREAD_WEIGHT_DENSITY_MM[a.threadWeight];
+      if (a.threadWeight !== "standard") {
+        doc = { ...doc, objects: doc.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: densityMM } }
+          : o.stitchType === "tatamiFill" ? { ...o, parameters: { ...o.parameters, fillSpacingMM: densityMM } } : o) };
+      }
+      setGlobalSatin(densityMM); setGlobalFill(densityMM);
       setDocument(doc); setUndoStack([]); setPhase("editor");
       setStatus(`Imported ${imp.response.source.shapes.length} shape(s) from ${imp.fileName}.`);
       await digitizeNow(doc, a.hoop);
@@ -306,7 +319,7 @@ export default function App() {
     const fabric = (doc.objects[0]?.parameters.fabricType ?? "standard") as FabricType;
     const hoop = catalog.hoops.find((h) => h.name === prefs.defaultHoopName) ?? null;
     setImported(null); setProjectId(project.id); setSavedAt(Date.now()); setUndoStack([]); setSelectedIDs(new Set());
-    setAnswers({ placement: "custom", widthMM: doc.physicalWidthMM, heightMM: doc.physicalHeightMM, lockAspect: false, hoop, hoopMode: hoop ? "specific" : "none", fabric, colorPreset: prefs.defaultColorPreset });
+    setAnswers({ placement: "custom", widthMM: doc.physicalWidthMM, heightMM: doc.physicalHeightMM, lockAspect: false, hoop, hoopMode: hoop ? "specific" : "none", fabric, colorPreset: prefs.defaultColorPreset, threadWeight: "standard" });
     setDocument(doc); setDigitized(null); setPhase("editor"); setStatus(`Opened ${project.name}.`);
     await digitizeNow(doc, hoop);
   });

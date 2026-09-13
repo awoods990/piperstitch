@@ -45,6 +45,10 @@
     "definition": "How close together the stitches are (satin's crossing spacing, or fill's row spacing). Denser stitching gives fuller coverage and a richer look, but uses more thread, takes longer to sew, and can stiffen or even perforate the fabric if pushed too far."
    },
    {
+    "term": "Thread Weight (Standard 40wt / Fine 60wt)",
+    "definition": "A choice on the setup screen for which thread you're actually sewing with. Standard 40wt is the default nearly everyone uses and what this app's own density settings are tuned for. Fine 60wt is a meaningfully thinner thread -- used for small lettering or delicate detail -- and conventionally sewn a bit denser for full coverage, so choosing it starts the design's density a little tighter than standard (still a manual, adjustable setting afterward, not locked in)."
+   },
+   {
     "term": "Push Past Normal Limits",
     "definition": "A toggle in the Inspector's \"Density (Entire Project)\" section that unlocks the density and row-spacing sliders down past their normal 0.2mm floor, toward this app's hard engine floor (0.1mm for satin, 0.05mm for fill). Off by default on purpose -- that tight a stitch is beyond what most machines and thread handle reliably without skipped stitches, puckering, or breakage. It's meant for a specific job that genuinely calls for it (fine premium lettering, an unusual thread), not a setting to leave on. Once it's on, any slider pushed below the normal floor turns red as a reminder you're in that territory."
    },
@@ -107,7 +111,7 @@
    },
    {
     "term": "Thread Library",
-    "definition": "Your own list of thread colors to match designs against, instead of a generic color wheel -- useful if you sew with one manufacturer's numbered thread set and want the app's automatic color matching to only ever suggest colors you actually own. The same screen lets you flag which manufacturer(s) you sew with (Isacord, Madeira, Robison-Anton...) for reference -- a quick note on that brand's fiber options and any well-known handling difference. It doesn't add colors for you: no thread manufacturer publishes official color values for their catalog, so building the actual list is still done by hand, against a physical color card or by eye."
+    "definition": "Your own list of thread colors to match designs against, instead of a generic color wheel -- useful if you sew with one manufacturer's numbered thread set and want the app's automatic color matching to only ever suggest colors you actually own. The same screen lets you flag which manufacturer(s) you sew with (Isacord, Madeira, Robison-Anton...) for reference -- a quick note on that brand's fiber options and any well-known handling difference -- and browse that manufacturer's own catalog by name or number, adding just the specific shades you actually stock instead of typing every one by hand. Colors you don't pull from a catalog are still easy to add yourself, by eye or against a physical color card."
    },
    {
     "term": "Applique",

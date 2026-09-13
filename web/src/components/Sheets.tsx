@@ -4,7 +4,7 @@ import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType
 import { LETTERING_FONTS, generateLetteringShapes, type LetteringSpec } from "../lettering";
 import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
 import { AccountMenu, PromoBox, price, statusLine } from "./Account";
-import { THREAD_SUPPLIERS } from "../threadSuppliers";
+import { THREAD_SUPPLIERS, type ThreadSupplier } from "../threadSuppliers";
 import { api } from "../api";
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
@@ -156,32 +156,115 @@ export function MergeColorsSheet({ objects, palette, onClose, onMerge }: {
 
 // --- Thread Library -------------------------------------------------------------
 
+interface CatalogColor { number: string; name: string; r: number; g: number; b: number }
+
+const catalogCache = new Map<string, CatalogColor[]>();
+
+/** A browsable, searchable view of one supplier's catalog (fetched from
+ *  web/public/thread-catalogs/*.json on first use, cached after that),
+ *  each color a click away from landing in the user's own library. */
+function ThreadCatalogBrowser({ supplier, onAdd }: { supplier: ThreadSupplier; onAdd: (name: string, rgb: RGBColor) => void }) {
+  const [lineIndex, setLineIndex] = useState(0);
+  const [colors, setColors] = useState<CatalogColor[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const line = supplier.catalogs[lineIndex];
+
+  useEffect(() => {
+    setQuery("");
+    const cached = catalogCache.get(line.file);
+    if (cached) { setColors(cached); setError(null); return; }
+    setColors(null); setError(null);
+    fetch(`/thread-catalogs/${line.file}`)
+      .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json() as Promise<CatalogColor[]>; })
+      .then((data) => { catalogCache.set(line.file, data); setColors(data); })
+      .catch(() => setError("Couldn't load this catalog — try again in a moment."));
+  }, [line.file]);
+
+  const filtered = useMemo(() => {
+    if (!colors) return [];
+    const q = query.trim().toLowerCase();
+    return q ? colors.filter((c) => c.name.toLowerCase().includes(q) || c.number.includes(q)) : colors;
+  }, [colors, query]);
+  const shown = filtered.slice(0, 100);
+
+  return (
+    <div className="catalog-browser">
+      {supplier.catalogs.length > 1 && (
+        <div className="chip-row">
+          {supplier.catalogs.map((c, i) => (
+            <button key={c.file} type="button" className={"chip" + (i === lineIndex ? " on" : "")} onClick={() => setLineIndex(i)}>{c.label}</button>
+          ))}
+        </div>
+      )}
+      <input className="catalog-search" placeholder={`Search ${colors ? colors.length.toLocaleString() : "…"} ${supplier.name} colours by name or number…`}
+        value={query} onChange={(e) => setQuery(e.target.value)} />
+      {error && <div className="error-text">{error}</div>}
+      {!colors && !error && <p className="hint">Loading catalog…</p>}
+      {colors && (
+        <ul className="catalog-list">
+          {shown.map((c) => (
+            <li key={c.number + c.name}>
+              <span className="swatch" style={{ background: `rgb(${c.r},${c.g},${c.b})` }} />
+              <span className="catalog-name">{c.name}{c.number && <span className="muted"> · {c.number}</span>}</span>
+              <button type="button" className="icon-btn" title="Add to my thread library"
+                onClick={() => onAdd(`${supplier.name}${line.label !== supplier.name ? " " + line.label : ""} ${c.number} ${c.name}`.trim(), { r: c.r, g: c.g, b: c.b })}>+</button>
+            </li>
+          ))}
+          {filtered.length > shown.length && <li className="hint">Showing the first {shown.length} of {filtered.length.toLocaleString()} matches — keep typing to narrow it down.</li>}
+          {query && filtered.length === 0 && <li className="hint">No colours match "{query}".</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ThreadLibraryEditor({ library, onChange, suppliers, onSuppliersChange }: {
   library: ThreadColor[]; onChange: (lib: ThreadColor[]) => void;
   suppliers: string[]; onSuppliersChange: (ids: string[]) => void;
 }) {
   const [name, setName] = useState("");
   const [hex, setHex] = useState("#c0392b");
-  const add = () => { if (!name.trim()) return; onChange([...library, { id: crypto.randomUUID(), name: name.trim(), rgb: hexRGB(hex) }]); setName(""); };
-  const toggleSupplier = (id: string) => onSuppliersChange(suppliers.includes(id) ? suppliers.filter((s) => s !== id) : [...suppliers, id]);
+  const [browsing, setBrowsing] = useState<string | null>(null);
+  const addColor = (colorName: string, rgb: RGBColor) => {
+    if (library.some((c) => c.name === colorName)) return; // already added
+    onChange([...library, { id: crypto.randomUUID(), name: colorName, rgb }]);
+  };
+  const add = () => { if (!name.trim()) return; addColor(name.trim(), hexRGB(hex)); setName(""); };
+  const toggleSupplier = (id: string) => {
+    const next = suppliers.includes(id) ? suppliers.filter((s) => s !== id) : [...suppliers, id];
+    onSuppliersChange(next);
+    if (!next.includes(browsing ?? "")) setBrowsing(next.includes(id) ? id : null);
+  };
+  const selectedSuppliers = THREAD_SUPPLIERS.filter((s) => suppliers.includes(s.id));
+  const browsingSupplier = selectedSuppliers.find((s) => s.id === browsing) ?? null;
   return (
     <div className="stack">
       <div>
-        <p className="hint">Which thread manufacturer(s) do you sew with? Most jobs use just one or two — this is reference only, it doesn't add colours for you.</p>
+        <p className="hint">Which thread manufacturer(s) do you sew with? Most jobs use just one or two — pick one to browse its catalog and pull in the specific shades you stock.</p>
         <div className="chip-row">
           {THREAD_SUPPLIERS.map((s) => (
             <button key={s.id} type="button" className={"chip" + (suppliers.includes(s.id) ? " on" : "")} onClick={() => toggleSupplier(s.id)}>{s.name}</button>
           ))}
         </div>
-        {suppliers.length > 0 && (
+        {selectedSuppliers.length > 0 && (
           <div className="supplier-notes">
-            {THREAD_SUPPLIERS.filter((s) => suppliers.includes(s.id)).map((s) => (
-              <div key={s.id} className="supplier-note"><b>{s.name}</b> <span className="muted">· {s.lines}</span><p>{s.guidance}</p></div>
+            {selectedSuppliers.map((s) => (
+              <div key={s.id} className="supplier-note">
+                <div className="row-inline">
+                  <b>{s.name}</b> <span className="muted">· {s.lines}</span> <span className="grow" />
+                  <button type="button" className="btn small" onClick={() => setBrowsing(browsing === s.id ? null : s.id)}>
+                    {browsing === s.id ? "Hide catalog" : "Browse catalog"}
+                  </button>
+                </div>
+                <p>{s.guidance}</p>
+              </div>
             ))}
           </div>
         )}
+        {browsingSupplier && <ThreadCatalogBrowser supplier={browsingSupplier} onAdd={addColor} />}
       </div>
-      <p className="hint">Your own thread inventory. When it has colours, imports and the colour pickers match against <b>only</b> these instead of the built-in palette. Leave it empty to use the built-in palette. No manufacturer publishes official RGB values for their catalog, so add colours by eye or against a physical color card — the name field is a good place for the catalog number (e.g. "Madeira Polyneon 1802").</p>
+      <p className="hint">Your own thread inventory. When it has colours, imports and the colour pickers match against <b>only</b> these instead of the built-in palette. Leave it empty to use the built-in palette. Pull colours from a catalog above, or add your own by eye or against a physical color card.</p>
       <ul className="merge-list">
         {library.map((c) => <li key={c.id}><span className="swatch" style={{ background: rgbCSS(c.rgb) }} /> {c.name} <span className="grow" /><button className="icon-btn" title="Remove" onClick={() => onChange(library.filter((x) => x.id !== c.id))}>×</button></li>)}
         {library.length === 0 && <li className="hint">No custom colours yet — using the built-in palette.</li>}
