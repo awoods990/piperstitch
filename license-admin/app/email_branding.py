@@ -20,7 +20,12 @@ import re
 
 from . import config
 
-LOGO_URL = f"{config.WEBSITE_BASE_URL}/assets/piperstitch-logo-420.png"
+# The mark alone (the sandpiper with its trailing thread looped under its
+# own feet, not the older "thread in its beak" pose) -- the "PiperStitch"
+# wordmark below it is real HTML text, not baked into the image, so it
+# still reads even with images blocked (the norm for a first-open email;
+# see the module doc comment).
+MARK_URL = f"{config.WEBSITE_BASE_URL}/assets/piperstitch-mark-512.png"
 
 # Sampled from the logo: the navy of "Piper", the thread-blue of "Stitch",
 # the sandpiper's caramel, and a warm linen ground.
@@ -95,7 +100,10 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
 
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#ffffff;border:1px solid {LINE};border-radius:14px;">
   <tr><td align="center" style="padding:34px 32px 8px 32px;">
-    <img src="{LOGO_URL}" width="200" alt="PiperStitch" style="display:block;width:200px;max-width:64%;height:auto;border:0;">
+    <img src="{MARK_URL}" width="72" alt="" style="display:block;width:72px;max-width:30%;height:auto;border:0;margin:0 auto;">
+    <div style="margin-top:10px;font-family:{FONT};font-size:26px;font-weight:800;letter-spacing:-0.01em;line-height:1;">
+      <span style="color:{NAVY};">Piper</span><span style="color:{BLUE};">Stitch</span>
+    </div>
   </td></tr>
   <tr><td style="padding:22px 32px 8px 32px;">
     {blocks}
@@ -104,7 +112,7 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
   <tr><td style="padding:0 32px 30px 32px;">
     <hr style="border:none;border-top:1px solid {LINE};margin:0 0 18px 0;">
     <p style="margin:0;color:{MUTED};font-size:13px;line-height:20px;font-family:{FONT};">
-      PiperStitch turns any image into a machine-ready embroidery file, on your Mac.<br>
+      PiperStitch turns any image into a machine-ready embroidery file, right in your browser.<br>
       <a href="{config.WEBSITE_BASE_URL}" style="color:{BLUE};text-decoration:none;">{config.WEBSITE_BASE_URL.replace('https://', '')}</a>
     </p>
   </td></tr>
