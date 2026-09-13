@@ -616,6 +616,18 @@ def subscriber_counts() -> dict:
             "FROM subscriptions",
             (config.MONTHLY_PRICE_CENTS, month_start, month_start),
         ).fetchone()
+        now_iso = _now()
+        trials = conn.execute(
+            "SELECT SUM(CASE WHEN current_period_end > ? THEN 1 ELSE 0 END) AS active, "
+            "SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS started_this_month "
+            "FROM subscriptions WHERE source = 'manual' AND status = 'trialing'",
+            (now_iso, month_start),
+        ).fetchone()
+        # Trial -> paid: customers with a web trial row who also have a Stripe subscription.
+        converted = conn.execute(
+            "SELECT COUNT(DISTINCT t.customer_id) FROM subscriptions t JOIN subscriptions p ON p.customer_id = t.customer_id "
+            "WHERE t.source = 'manual' AND t.notes = 'Web free trial' AND p.source = 'stripe'"
+        ).fetchone()[0]
         revenue = conn.execute("SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE status = 'paid' AND paid_at >= ?", (month_start,)).fetchone()[0]
         failed = conn.execute("SELECT COUNT(*) FROM payments WHERE status = 'failed' AND created_at >= ?", (month_start,)).fetchone()[0]
     return {
@@ -627,6 +639,9 @@ def subscriber_counts() -> dict:
         "new_this_month": row["new_this_month"] or 0,
         "churned_this_month": row["churned_this_month"] or 0,
         "revenue_this_month_cents": revenue or 0,
+        "trials_active": trials["active"] or 0,
+        "trials_started_this_month": trials["started_this_month"] or 0,
+        "trials_converted": converted or 0,
         "failed_payments_this_month": failed or 0,
     }
 
@@ -794,6 +809,11 @@ def create_web_session(*, customer_id: int, token_hash: str, user_agent: str) ->
 def get_web_session_by_token_hash(token_hash: str) -> Optional[sqlite3.Row]:
     with connection() as conn:
         return conn.execute("SELECT * FROM web_sessions WHERE token_hash = ? AND revoked_at IS NULL", (token_hash,)).fetchone()
+
+
+def get_web_session(session_row_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM web_sessions WHERE id = ?", (session_row_id,)).fetchone()
 
 
 def touch_web_session(session_row_id: int) -> None:

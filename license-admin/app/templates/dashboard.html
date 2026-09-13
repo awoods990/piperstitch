@@ -29,9 +29,9 @@
       <div class="kpi-sub">Granted directly, no Stripe</div>
     </div>
     <div class="kpi-tile">
-      <div class="kpi-value">{{ download_counts.total }}</div>
-      <div class="kpi-label">Downloads</div>
-      <div class="kpi-sub">{{ download_counts.this_month }} this month &middot; <a href="/admin/registrations">registrations &rarr;</a></div>
+      <div class="kpi-value">{{ counts.trials_active }}</div>
+      <div class="kpi-label">Free trials running</div>
+      <div class="kpi-sub">{{ counts.trials_started_this_month }} started this month &middot; {{ counts.trials_converted }} converted to paid &middot; <a href="/admin/subscribers?status=trialing">see them &rarr;</a></div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-value">{{ pending_checkout_count }}</div>

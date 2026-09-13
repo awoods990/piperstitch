@@ -107,6 +107,23 @@ compiles Vapor from source once; later builds reuse the cached layers).
 arrives (Postmark/SMTP working) → sign in → "Free trial · 14 days left" →
 drop a logo → the five questions → stitches. Download a DST.
 
+## 3b. Service: site (the marketing website)
+
+**+ New → GitHub Repo → `awoods990/piperstitch`** a third time. Rename it
+**site**. **Settings → Source → Root directory** `website`. Railway finds
+`website/Dockerfile` (nginx serving the static pages). **Networking →
+Generate domain**, port **8080**. No variables needed.
+
+Custom domains: **Settings → Networking → + Custom Domain** →
+`www.piperstitch.com`, and again `piperstitch.com`. GoDaddy: a **CNAME**
+`www` → the target Railway shows (plus its TXT verification record). For
+the bare `piperstitch.com`, GoDaddy can't CNAME an apex, so use
+**Domain → Forwarding**: forward `piperstitch.com` to
+`https://www.piperstitch.com` (301, forward path). The site's canonical
+URLs are all `www`, so that's the right direction.
+
+Every push to `main` that touches `website/` redeploys the site.
+
 ## 4. Stripe: the price
 
 Locally, with the test secret key in `license-admin/.env`:

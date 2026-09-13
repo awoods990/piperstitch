@@ -5,10 +5,10 @@
   <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
   <div class="card">
     <h1>You're all set.</h1>
-    <p>Your subscription is active. There's no key to enter &mdash; open PiperStitch on your Mac, choose <strong>Sign In</strong>, and type <strong>{{ customer_email }}</strong>. A six-digit code will arrive by email to confirm it's you.</p>
+    <p>Your subscription is active. There's no key to enter &mdash; open PiperStitch in your browser and sign in with <strong>{{ customer_email }}</strong>. A six-digit code will arrive by email to confirm it's you.</p>
     <p>A welcome email with the same instructions is on its way.</p>
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:18px">
-      <a class="button" href="{{ config.WEBSITE_BASE_URL }}/download.html">Download PiperStitch</a>
+      <a class="button" href="{{ config.WEB_APP_URL }}/">Open PiperStitch</a>
       <a class="button secondary" href="/account">Manage subscription</a>
     </div>
   </div>

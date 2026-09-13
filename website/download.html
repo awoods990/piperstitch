@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Download PiperStitch for Mac — free 14-day trial</title>
-<meta name="description" content="Download PiperStitch for Apple silicon Macs. Every feature free for 14 days, no card required.">
+<title>Start your free trial &mdash; PiperStitch</title>
+<meta name="description" content="Start your free 14-day PiperStitch trial in your browser. No card, nothing to install.">
 <link rel="canonical" href="https://www.piperstitch.com/download.html">
 <meta name="theme-color" content="#0f2a4d">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="PiperStitch">
-<meta property="og:title" content="Download PiperStitch for Mac — free 14-day trial">
-<meta property="og:description" content="Download PiperStitch for Apple silicon Macs. Every feature free for 14 days, no card required.">
+<meta property="og:title" content="Start your free trial — PiperStitch">
+<meta property="og:description" content="Start your free 14-day PiperStitch trial in your browser. No card, nothing to install.">
 <meta property="og:url" content="https://www.piperstitch.com/download.html">
 <meta property="og:image" content="https://www.piperstitch.com/assets/piperstitch-icon-512.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Download PiperStitch for Mac — free 14-day trial">
-<meta name="twitter:description" content="Download PiperStitch for Apple silicon Macs. Every feature free for 14 days, no card required.">
+<meta name="twitter:title" content="Start your free trial — PiperStitch">
+<meta name="twitter:description" content="Start your free 14-day PiperStitch trial in your browser. No card, nothing to install.">
 <meta name="twitter:image" content="https://www.piperstitch.com/assets/piperstitch-icon-512.png">
 
 <link rel="icon" href="favicon.ico" sizes="any">
@@ -37,7 +37,7 @@
     </button>
     <nav class="site-nav" id="siteNav">
       <a href="how-it-works.html">How It Works</a><a href="formats.html">Formats</a><a href="pricing.html">Pricing</a><a href="faq.html">FAQ</a>
-      <a class="btn btn-primary" href="download.html">Download for Mac</a>
+      <a class="btn btn-primary" href="https://app.piperstitch.com/">Start free trial</a>
     </nav>
   </div>
 </header>
@@ -45,104 +45,51 @@
 
 <section class="page-hero sky">
   <div class="wrap">
-    <p class="eyebrow">Download</p>
-    <h1>Get PiperStitch for Mac.</h1>
-    <p class="lede">Free for 14 days &mdash; every feature, no card. Tell us who you are and the download starts.</p>
+    <p class="eyebrow">Free trial</p>
+    <h1>Start stitching in about a minute.</h1>
+    <p class="lede">Every feature, free for 14 days, in your browser. No card, nothing to install. Enter your email and we&rsquo;ll send a six-digit sign-in code.</p>
   </div>
 </section>
-
-<section class="bg-white" id="register">
+<section class="bg-white" id="start">
   <div class="wrap">
     <div class="form-shell">
-      <div class="form-error" id="formError" hidden role="alert">
-        <strong>Please check the form.</strong> <span id="formErrorText"></span>
-      </div>
-      <form action="register.php" method="post" id="registerForm" novalidate>
-        <input type="hidden" name="terms_version" value="2026-09-11">
-        <div class="hp" aria-hidden="true">
-          <label for="company_website">Leave this field empty</label>
-          <input type="text" id="company_website" name="company_website" tabindex="-1" autocomplete="off">
-        </div>
-
+      <form id="startForm" action="https://app.piperstitch.com/" method="get" novalidate>
         <div class="form-row">
           <div class="field">
-            <label for="first_name">First name <span aria-hidden="true">*</span></label>
-            <input type="text" id="first_name" name="first_name" required autocomplete="given-name" placeholder=" ">
-          </div>
-          <div class="field">
-            <label for="last_name">Last name <span aria-hidden="true">*</span></label>
-            <input type="text" id="last_name" name="last_name" required autocomplete="family-name" placeholder=" ">
+            <label for="start_email">Email address <span aria-hidden="true">*</span>
+              <span class="hint">&mdash; this becomes your account; use the one you&rsquo;d subscribe with</span></label>
+            <input type="email" id="start_email" name="email" required autocomplete="email" placeholder=" ">
           </div>
         </div>
-
-        <div class="field">
-          <label for="email">Email address <span aria-hidden="true">*</span>
-            <span class="hint">&mdash; use the one you'd subscribe with later; it connects your trial and subscription</span></label>
-          <input type="email" id="email" name="email" required autocomplete="email" placeholder=" ">
-        </div>
-
-        <div class="form-row">
-          <div class="field">
-            <label for="machine">Your embroidery machine <span class="hint">&mdash; optional</span></label>
-            <input type="text" id="machine" name="machine" placeholder=" ">
-          </div>
-          <div class="field">
-            <label for="organization">Business or shop <span class="hint">&mdash; optional</span></label>
-            <input type="text" id="organization" name="organization" autocomplete="organization" placeholder=" ">
-          </div>
-        </div>
-
-        <div class="consent">
-          <input type="checkbox" id="accept_terms" name="accept_terms" value="yes" required>
-          <label for="accept_terms">
-            I have read and accept the <a href="terms.html" target="_blank" rel="noopener">Terms
-            and Conditions of Use</a> and the <a href="privacy-policy.html" target="_blank"
-            rel="noopener">Privacy Policy</a>. <span aria-hidden="true">*</span>
-          </label>
-        </div>
-        <div class="consent">
-          <input type="checkbox" id="accept_billing" name="accept_billing" value="yes" required>
-          <label for="accept_billing">
-            I understand PiperStitch is free for 14 days, that no payment is collected today, and that
-            continuing afterwards means a <strong>$19/month subscription</strong> I can start and cancel myself. <span aria-hidden="true">*</span>
-          </label>
-        </div>
-        <div class="consent">
-          <input type="checkbox" id="accept_age" name="accept_age" value="yes" required>
-          <label for="accept_age">I am at least 18 years old. <span aria-hidden="true">*</span></label>
-        </div>
-
         <div class="form-actions">
-          <button type="submit" class="btn btn-primary">Download PiperStitch</button>
-          <span class="small muted">Version 0.1.0 &middot; Apple silicon &middot; macOS 13 or later</span>
+          <button type="submit" class="btn btn-primary" id="startSubmitBtn">Email me a sign-in code</button>
+          <span class="small muted">Continues to app.piperstitch.com. By continuing you accept the <a href="terms.html">Terms</a> and <a href="privacy-policy.html">Privacy Policy</a>.</span>
         </div>
-        <p class="form-foot">We use your email to send your download link, a reminder before the trial ends, and your sign-in codes if you subscribe. Nothing else, and never shared. <a href="privacy-policy.html">Privacy Policy</a>.</p>
+        <p class="form-foot">Already have an account? <a href="https://app.piperstitch.com/">Open the app</a> and sign in the same way.</p>
       </form>
     </div>
   </div>
 </section>
-
 <section class="bg-line-top">
   <div class="wrap">
-    <div class="section-head center">
-      <p class="eyebrow">After the download</p>
+    <div class="section-head">
+      <p class="eyebrow">After you sign in</p>
       <h2>Three steps to your first design.</h2>
     </div>
-    <div class="steps" style="margin:0 auto">
-      <div class="step"><div class="step-n">1</div><div><h3>Drag PiperStitch to Applications</h3><p>Open the disk image and drag the icon across. The first time you open it, macOS may ask you to confirm &mdash; right-click and choose Open.</p></div></div>
-      <div class="step"><div class="step-n">2</div><div><h3>Drop in some artwork</h3><p>A logo, a drawing, a piece of text. PiperStitch separates the colours and suggests a finished size.</p></div></div>
-      <div class="step"><div class="step-n">3</div><div><h3>Click Create Embroidery File</h3><p>Check the preview and the readiness report, export for your machine, and sew.</p></div></div>
+    <div class="steps">
+      <div class="step"><div class="step-n">1</div><div><h3>Drop in some artwork</h3><p>A logo, a drawing, a piece of text &mdash; PNG, JPEG or SVG. PiperStitch separates the colours and suggests a finished size.</p></div></div>
+      <div class="step"><div class="step-n">2</div><div><h3>Answer five quick questions</h3><p>Where it&rsquo;s going, how big, which hoop, what fabric, how many colours. Each answer nudges the next, and everything can be changed afterwards.</p></div></div>
+      <div class="step"><div class="step-n">3</div><div><h3>Check the preview, download, sew</h3><p>See the realistic stitch preview and the readiness report, then download the file for your machine.</p></div></div>
     </div>
   </div>
 </section>
-
 </main>
 <footer class="site-footer">
   <div class="wrap">
     <div class="footer-top">
       <div class="footer-brand">
         <img src="assets/piperstitch-logo-420.png" alt="PiperStitch" width="202">
-        <p>Automatic embroidery digitizing for Mac. Turn any image into a machine-ready stitch file &mdash; in one click.</p>
+        <p>Automatic embroidery digitizing in your browser. Turn any image into a machine-ready stitch file &mdash; in one click.</p>
       </div>
       <div>
         <h4>Product</h4>
@@ -150,8 +97,8 @@
           <li><a href="how-it-works.html">How It Works</a></li>
           <li><a href="formats.html">Formats &amp; Machines</a></li>
           <li><a href="technology.html">Under the Hood</a></li>
-          <li><a href="system-requirements.html">System Requirements</a></li>
-          <li><a href="download.html">Download for Mac</a></li>
+          <li><a href="system-requirements.html">What You Need</a></li>
+          <li><a href="https://app.piperstitch.com/">Open the app</a></li>
         </ul>
       </div>
       <div>

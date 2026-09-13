@@ -97,20 +97,18 @@ def send_welcome_email(*, to_email: str, customer_name: str) -> None:
 
 Welcome to PiperStitch — your subscription is active.
 
-There's no license key to enter. Open PiperStitch on your Mac, choose Sign In, and type this email address ({to_email}). We'll send a six-digit code to confirm it's you, and that's it — the app unlocks.
+There's no license key to enter. Open PiperStitch in your browser at {config.WEB_APP_URL} and sign in with this email address ({to_email}). We'll send a six-digit code to confirm it's you, and that's it — everything is unlocked.
 
-You can sign in on up to {config.MAX_DEVICES} Macs at the same time.
+Use it from any computer: your saved projects follow your account.
 
 Your plan is {_price()} a month and renews automatically. Update your card, see invoices, or cancel any time from your account page — cancelling keeps PiperStitch working until the end of the period you've paid for.
-
-If you haven't downloaded PiperStitch yet, the link below takes you to it.
 
 If anything doesn't work, just reply to this email."""
     html = email_branding.render(
         body_text=body,
-        cta_label="Download PiperStitch",
-        cta_url=f"{config.WEBSITE_BASE_URL}/download.html",
-        preheader="Your subscription is active — sign in inside the app with this email.",
+        cta_label="Open PiperStitch",
+        cta_url=config.WEB_APP_URL,
+        preheader="Your subscription is active — sign in with this email.",
     )
     _send_smtp(_compose(to_email=to_email, subject="Welcome to PiperStitch — you're all set", body=body, html_body=html))
 
@@ -120,7 +118,7 @@ def send_activation_code_email(*, to_email: str, code: str, device_name: str) ->
 
 {code}
 
-Enter it in PiperStitch on {device_name or 'your Mac'} to finish signing in. The code expires in {config.ACTIVATION_CODE_TTL_MINUTES} minutes and only works once.
+Enter it in PiperStitch{(' on ' + device_name) if device_name and device_name != 'the web' else ''} to finish signing in. The code expires in {config.ACTIVATION_CODE_TTL_MINUTES} minutes and only works once.
 
 If you didn't just try to sign in to PiperStitch, you can ignore this email — nothing happens without the code."""
     html = email_branding.render(body_text=body, preheader=f"{code} is your PiperStitch sign-in code.", footer_note="Sent because someone entered this address in PiperStitch's sign-in screen.")
@@ -132,7 +130,7 @@ def send_account_link_email(*, to_email: str, url: str) -> None:
 
 {url}
 
-From there you can update your card, download invoices, see which Macs are signed in, or cancel. The link expires in {config.ACCOUNT_LINK_TTL_MINUTES} minutes and only works once.
+From there you can update your card, download invoices, or cancel. The link expires in {config.ACCOUNT_LINK_TTL_MINUTES} minutes and only works once.
 
 If you didn't request this, you can ignore it."""
     html = email_branding.render(body_text=body.replace(url, "").replace("\n\n\n", "\n\n"), cta_label="Manage my subscription", cta_url=url, preheader="Your one-time link to manage your PiperStitch subscription.")
@@ -158,7 +156,7 @@ def send_cancellation_scheduled_email(*, to_email: str, customer_name: str, ends
 
 Your PiperStitch subscription is set to end on {ends_on}. You won't be charged again.
 
-PiperStitch keeps working until then, and any embroidery files you've already exported are yours to keep — they're ordinary files on your Mac.
+PiperStitch keeps working until then, and any embroidery files you've already downloaded are yours to keep — they're ordinary files on your computer.
 
 Changed your mind? You can resume the subscription from your account page any time before {ends_on} and nothing is interrupted.
 
@@ -172,10 +170,10 @@ def send_comp_email(*, to_email: str, customer_name: str, until: str, note: str 
 
 We've given you complimentary access to PiperStitch through {until} — nothing to pay.
 
-Open PiperStitch, choose Sign In, and enter this email address ({to_email}). A six-digit code will arrive by email to confirm it's you.
+Open PiperStitch at {config.WEB_APP_URL} and sign in with this email address ({to_email}). A six-digit code will arrive by email to confirm it's you.
 {(chr(10) + note + chr(10)) if note else ''}
 If anything doesn't work, just reply to this email."""
-    html = email_branding.render(body_text=body, cta_label="Download PiperStitch", cta_url=f"{config.WEBSITE_BASE_URL}/download.html", preheader=f"Complimentary PiperStitch access through {until}.")
+    html = email_branding.render(body_text=body, cta_label="Open PiperStitch", cta_url=config.WEB_APP_URL, preheader=f"Complimentary PiperStitch access through {until}.")
     _send_smtp(_compose(to_email=to_email, subject="Your complimentary PiperStitch access", body=body, html_body=html))
 
 

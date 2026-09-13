@@ -34,7 +34,13 @@ const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(undef
 // --- sign in ----------------------------------------------------------------
 
 export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => void }) {
-  const [email, setEmail] = useState("");
+  // The marketing site's "Start your free trial" form hands the address over
+  // as ?email= so the visitor doesn't type it twice.
+  const [email, setEmail] = useState(() => {
+    const e = new URLSearchParams(window.location.search).get("email")?.trim() ?? "";
+    if (e) window.history.replaceState(null, "", window.location.pathname);
+    return e;
+  });
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -72,6 +78,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
               <input type="email" required autoFocus autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
             </label>
             <button className="btn primary wide" disabled={busy || !email.includes("@")}>{busy ? "Sending…" : "Email me a sign-in code"}</button>
+            <div className="auth-foot">By continuing you accept the <a href="https://www.piperstitch.com/terms.html" target="_blank" rel="noopener">Terms</a> and <a href="https://www.piperstitch.com/privacy-policy.html" target="_blank" rel="noopener">Privacy Policy</a>.</div>
           </>
         ) : (
           <>

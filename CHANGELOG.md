@@ -4,6 +4,29 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: the marketing site, emails and admin now describe the web edition
+
+- **`website/`** rewritten for the browser launch: every "Download for
+  Mac" is "Start free trial" → `app.piperstitch.com`; `download.html` is
+  now a one-field "Start your free trial" page that hands the email to
+  the app (`/?email=`, which prefills the sign-in screen); "System
+  requirements" became "What you need" (a browser); pricing, FAQ, how-it-
+  works and the homepage say browser, not Mac, and list VP3. **Privacy
+  policy and terms updated for what's actually true now** — artwork is
+  processed on the server and not retained, saved projects are stored in
+  the account, licence is to use the App in a browser, trial starts at
+  first sign-in (still drafts for counsel). The PHP download gate is
+  removed; the site is served by nginx (`website/Dockerfile`) as a third
+  Railway service with `/health`, canonical-www redirect and caching.
+- **License Admin**: welcome, sign-in code, cancellation and comp emails
+  and the checkout success page point at the web app instead of a
+  download; the customer account page lists signed-in browsers (with
+  sign-out) alongside Macs; the admin dashboard's Downloads tile becomes
+  **Free trials running / started this month / converted to paid**,
+  Subscribers gains a "Free trials" filter, and each customer's page shows
+  their web sessions (sign-out) and saved projects.
+- The app's sign-in screen states the Terms and Privacy Policy.
+
 ## Added: the web editor reaches the Mac app's editing tools, plus Help and Settings
 
 - **Canvas tools** (`web/src/components/StitchCanvas.tsx`): click / shift-

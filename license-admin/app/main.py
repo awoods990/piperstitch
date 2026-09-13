@@ -78,11 +78,20 @@ def _price_label() -> str:
 templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES)
 
 
+def _browser_name(user_agent: str) -> str:
+    """'Chrome on Mac' from a user-agent string -- for the account page."""
+    ua = user_agent or ""
+    browser = "Edge" if "Edg/" in ua else "Chrome" if "Chrome/" in ua else "Safari" if "Safari/" in ua else "Firefox" if "Firefox/" in ua else "A browser"
+    os_name = "Mac" if "Macintosh" in ua else "Windows" if "Windows" in ua else "Chromebook" if "CrOS" in ua else "iPad" if "iPad" in ua else "iPhone" if "iPhone" in ua else "Android" if "Android" in ua else "Linux" if "Linux" in ua else ""
+    return f"{browser} on {os_name}" if os_name else browser
+
+
 def _short_date(iso: Optional[str]) -> str:
     return iso[:10] if iso else "—"
 
 
 templates.env.filters["short_date"] = _short_date
+templates.env.filters["browser_name"] = _browser_name
 
 
 def _short_dt(iso: Optional[str]) -> str:
@@ -340,11 +349,24 @@ def account_manage(request: Request, message: str = "", error: str = ""):
         "validity": validity,
         "subscription": sub,
         "devices": db.list_active_devices(customer["id"]),
+        "web_sessions": db.list_active_web_sessions(customer["id"]),
         "payments": db.list_payments_for_customer(customer["id"]),
         "can_manage_billing": bool(customer["stripe_customer_id"]),
         "message": message or None,
         "error": error or None,
     })
+
+
+@app.post("/account/web-sessions/{session_row_id}/revoke")
+def account_revoke_web_session(request: Request, session_row_id: int):
+    """Signs a browser out of the web app from the account page."""
+    customer = _account_customer(request)
+    row = db.get_web_session(session_row_id)
+    if row is None or row["customer_id"] != customer["id"]:
+        return RedirectResponse("/account/manage", status_code=303)
+    db.revoke_web_session(session_row_id)
+    db.add_event(customer_id=customer["id"], subscription_id=None, kind="web_signed_out", detail="Signed a browser out from the account page.")
+    return RedirectResponse("/account/manage?message=" + quote_plus("That browser has been signed out."), status_code=303)
 
 
 @app.post("/account/billing-portal")
@@ -703,6 +725,8 @@ def customer_detail(request: Request, customer_id: int, message: str = "", error
         "validity": validity,
         "subscriptions": db.list_subscriptions_for_customer(customer_id),
         "devices": db.list_active_devices(customer_id),
+        "web_sessions": db.list_active_web_sessions(customer_id),
+        "projects": db.list_projects(customer_id),
         "payments": db.list_payments_for_customer(customer_id),
         "events": db.list_events_for_customer(customer_id),
         "trial_ends": trial_ends,
@@ -782,6 +806,16 @@ def subscription_sync(subscription_id: int):
     except (stripe.error.StripeError, ValueError) as e:
         return _customer_redirect(sub["customer_id"], error=f"Sync failed: {e}")
     return _customer_redirect(sub["customer_id"], message="Synced from Stripe.")
+
+
+@app.post("/admin/web-sessions/{session_row_id}/revoke", dependencies=[Depends(auth.require_admin)])
+def admin_revoke_web_session(session_row_id: int):
+    row = db.get_web_session(session_row_id)
+    if row is None:
+        return RedirectResponse("/admin/subscribers", status_code=303)
+    db.revoke_web_session(session_row_id)
+    db.add_event(customer_id=row["customer_id"], subscription_id=None, kind="web_signed_out", detail="A browser was signed out by the admin.")
+    return _customer_redirect(row["customer_id"], message="That browser has been signed out.")
 
 
 @app.post("/admin/devices/{device_row_id}/revoke", dependencies=[Depends(auth.require_admin)])

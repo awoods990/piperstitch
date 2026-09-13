@@ -8,7 +8,7 @@
     <div class="toolbar">
       <h2 style="margin:0">Everyone ({{ customers|length }})</h2>
     </div>
-    <p class="muted" style="margin-top:0">Everyone who registered on the website's download page, started a checkout, or subscribed. The in-app {{ config.TRIAL_DAYS }}-day trial clock runs on their own Mac, so "trial ends" here is an estimate from the download date, not a fact.</p>
+    <p class="muted" style="margin-top:0">Everyone who has signed in to the web app (which starts their trial), started a checkout, or subscribed. The in-app {{ config.TRIAL_DAYS }}-day trial clock runs on their own Mac, so "trial ends" here is an estimate from the download date, not a fact.</p>
     <form class="searchbar" method="get" action="/admin/registrations">
       <input type="text" name="q" placeholder="Search name or email…" value="{{ query }}">
       <button type="submit" class="secondary">Search</button>

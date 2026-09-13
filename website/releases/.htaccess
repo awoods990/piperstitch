@@ -1,8 +1,0 @@
-# Public on purpose: this is where already-installed copies of PiperStitch are
-# sent to fetch an update, so it must NOT sit behind the registration gate
-# that protects /downloads. Someone who already subscribes to PiperStitch should never
-# have to fill in the form again to install a newer build.
-#
-# Directory listing off, so the folder can't be browsed for every release
-# ever shipped — the update feed names the one file that matters.
-Options -Indexes

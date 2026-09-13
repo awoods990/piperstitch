@@ -199,6 +199,7 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
           <div className="kv"><span>Price</span><b>{price(account)}</b></div>
           <div className="btn-row">
             {account.status === "trialing" && <button className="btn primary" onClick={() => go(api.checkoutURL)}>Subscribe · {price(account)}</button>}
+            <a className="btn ghost" href="https://www.piperstitch.com/" target="_blank" rel="noopener">piperstitch.com</a>
             {account.has_billing && <button className="btn" onClick={() => go(api.billingPortalURL)}>Manage billing, card & invoices</button>}
             {account.has_billing && account.status === "active" && !account.cancel_at_period_end && <button className="btn ghost" onClick={() => go(api.billingPortalURL)}>Cancel subscription</button>}
             <button className="btn ghost" onClick={onRefreshAccount}>Refresh status</button>

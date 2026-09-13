@@ -38,6 +38,24 @@
   </div>
 
   <div class="card">
+    <h2>Signed-in browsers ({{ web_sessions|length }})</h2>
+    <p class="muted small" style="margin-top:-4px">Where you're signed in to PiperStitch on the web. Sign one out if it's a computer you no longer use.</p>
+    <table>
+      <tr><th>Browser</th><th>Last used</th><th></th></tr>
+      {% for w in web_sessions %}
+      <tr>
+        <td>{{ w.user_agent|browser_name }}</td>
+        <td class="muted">{{ w.last_seen_at|short_date }}</td>
+        <td><form method="post" action="/account/web-sessions/{{ w.id }}/revoke"><button class="small secondary" type="submit">Sign out</button></form></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">No browser is signed in right now.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  {% if devices %}
+  <div class="card">
     <h2>Signed-in Macs ({{ devices|length }} of {{ max_devices }})</h2>
     <p class="muted small" style="margin-top:-4px">Sign a Mac out here if you've replaced it or reached the limit. It will ask you to sign in again the next time it opens.</p>
     <table>
@@ -49,10 +67,10 @@
         <td><form method="post" action="/account/devices/{{ d.id }}/revoke"><button class="small secondary" type="submit">Sign out</button></form></td>
       </tr>
       {% else %}
-      <tr><td colspan="3" class="muted">No Mac is signed in yet. Open PiperStitch and choose Sign In.</td></tr>
       {% endfor %}
     </table>
   </div>
+  {% endif %}
 
   {% if payments %}
   <div class="card">
