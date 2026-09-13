@@ -165,12 +165,16 @@ const catalogCache = new Map<string, CatalogColor[]>();
  *  each color a click away from landing in the user's own library --
  *  already-added ones show a checkmark and a tinted row instead of the
  *  add button, so it's obvious at a glance which ones are saved. */
-function ThreadCatalogBrowser({ supplier, library, onAdd }: { supplier: ThreadSupplier; library: ThreadColor[]; onAdd: (name: string, rgb: RGBColor) => void }) {
+function ThreadCatalogBrowser({ supplier, library, onAdd, onAddMany }: {
+  supplier: ThreadSupplier; library: ThreadColor[];
+  onAdd: (name: string, rgb: RGBColor) => void; onAddMany: (items: { name: string; rgb: RGBColor }[]) => void;
+}) {
   const [lineIndex, setLineIndex] = useState(0);
   const [colors, setColors] = useState<CatalogColor[] | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const line = supplier.catalogs[lineIndex];
+  const nameFor = (c: CatalogColor) => `${supplier.name}${line.label !== supplier.name ? " " + line.label : ""} ${c.number} ${c.name}`.trim();
 
   useEffect(() => {
     setQuery("");
@@ -189,6 +193,8 @@ function ThreadCatalogBrowser({ supplier, library, onAdd }: { supplier: ThreadSu
     return q ? colors.filter((c) => c.name.toLowerCase().includes(q) || c.number.includes(q)) : colors;
   }, [colors, query]);
   const shown = filtered.slice(0, 100);
+  const libraryNames = useMemo(() => new Set(library.map((c) => c.name)), [library]);
+  const notYetAdded = useMemo(() => filtered.filter((c) => !libraryNames.has(nameFor(c))), [filtered, libraryNames, line]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="catalog-browser">
@@ -199,15 +205,23 @@ function ThreadCatalogBrowser({ supplier, library, onAdd }: { supplier: ThreadSu
           ))}
         </div>
       )}
-      <input className="catalog-search" placeholder={`Search ${colors ? colors.length.toLocaleString() : "…"} ${supplier.name} colours by name or number…`}
-        value={query} onChange={(e) => setQuery(e.target.value)} />
+      <div className="row-inline">
+        <input className="catalog-search" placeholder={`Search ${colors ? colors.length.toLocaleString() : "…"} ${supplier.name} colours by name or number…`}
+          value={query} onChange={(e) => setQuery(e.target.value)} />
+        {colors && (
+          <button type="button" className="btn small" disabled={notYetAdded.length === 0}
+            onClick={() => onAddMany(notYetAdded.map((c) => ({ name: nameFor(c), rgb: { r: c.r, g: c.g, b: c.b } })))}>
+            {notYetAdded.length === 0 ? "All added" : `Add all${query ? " matching" : ""} (${notYetAdded.length.toLocaleString()})`}
+          </button>
+        )}
+      </div>
       {error && <div className="error-text">{error}</div>}
       {!colors && !error && <p className="hint">Loading catalog…</p>}
       {colors && (
         <ul className="catalog-list">
           {shown.map((c) => {
-            const colorName = `${supplier.name}${line.label !== supplier.name ? " " + line.label : ""} ${c.number} ${c.name}`.trim();
-            const added = library.some((x) => x.name === colorName);
+            const colorName = nameFor(c);
+            const added = libraryNames.has(colorName);
             return (
               <li key={c.number + c.name} className={added ? "added" : undefined}>
                 <span className="swatch" style={{ background: `rgb(${c.r},${c.g},${c.b})` }} />
@@ -233,10 +247,13 @@ export function ThreadLibraryEditor({ library, onChange, suppliers, onSuppliersC
   const [name, setName] = useState("");
   const [hex, setHex] = useState("#c0392b");
   const [browsing, setBrowsing] = useState<string | null>(null);
-  const addColor = (colorName: string, rgb: RGBColor) => {
-    if (library.some((c) => c.name === colorName)) return; // already added
-    onChange([...library, { id: crypto.randomUUID(), name: colorName, rgb }]);
+  const addColors = (items: { name: string; rgb: RGBColor }[]) => {
+    const existing = new Set(library.map((c) => c.name));
+    const additions = items.filter((it) => !existing.has(it.name)).map((it) => ({ id: crypto.randomUUID(), name: it.name, rgb: it.rgb }));
+    if (additions.length === 0) return;
+    onChange([...library, ...additions]);
   };
+  const addColor = (colorName: string, rgb: RGBColor) => addColors([{ name: colorName, rgb }]);
   const add = () => { if (!name.trim()) return; addColor(name.trim(), hexRGB(hex)); setName(""); };
   const toggleSupplier = (id: string) => {
     const next = suppliers.includes(id) ? suppliers.filter((s) => s !== id) : [...suppliers, id];
@@ -269,7 +286,7 @@ export function ThreadLibraryEditor({ library, onChange, suppliers, onSuppliersC
             ))}
           </div>
         )}
-        {browsingSupplier && <ThreadCatalogBrowser supplier={browsingSupplier} library={library} onAdd={addColor} />}
+        {browsingSupplier && <ThreadCatalogBrowser supplier={browsingSupplier} library={library} onAdd={addColor} onAddMany={addColors} />}
       </div>
       <p className="hint">Your own thread inventory. When it has colours, imports and the colour pickers match against <b>only</b> these instead of the built-in palette. Leave it empty to use the built-in palette. Pull colours from a catalog above, or add your own by eye or against a physical color card.</p>
       <ul className="merge-list">
