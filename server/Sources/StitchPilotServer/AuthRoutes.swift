@@ -83,9 +83,20 @@ func authRoutes(_ api: RoutesBuilder) {
 
     auth.post("checkout") { req -> [String: String] in
         let session = try await requireSession(req)
-        struct TokenIn: Content { var token: String }
+        struct Body: Content { var promoCode: String? }
+        let body = (try? req.content.decode(Body.self)) ?? Body(promoCode: nil)
+        struct In: Content { var token: String; var promo_code: String }
         struct Out: Decodable { var url: String }
-        return ["url": try await req.licenseAdmin.post("/api/web/checkout", TokenIn(token: session.token), as: Out.self).url]
+        return ["url": try await req.licenseAdmin.post("/api/web/checkout", In(token: session.token, promo_code: body.promoCode ?? ""), as: Out.self).url]
+    }
+
+    /// Is this promo code usable by the signed-in account, and what does it give?
+    auth.post("promo") { req -> PromoValidation in
+        let session = try await requireSession(req)
+        struct Body: Content { var code: String }
+        let body = try req.content.decode(Body.self)
+        struct In: Content { var token: String; var code: String }
+        return try await req.licenseAdmin.post("/api/web/promo/validate", In(token: session.token, code: body.code), as: PromoValidation.self)
     }
 
     auth.post("billing-portal") { req -> [String: String] in
@@ -134,6 +145,16 @@ func authRoutes(_ api: RoutesBuilder) {
         struct Out: Decodable { var deleted: Bool }
         return ["deleted": try await req.licenseAdmin.post("/api/web/projects/delete", TokenIn(token: session.token), query: ["id": id], as: Out.self).deleted]
     }
+}
+
+struct PromoValidation: Content {
+    var valid: Bool
+    var code: String?
+    var percent_off: Double?
+    var duration_months: Int?
+    var description: String?
+    var error: String?
+    var message: String?
 }
 
 private struct VerifyOut: Decodable {

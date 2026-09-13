@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from . import config, db, email_sender, stripe_client, subscriptions
+from . import config, db, email_sender, promotions, stripe_client, subscriptions
 from .activation import MAX_CODES_PER_HOUR, MAX_VERIFY_ATTEMPTS, ActivationError
 
 # activation_codes rows are keyed by (email, device_id); every browser
@@ -186,20 +186,23 @@ def sign_out(*, token: str) -> bool:
 # ------------------------------------------------------------- billing ---
 
 
-def checkout_url(*, token: str) -> str:
+def checkout_url(*, token: str, promo_code: str = "") -> str:
     """Starts Stripe Checkout for this account from inside the app. The
     trial-to-paid path is the normal one, so a trialing account is
-    allowed through; an account already paying is sent to the portal."""
+    allowed through; an account already paying is sent to the portal. A
+    promo code, if given, is validated here and applied to the session."""
     session = _session(token)
     customer = db.get_customer(session["customer_id"])
     validity = subscriptions.validity_for(customer["id"])
     if validity.entitled and validity.status in ("active", "past_due"):
         raise ActivationError("already_subscribed", "This account already has an active subscription — use Manage billing instead.")
+    promotion = promotions.validate(promo_code, email=customer["email"]) if promo_code.strip() else None
     checkout = stripe_client.create_subscription_checkout(
         customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"],
-        success_url=f"{config.WEB_APP_URL}/?subscribed=1", cancel_url=f"{config.WEB_APP_URL}/?subscribed=0",
+        success_url=f"{config.WEB_APP_URL}/?subscribed=1", cancel_url=f"{config.WEB_APP_URL}/?subscribed=0", promotion=promotion,
     )
-    db.create_checkout_session(stripe_session_id=checkout.id, customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"])
+    db.create_checkout_session(stripe_session_id=checkout.id, customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"],
+                               promotion_id=promotion["id"] if promotion else None)
     return checkout.url
 
 

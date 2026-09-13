@@ -135,6 +135,11 @@ WEBSITE_SFTP_UPDATES_PATH = os.environ.get("WEBSITE_SFTP_UPDATES_PATH", "public_
 # README.md's go-live checklist says to change both together.
 MONTHLY_PRICE_CENTS = _int("MONTHLY_PRICE_CENTS", 19_00)
 CURRENCY = os.environ.get("CURRENCY", "usd")
+# Stripe's standard card fee, used to estimate a promoter's net revenue
+# share when the actual fee isn't on the invoice webhook (see
+# promotions.record_share_for_payment; the actual fee is preferred).
+STRIPE_FEE_PCT = float(os.environ.get("STRIPE_FEE_PCT", "2.9"))
+STRIPE_FEE_FIXED_CENTS = _int("STRIPE_FEE_FIXED_CENTS", 30)
 # Free trial length inside the app — informational here (the trial clock
 # runs on the customer's Mac, see LICENSING.md), used only for email copy
 # and the admin's "trial ends around" estimate.

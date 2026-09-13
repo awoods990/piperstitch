@@ -1,0 +1,31 @@
+{% extends "admin_base.html" %}
+{% block title %}{{ promo.code }} — Promotions — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="/admin/promotions">&larr; All promotions</a>{% if promoter %} &middot; <a href="/admin/promoters/{{ promoter.id }}">{{ promoter.name }}</a>{% endif %}</p>
+  <div class="card">
+    <div class="toolbar">
+      <div><h1 style="margin:0" class="mono">{{ promo.code }}{% if not promo.active %} <span class="pill ended">inactive</span>{% endif %}</h1><div class="muted">{{ describe(promo) }}{% if promo.kind == 'promoter' %} &middot; promoter code, {{ promo.share_pct|round(1) }}% of net to {{ promoter.name if promoter else '?' }}{% else %} &middot; direct discount{% endif %}</div></div>
+      <div class="actions"><form method="post" action="/admin/promotions/{{ promo.id }}/toggle"><button class="small secondary" type="submit">{{ 'Deactivate' if promo.active else 'Reactivate' }}</button></form></div>
+    </div>
+    <div class="muted small">
+      Created {{ promo.created_at|short_dt }}{% if promo.expires_at %} &middot; expires {{ promo.expires_at|short_date }}{% endif %}{% if promo.max_redemptions %} &middot; max {{ promo.max_redemptions }} uses{% endif %}
+      {% if promo.allowed_emails %}&middot; only for: {{ promo.allowed_emails.replace(',', ', ') }}{% endif %}
+      {% if promo.notes %}&middot; {{ promo.notes }}{% endif %}
+      &middot; Stripe <span class="mono">{{ promo.stripe_promotion_code_id }}</span>
+    </div>
+    <p class="muted small">Share this with customers as the code <strong class="mono">{{ promo.code }}</strong>, or as a link: <span class="mono">{{ config.WEB_APP_URL }}/?promo={{ promo.code }}</span></p>
+  </div>
+  <div class="card">
+    <h2>Redemptions ({{ redemptions|length }})</h2>
+    <table>
+      <tr><th>Customer</th><th>Redeemed</th><th>Subscription</th><th>Discount cycles left</th></tr>
+      {% for r in redemptions %}
+      <tr><td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a><br><span class="muted small">{{ r.customer_email }}</span></td><td class="muted">{{ r.redeemed_at|short_date }}</td><td>{% if r.subscription_status %}<span class="pill {{ r.subscription_status }}">{{ r.subscription_status.replace('_',' ') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td><td>{{ 'ongoing' if r.cycles_remaining is none else r.cycles_remaining }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted">Not used yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

@@ -130,6 +130,13 @@
           </div>
         </div>
 
+        <div class="form-row">
+          <div class="field">
+            <label for="buy_promo">Promo code <span class="hint">&mdash; optional</span></label>
+            <input type="text" id="buy_promo" name="promo_code" autocomplete="off" placeholder=" " style="text-transform:uppercase">
+            <div class="small muted" id="buyPromoStatus" aria-live="polite"></div>
+          </div>
+        </div>
         <div class="consent">
           <input type="checkbox" id="buy_accept_terms" required>
           <label for="buy_accept_terms">
@@ -211,6 +218,24 @@
   // wherever license-admin is deployed (README → go-live checklist).
   var LICENSE_ADMIN_BASE = "https://admin.piperstitch.com";
 
+  // Live check of a promo code as it's typed (a promoter's link can also
+  // prefill it: pricing.html?promo=CODE).
+  var promoInput = document.getElementById("buy_promo");
+  var promoStatus = document.getElementById("buyPromoStatus");
+  var fromLink = new URLSearchParams(window.location.search).get("promo");
+  if (fromLink) { promoInput.value = fromLink.toUpperCase(); }
+  function checkPromo() {
+    var code = promoInput.value.trim().toUpperCase();
+    promoInput.value = code;
+    if (!code) { promoStatus.textContent = ""; return; }
+    fetch(LICENSE_ADMIN_BASE + "/api/promo/validate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code, email: document.getElementById("buy_email").value.trim() }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { promoStatus.textContent = d.valid ? "\u2713 " + d.code + ": " + d.description : d.message; promoStatus.style.color = d.valid ? "#2f6b41" : "#a3312a"; })
+      .catch(function () { promoStatus.textContent = ""; });
+  }
+  promoInput.addEventListener("blur", checkPromo);
+  if (fromLink) { checkPromo(); }
+
   var form = document.getElementById("buyForm");
   var errorBox = document.getElementById("buyFormError");
   var errorText = document.getElementById("buyFormErrorText");
@@ -233,7 +258,8 @@
     }
     var payload = {
       customer_name: document.getElementById("buy_name").value.trim(),
-      customer_email: document.getElementById("buy_email").value.trim()
+      customer_email: document.getElementById("buy_email").value.trim(),
+      promo_code: document.getElementById("buy_promo").value.trim().toUpperCase()
     };
     submitBtn.disabled = true;
     submitBtn.textContent = "Redirecting to secure checkout…";

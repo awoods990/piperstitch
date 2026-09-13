@@ -1,0 +1,101 @@
+{% extends "admin_base.html" %}
+{% block title %}{{ promoter.name }} — Promoters — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="/admin/promotions">&larr; All promotions</a></p>
+
+  <div class="card">
+    <div class="toolbar">
+      <div><h1 style="margin:0">{{ promoter.name }}{% if not promoter.active %} <span class="pill ended">inactive</span>{% endif %}</h1>
+        <div class="muted">{{ promoter.organization }}{% if promoter.organization and promoter.email %} &middot; {% endif %}{{ promoter.email }}</div></div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.referred }}</div><div class="kpi-label">Customers referred</div><div class="kpi-sub">{{ totals.active }} currently subscribed</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.gross_cents|money }}</div><div class="kpi-label">Revenue from their customers</div><div class="kpi-sub">{{ totals.net_cents|money }} net of Stripe fees</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.earned_cents|money }}</div><div class="kpi-label">Share earned</div><div class="kpi-sub">across {{ totals.payouts }} payment{{ '' if totals.payouts == 1 else 's' }}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.owed_cents|money }}</div><div class="kpi-label">Owed now</div><div class="kpi-sub">{{ totals.paid_cents|money }} paid out</div></div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h2>Their codes</h2>
+        <table>
+          <tr><th>Code</th><th>Gives</th><th>Share</th><th>Uses</th><th></th></tr>
+          {% for c in codes %}
+          <tr><td><a href="/admin/promotions/{{ c.id }}"><strong class="mono">{{ c.code }}</strong></a>{% if not c.active %} <span class="pill ended">inactive</span>{% endif %}</td><td>{{ describe(c) }}</td><td>{{ c.share_pct|round(1) }}%</td><td>{{ c.redemption_count }}{% if c.max_redemptions %} / {{ c.max_redemptions }}{% endif %}</td>
+            <td><form method="post" action="/admin/promotions/{{ c.id }}/toggle"><button class="small secondary" type="submit">{{ 'Deactivate' if c.active else 'Reactivate' }}</button></form></td></tr>
+          {% else %}<tr><td colspan="5" class="muted">No codes yet — create one below.</td></tr>{% endfor %}
+        </table>
+        <h3>New code for {{ promoter.name }}</h3>
+        <form method="post" action="/admin/promotions">
+          <input type="hidden" name="kind" value="promoter"><input type="hidden" name="promoter_id" value="{{ promoter.id }}">
+          <div style="display:grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap:10px">
+            <div><label>Code</label><input type="text" name="code" required placeholder="{{ promoter.name.split(' ')[0]|upper }}20" style="text-transform:uppercase"></div>
+            <div><label>Discount %</label><input type="number" name="percent_off" required min="1" max="100" step="0.5" value="20"></div>
+            <div><label>For how many months</label><input type="number" name="duration_months" min="1" max="120" placeholder="forever"></div>
+            <div><label>Share % of net</label><input type="number" name="share_pct" min="0" max="100" step="0.5" value="{{ promoter.default_share_pct|round(1) }}"></div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 2fr; gap:10px; margin-top:10px">
+            <div><label>Maximum uses</label><input type="number" name="max_redemptions" min="1" placeholder="unlimited"></div>
+            <div><label>Expires</label><input type="date" name="expires_at"></div>
+            <div><label>Notes</label><input type="text" name="notes"></div>
+          </div>
+          <div style="margin-top:12px"><button type="submit" class="small">Create code</button></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Customers they referred</h2>
+        <table>
+          <tr><th>Customer</th><th>Code</th><th>Redeemed</th><th>Subscription</th></tr>
+          {% for r in redemptions %}
+          <tr><td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a><br><span class="muted small">{{ r.customer_email }}</span></td><td class="mono">{{ r.code }}</td><td class="muted">{{ r.redeemed_at|short_date }}</td><td>{% if r.subscription_status %}<span class="pill {{ r.subscription_status }}">{{ r.subscription_status.replace('_',' ') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+          {% else %}<tr><td colspan="4" class="muted">No one has used their codes yet.</td></tr>{% endfor %}
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Payout ledger</h2>
+        <p class="muted small" style="margin-top:0">Each paid invoice from a referred customer earns the code's share of the net. Record what you actually send them below; owed is earned minus paid.</p>
+        <table>
+          <tr><th>When</th><th>Customer</th><th>Paid</th><th>Fee</th><th>Net</th><th>Share</th></tr>
+          {% for p in payouts %}
+          <tr><td class="muted">{{ p.created_at|short_date }}</td><td><a href="/admin/customers/{{ p.customer_id }}">{{ p.customer_name or p.customer_email }}</a></td><td>{{ p.gross_cents|money }}</td><td class="muted">{{ p.fee_cents|money }}{% if p.fee_source == 'estimate' %}<span title="Stripe's exact fee wasn't available; estimated at the standard card rate">*</span>{% endif %}</td><td>{{ p.net_cents|money }}</td><td><strong>{{ p.share_cents|money }}</strong> <span class="muted small">({{ p.share_pct|round(1) }}%)</span></td></tr>
+          {% else %}<tr><td colspan="6" class="muted">Nothing earned yet.</td></tr>{% endfor %}
+        </table>
+        <h3>Payments to {{ promoter.name }}</h3>
+        <table>
+          <tr><th>Date</th><th>Amount</th><th>Note</th></tr>
+          {% for p in payments %}<tr><td class="muted">{{ p.paid_at }}</td><td>{{ p.amount_cents|money }}</td><td class="muted">{{ p.note }}</td></tr>
+          {% else %}<tr><td colspan="3" class="muted">No payouts recorded yet.</td></tr>{% endfor %}
+        </table>
+        <form method="post" action="/admin/promoters/{{ promoter.id }}/payments" style="margin-top:10px">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 2fr; gap:10px">
+            <div><label>Amount ($)</label><input type="number" name="amount" step="0.01" min="0.01" required value="{{ (totals.owed_cents / 100)|round(2) if totals.owed_cents > 0 else '' }}"></div>
+            <div><label>Date</label><input type="date" name="paid_at" value="{{ today }}"></div>
+            <div><label>Note</label><input type="text" name="note" placeholder="PayPal, check #, …"></div>
+          </div>
+          <div style="margin-top:12px"><button type="submit" class="small">Record payout</button></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Details</h2>
+        <form method="post" action="/admin/promoters/{{ promoter.id }}">
+          <label>Name</label><input type="text" name="name" value="{{ promoter.name }}" required>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px"><div><label>Email</label><input type="email" name="email" value="{{ promoter.email }}"></div><div><label>Organization</label><input type="text" name="organization" value="{{ promoter.organization }}"></div></div>
+          <label>Default share % for new codes</label><input type="number" name="default_share_pct" value="{{ promoter.default_share_pct|round(1) }}" min="0" max="100" step="0.5">
+          <label>Notes</label><input type="text" name="notes" value="{{ promoter.notes }}">
+          <div style="margin-top:12px; display:flex; gap:14px; align-items:center"><label class="inline"><input type="checkbox" name="active" value="1" {% if promoter.active %}checked{% endif %}> Active</label><button type="submit" class="small">Save</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}

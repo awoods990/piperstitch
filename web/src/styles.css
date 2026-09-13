@@ -259,3 +259,7 @@ button, input, select { font: inherit; color: inherit; }
 .kv span { color: var(--muted); }
 .start-account { position: fixed; top: 10px; right: 12px; z-index: 4; display: flex; gap: 4px; align-items: center; }
 .field select { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 14px; }
+
+.promo-box { display: flex; flex-direction: column; gap: 4px; }
+.promo-box input { flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; text-transform: uppercase; letter-spacing: .04em; }
+.promo-ok { color: var(--readyText); font-size: 13px; }

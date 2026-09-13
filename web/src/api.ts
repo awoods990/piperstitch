@@ -1,4 +1,4 @@
-import type { Catalog, DigitizeResponse, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, VectorShape } from "./types";
+import type { Catalog, DigitizeResponse, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, PromoValidation, RGBColor, StitchDocument, ThreadColor, VectorShape } from "./types";
 
 export interface EditResponse { document: StitchDocument; selectedIDs: string[]; status: string }
 export interface PendingMerge { pendingMerge: { targetID: string; targetName: string } }
@@ -41,7 +41,8 @@ export const api = {
   requestCode: (email: string) => postJSON<{ sent: boolean }>("/auth/request", { email }),
   verifyCode: (email: string, code: string) => postJSON<MeResponse>("/auth/verify", { email, code }),
   signOut: () => postJSON<void>("/auth/signout", {}),
-  checkoutURL: async () => (await postJSON<{ url: string }>("/auth/checkout", {})).url,
+  checkoutURL: async (promoCode?: string) => (await postJSON<{ url: string }>("/auth/checkout", { promoCode: promoCode ?? "" })).url,
+  validatePromo: (code: string) => postJSON<PromoValidation>("/auth/promo", { code }),
   billingPortalURL: async () => (await postJSON<{ url: string }>("/auth/billing-portal", {})).url,
 
   // --- projects ---

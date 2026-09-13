@@ -49,6 +49,36 @@ per account). Browser sessions don't count toward the two-Mac device
 limit. In the admin, a web trial shows as a `trialing` subscription and
 `web_signed_in` / `trial_started` events on the customer.
 
+## Promotions
+
+Two kinds of code, both managed entirely from `/admin/promotions` (the
+admin never opens Stripe for this):
+
+- **Promoter referral codes** — a promoter (a person or organization,
+  with their own record and page) gets one or more codes. Their audience
+  enters the code and receives the discount (1–100%, for N monthly cycles
+  or forever); the promoter earns a share (0–100%) of the **net** revenue
+  from every invoice those customers pay — net meaning amount paid minus
+  Stripe's fee (the actual fee when Stripe reports it, otherwise the
+  standard 2.9% + 30¢ estimate, marked as such). The promoter's page is a
+  ledger: referred customers, each invoice's gross/fee/net/share, what
+  has been paid to them, and what's owed. Payouts are recorded by hand.
+- **Direct discounts** — a code the admin gives a person or group:
+  discount and duration in monthly cycles, optionally restricted to
+  listed email addresses, capped in uses, or expiring. No revenue share.
+
+Each code is created as a real Stripe coupon + promotion code, so the
+discount appears on Stripe's invoices and receipts. Codes are entered in
+the app (subscribe wall, Settings → Account & billing, or a
+`app.piperstitch.com/?promo=CODE` link) or on the pricing page; the
+server validates them (active, not expired, uses left, allowed email) and
+applies them to the Checkout session, tagging the subscription with the
+promotion so the webhook can attribute the redemption. Stripe's own
+"add promotion code" field is off. The admin can also apply a code to a
+*current* subscriber from their customer page (from the next invoice).
+Every redemption and share shows on the customer's record, the
+promoter's record, and the Promotions dashboard.
+
 ## The pieces
 
 ```

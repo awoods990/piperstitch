@@ -4,6 +4,28 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: promotion codes — promoter referrals with revenue share, and direct discounts
+
+- **License Admin → Promotions** (`app/promotions.py`, new tables
+  `promoters`, `promotions`, `promo_redemptions`, `promo_payouts`,
+  `promoter_payments`): promoters (person or organization) with a page
+  of their codes, referred customers, per-invoice gross / Stripe fee /
+  net / share ledger, payouts recorded, and owed; codes with percent off
+  (1–100), duration in monthly cycles or forever, revenue share % of
+  net, max uses, expiry, and an allowed-email list for direct discounts;
+  a Promotions dashboard (active codes, redemptions, share earned, owed).
+  Every code is created/deactivated in Stripe from the admin (coupon +
+  promotion code); a code can also be applied to a current subscriber
+  from their customer page. Redemptions are attributed from the
+  subscription webhook (promotion id in the subscription's metadata) and
+  the share is booked on each `invoice.paid`, using Stripe's actual fee
+  when available. Customer pages show codes used, cycles left, and
+  shares generated. 5 tests; 84 pass.
+- **Customers enter codes** on the app's subscribe wall and in Settings →
+  Account & billing (live validation, `?promo=CODE` links remembered),
+  and on the pricing page. Stripe Checkout's own code field is off so
+  every redemption goes through validation and attribution.
+
 ## Changed: the marketing site, emails and admin now describe the web edition
 
 - **`website/`** rewritten for the browser launch: every "Download for

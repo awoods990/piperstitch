@@ -15,7 +15,7 @@ from typing import Optional
 
 import stripe
 
-from . import config, db, email_sender, entitlement
+from . import config, db, email_sender, entitlement, promotions
 
 log = logging.getLogger("license_admin.subscriptions")
 
@@ -151,6 +151,7 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
     if previous is None:
         kinds.append("created")
         db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="created", detail=f"Subscription started ({status}).", stripe_event_id=stripe_event_id)
+        promotions.attribute_subscription(sub, subscription_id=subscription_id, customer_id=customer_id)
         if status in db.ENTITLED_STATUSES:
             _try_email(email_sender.send_welcome_email, to_email=customer["email"], customer_name=customer["name"])
     else:
@@ -209,6 +210,7 @@ def record_invoice(invoice: dict, *, paid: bool, stripe_event_id: Optional[str] 
 
     if paid:
         db.add_event(customer_id=customer_id, subscription_id=subscription["id"] if subscription else None, kind="payment", detail=f"Paid ${int(amount or 0) / 100:.2f}.", stripe_event_id=stripe_event_id)
+        promotions.record_share_for_payment(payment_id=inserted, subscription_row=subscription, customer_id=customer_id, gross_cents=int(amount or 0), invoice=invoice)
     else:
         db.add_event(customer_id=customer_id, subscription_id=subscription["id"] if subscription else None, kind="payment_failed", detail=f"Charge of ${int(amount or 0) / 100:.2f} failed.", stripe_event_id=stripe_event_id)
         if customer_id is not None:

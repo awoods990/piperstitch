@@ -2,9 +2,9 @@
 // everything (see server/Sources/StitchPilotServer/Auth.swift); these
 // only show its answers and send the two sign-in requests.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AccountState } from "../types";
+import type { AccountState, PromoValidation } from "../types";
 
 export function daysLeft(account: AccountState): number | null {
   const end = account.valid_until ?? account.period_end;
@@ -30,6 +30,47 @@ export function statusLine(account: AccountState): string {
 }
 
 const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+
+// --- promo codes -----------------------------------------------------------------
+
+const PROMO_KEY = "piperstitch.promo";
+
+/** A code from a promoter's link (?promo=CODE) is remembered until it's used. */
+export function capturePromoFromURL() {
+  const code = new URLSearchParams(window.location.search).get("promo")?.trim().toUpperCase();
+  if (code) { try { localStorage.setItem(PROMO_KEY, code); } catch { /* ignore */ } }
+}
+export const rememberedPromo = () => { try { return localStorage.getItem(PROMO_KEY) ?? ""; } catch { return ""; } };
+export const forgetPromo = () => { try { localStorage.removeItem(PROMO_KEY); } catch { /* ignore */ } };
+
+/** Code entry with live validation; reports the accepted code upward. */
+export function PromoBox({ onChange }: { onChange: (code: string | null, description: string | null) => void }) {
+  const [code, setCode] = useState(rememberedPromo());
+  const [result, setResult] = useState<PromoValidation | null>(null);
+  const [busy, setBusy] = useState(false);
+  const check = async (value: string) => {
+    const c = value.trim().toUpperCase();
+    if (!c) { setResult(null); onChange(null, null); return; }
+    setBusy(true);
+    try {
+      const r = await api.validatePromo(c);
+      setResult(r);
+      if (r.valid) { try { localStorage.setItem(PROMO_KEY, c); } catch { /* ignore */ } }
+      onChange(r.valid ? c : null, r.valid ? (r.description ?? null) : null);
+    } catch (e) { setResult({ valid: false, message: e instanceof Error ? e.message : String(e) }); onChange(null, null); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { if (code) check(code); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="promo-box">
+      <label className="field">Promo code
+        <span className="row-inline"><input value={code} placeholder="Have a code?" onChange={(e) => setCode(e.target.value.toUpperCase())} onBlur={() => check(code)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); check(code); } }} />
+          <button type="button" className="btn small" disabled={busy || !code.trim()} onClick={() => check(code)}>{busy ? "…" : "Apply"}</button></span>
+      </label>
+      {result && (result.valid ? <div className="promo-ok">✓ {result.code}: {result.description}</div> : <div className="error-text">{result.message}</div>)}
+    </div>
+  );
+}
 
 // --- sign in ----------------------------------------------------------------
 
@@ -106,6 +147,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
 export function SubscribeWall({ account, onSignOut, onRefresh }: { account: AccountState; onSignOut: () => void; onRefresh: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promo, setPromo] = useState<{ code: string | null; description: string | null }>({ code: null, description: null });
   const go = async (fn: () => Promise<string>) => {
     setBusy(true); setError(null);
     try { window.location.assign(await fn()); }
@@ -126,7 +168,10 @@ export function SubscribeWall({ account, onSignOut, onRefresh }: { account: Acco
           ? <button className="btn primary wide" disabled={busy} onClick={() => go(api.billingPortalURL)}>{busy ? "Opening…" : "Manage billing"}</button>
           : null}
         {account.status !== "past_due" && (
-          <button className="btn primary wide" disabled={busy} onClick={() => go(api.checkoutURL)}>{busy ? "Opening…" : `Subscribe · ${price(account)}`}</button>
+          <>
+            <PromoBox onChange={(code, description) => setPromo({ code, description })} />
+            <button className="btn primary wide" disabled={busy} onClick={() => go(() => api.checkoutURL(promo.code ?? undefined))}>{busy ? "Opening…" : promo.description ? `Subscribe · ${promo.description}` : `Subscribe · ${price(account)}`}</button>
+          </>
         )}
         <button className="btn ghost wide" onClick={onRefresh} disabled={busy}>I've already subscribed — check again</button>
         {error && <div className="error-text">{error}</div>}

@@ -1,0 +1,85 @@
+{% extends "admin_base.html" %}
+{% block title %}Promotions — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="kpi-grid">
+    <div class="kpi-tile"><div class="kpi-value">{{ overview.active_codes }}</div><div class="kpi-label">Active codes</div><div class="kpi-sub">{{ overview.promoters }} active promoter{{ '' if overview.promoters == 1 else 's' }}</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ overview.redemptions }}</div><div class="kpi-label">Codes redeemed</div><div class="kpi-sub">{{ overview.redemptions_this_month }} this month</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ overview.earned_cents|money }}</div><div class="kpi-label">Promoter share earned</div><div class="kpi-sub">{{ overview.earned_this_month_cents|money }} this month</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ overview.owed_cents|money }}</div><div class="kpi-label">Owed to promoters</div><div class="kpi-sub">{{ overview.paid_cents|money }} paid out so far</div></div>
+  </div>
+
+  <div class="card" id="promoters">
+    <div class="toolbar"><h2 style="margin:0">Promoters</h2></div>
+    <p class="muted small" style="margin-top:0">A person or organization who promotes PiperStitch. Each gets one or more codes; their audience gets the code's discount and they earn the code's share of net revenue (what the customer paid minus Stripe's fee).</p>
+    <table>
+      <tr><th>Promoter</th><th>Codes</th><th>Referred</th><th>Active subs</th><th>Gross</th><th>Earned</th><th>Paid</th><th>Owed</th></tr>
+      {% for p in promoters %}
+      <tr>
+        <td><a href="/admin/promoters/{{ p.id }}"><strong>{{ p.name }}</strong></a>{% if p.organization %} <span class="muted">· {{ p.organization }}</span>{% endif %}{% if not p.active %} <span class="pill ended">inactive</span>{% endif %}<br><span class="muted small">{{ p.email }}</span></td>
+        <td>{{ p.totals.codes }}</td><td>{{ p.totals.referred }}</td><td>{{ p.totals.active }}</td>
+        <td>{{ p.totals.gross_cents|money }}</td><td>{{ p.totals.earned_cents|money }}</td><td>{{ p.totals.paid_cents|money }}</td>
+        <td><strong>{{ p.totals.owed_cents|money }}</strong></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No promoters yet.</td></tr>
+      {% endfor %}
+    </table>
+    <h3>Add a promoter</h3>
+    <form method="post" action="/admin/promoters">
+      <div style="display:grid; grid-template-columns: 2fr 2fr 2fr 1fr; gap:10px">
+        <div><label for="pr_name">Name</label><input type="text" id="pr_name" name="name" required placeholder="Jane Doe, or Stitch Club"></div>
+        <div><label for="pr_email">Email</label><input type="email" id="pr_email" name="email" placeholder="for paying them"></div>
+        <div><label for="pr_org">Organization</label><input type="text" id="pr_org" name="organization" placeholder="optional"></div>
+        <div><label for="pr_share">Default share %</label><input type="number" id="pr_share" name="default_share_pct" value="20" min="0" max="100" step="0.5"></div>
+      </div>
+      <label for="pr_notes">Notes</label><input type="text" id="pr_notes" name="notes" placeholder="how you know them, terms agreed, payout method…">
+      <div style="margin-top:12px"><button type="submit" class="small">Add promoter</button></div>
+    </form>
+  </div>
+
+  <div class="card" id="codes">
+    <div class="toolbar"><h2 style="margin:0">Codes</h2></div>
+    <table>
+      <tr><th>Code</th><th>Gives</th><th>Kind</th><th>Uses</th><th>Restrictions</th><th>Revenue via code</th><th>Promoter share</th><th></th></tr>
+      {% for c in promotions %}
+      <tr>
+        <td><a href="/admin/promotions/{{ c.id }}"><strong class="mono">{{ c.code }}</strong></a>{% if not c.active %} <span class="pill ended">inactive</span>{% endif %}</td>
+        <td>{{ describe(c) }}</td>
+        <td>{% if c.kind == 'promoter' %}Promoter{% if c.promoter_name %}: <a href="/admin/promoters/{{ c.promoter_id }}">{{ c.promoter_name }}</a>{% endif %} · {{ c.share_pct|round(1) }}% share{% else %}Direct discount{% endif %}</td>
+        <td>{{ c.redemption_count }}{% if c.max_redemptions %} / {{ c.max_redemptions }}{% endif %}</td>
+        <td class="muted small">{% if c.expires_at %}expires {{ c.expires_at|short_date }}{% endif %}{% if c.allowed_emails %}{% if c.expires_at %} · {% endif %}{{ c.allowed_emails.split(',')|length }} email{{ '' if c.allowed_emails.split(',')|length == 1 else 's' }} only{% endif %}{% if not c.expires_at and not c.allowed_emails %}—{% endif %}</td>
+        <td>{{ c.gross_cents|money }}</td>
+        <td>{{ c.share_cents|money }}</td>
+        <td><form method="post" action="/admin/promotions/{{ c.id }}/toggle"><button class="small secondary" type="submit">{{ 'Deactivate' if c.active else 'Reactivate' }}</button></form></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No codes yet.</td></tr>
+      {% endfor %}
+    </table>
+
+    <h3>Create a code</h3>
+    <p class="muted small" style="margin-top:0">Creating a code also creates it in Stripe, so the discount shows on the customer's invoices. Customers enter the code in the app (Settings → Account) or on the pricing page.</p>
+    <form method="post" action="/admin/promotions">
+      <div style="display:grid; grid-template-columns: 1.4fr 1fr 1.4fr 1fr 1fr; gap:10px">
+        <div><label for="pc_code">Code</label><input type="text" id="pc_code" name="code" required placeholder="STITCHCLUB20" style="text-transform:uppercase"></div>
+        <div><label for="pc_kind">Kind</label><select id="pc_kind" name="kind"><option value="direct">Direct discount</option><option value="promoter">Promoter referral</option></select></div>
+        <div><label for="pc_promoter">Promoter (for referral codes)</label><select id="pc_promoter" name="promoter_id"><option value="">—</option>{% for p in promoters if p.active %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></div>
+        <div><label for="pc_pct">Discount %</label><input type="number" id="pc_pct" name="percent_off" required min="1" max="100" step="0.5" value="20"></div>
+        <div><label for="pc_months">For how many months</label><input type="number" id="pc_months" name="duration_months" min="1" max="120" placeholder="blank = forever"></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 2fr; gap:10px; margin-top:10px">
+        <div><label for="pc_share">Promoter share % of net</label><input type="number" id="pc_share" name="share_pct" min="0" max="100" step="0.5" placeholder="promoter's default"></div>
+        <div><label for="pc_max">Maximum uses</label><input type="number" id="pc_max" name="max_redemptions" min="1" placeholder="unlimited"></div>
+        <div><label for="pc_exp">Expires</label><input type="date" id="pc_exp" name="expires_at"></div>
+        <div><label for="pc_emails">Only for these emails (direct discounts)</label><input type="text" id="pc_emails" name="allowed_emails" placeholder="a@x.com, b@y.com — blank = anyone"></div>
+      </div>
+      <label for="pc_notes">Notes</label><input type="text" id="pc_notes" name="notes" placeholder="what this is for">
+      <div style="margin-top:12px"><button type="submit" class="small">Create code</button></div>
+    </form>
+  </div>
+</main>
+{% endblock %}

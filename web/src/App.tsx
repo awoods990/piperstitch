@@ -11,7 +11,7 @@ import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeRespons
 import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
 import Editor from "./components/Editor";
-import { AccountMenu, SignIn, SubscribeWall } from "./components/Account";
+import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
 import { HelpSheet, LetteringSheet, MergeColorsSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
 import type { Tool } from "./components/StitchCanvas";
 import { loadPrefs, savePrefs, type Preferences } from "./prefs";
@@ -68,6 +68,7 @@ export default function App() {
 
   useEffect(() => {
     api.catalog().then(setCatalog).catch((e) => setError(`Couldn't reach the PiperStitch server: ${e.message}`));
+    capturePromoFromURL();
     const params = new URLSearchParams(window.location.search);
     const subscribed = params.get("subscribed");
     if (subscribed !== null) window.history.replaceState(null, "", window.location.pathname);

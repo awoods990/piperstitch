@@ -94,6 +94,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_paid_at ON payments(paid_at);
 CREATE TABLE IF NOT EXISTS checkout_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER REFERENCES customers(id),
+    promotion_id INTEGER REFERENCES promotions(id),
     stripe_session_id TEXT NOT NULL UNIQUE,
     customer_name TEXT NOT NULL,
     customer_email TEXT NOT NULL,
@@ -160,6 +161,77 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_projects_customer ON projects(customer_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS promoters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                 -- a person or an organization
+    email TEXT NOT NULL DEFAULT '',
+    organization TEXT NOT NULL DEFAULT '',
+    default_share_pct REAL NOT NULL DEFAULT 0,   -- suggested revenue share for new codes
+    notes TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS promotions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,          -- what the customer types; stored upper-case
+    kind TEXT NOT NULL,                 -- 'promoter' (referral with revenue share) | 'direct' (a discount the admin hands out)
+    promoter_id INTEGER REFERENCES promoters(id),
+    percent_off REAL NOT NULL,          -- 1..100
+    duration_months INTEGER,            -- NULL = every month forever; N = the first N billing cycles
+    share_pct REAL NOT NULL DEFAULT 0,  -- promoter's share of net revenue, 0..100 (promoter kind only)
+    max_redemptions INTEGER,            -- NULL = unlimited
+    expires_at TEXT,                    -- ISO; NULL = never
+    allowed_emails TEXT NOT NULL DEFAULT '',  -- comma-separated; empty = anyone
+    stripe_coupon_id TEXT,
+    stripe_promotion_code_id TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_promotions_promoter ON promotions(promoter_id);
+
+CREATE TABLE IF NOT EXISTS promo_redemptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promotion_id INTEGER NOT NULL REFERENCES promotions(id),
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    subscription_id INTEGER REFERENCES subscriptions(id),
+    stripe_subscription_id TEXT,
+    redeemed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_promo_redemptions_customer ON promo_redemptions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_promo_redemptions_promotion ON promo_redemptions(promotion_id);
+
+CREATE TABLE IF NOT EXISTS promo_payouts (
+    -- One row per paid invoice on a promoter-referred subscription: what
+    -- the promoter earned from it. Owed = sum(share_cents) - promoter_payments.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    promotion_id INTEGER NOT NULL REFERENCES promotions(id),
+    customer_id INTEGER REFERENCES customers(id),
+    payment_id INTEGER REFERENCES payments(id),
+    gross_cents INTEGER NOT NULL,
+    fee_cents INTEGER NOT NULL,
+    net_cents INTEGER NOT NULL,
+    share_pct REAL NOT NULL,
+    share_cents INTEGER NOT NULL,
+    fee_source TEXT NOT NULL DEFAULT 'estimate',   -- 'stripe' | 'estimate'
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_promo_payouts_promoter ON promo_payouts(promoter_id);
+
+CREATE TABLE IF NOT EXISTS promoter_payments (
+    -- Money actually sent to a promoter, recorded by the admin.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    amount_cents INTEGER NOT NULL,
+    paid_at TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS stripe_events (
     id TEXT PRIMARY KEY,                -- Stripe's evt_... id; Stripe retries, we don't double-apply
@@ -359,11 +431,11 @@ def count_downloads() -> dict:
 # ------------------------------------------------------- checkout sessions --
 
 
-def create_checkout_session(*, stripe_session_id: str, customer_name: str, customer_email: str, customer_id: Optional[int] = None) -> None:
+def create_checkout_session(*, stripe_session_id: str, customer_name: str, customer_email: str, customer_id: Optional[int] = None, promotion_id: Optional[int] = None) -> None:
     with connection() as conn:
         conn.execute(
-            "INSERT INTO checkout_sessions (stripe_session_id, customer_name, customer_email, customer_id, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
-            (stripe_session_id, customer_name, customer_email.strip().lower(), customer_id, _now()),
+            "INSERT INTO checkout_sessions (stripe_session_id, customer_name, customer_email, customer_id, promotion_id, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (stripe_session_id, customer_name, customer_email.strip().lower(), customer_id, promotion_id, _now()),
         )
 
 
@@ -878,3 +950,198 @@ def delete_project(customer_id: int, project_id: str) -> bool:
     with connection() as conn:
         cur = conn.execute("DELETE FROM projects WHERE id = ? AND customer_id = ?", (project_id, customer_id))
         return cur.rowcount > 0
+
+
+# ------------------------------------------------------------ promotions --
+# See promotions.py for the rules; these are just the rows.
+
+
+def create_promoter(*, name: str, email: str = "", organization: str = "", default_share_pct: float = 0, notes: str = "") -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO promoters (name, email, organization, default_share_pct, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name.strip(), email.strip().lower(), organization.strip(), default_share_pct, notes.strip(), _now(), _now()),
+        )
+        return cur.lastrowid
+
+
+def update_promoter(promoter_id: int, *, name: str, email: str, organization: str, default_share_pct: float, notes: str, active: bool) -> None:
+    with connection() as conn:
+        conn.execute(
+            "UPDATE promoters SET name = ?, email = ?, organization = ?, default_share_pct = ?, notes = ?, active = ?, updated_at = ? WHERE id = ?",
+            (name.strip(), email.strip().lower(), organization.strip(), default_share_pct, notes.strip(), 1 if active else 0, _now(), promoter_id),
+        )
+
+
+def get_promoter(promoter_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promoters WHERE id = ?", (promoter_id,)).fetchone()
+
+
+def list_promoters() -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promoters ORDER BY active DESC, name COLLATE NOCASE").fetchall()
+
+
+def create_promotion(*, code: str, kind: str, promoter_id: Optional[int], percent_off: float, duration_months: Optional[int], share_pct: float,
+                     max_redemptions: Optional[int], expires_at: Optional[str], allowed_emails: str, stripe_coupon_id: Optional[str],
+                     stripe_promotion_code_id: Optional[str], notes: str) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO promotions (code, kind, promoter_id, percent_off, duration_months, share_pct, max_redemptions, expires_at, allowed_emails, "
+            "stripe_coupon_id, stripe_promotion_code_id, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (code, kind, promoter_id, percent_off, duration_months, share_pct, max_redemptions, expires_at, allowed_emails, stripe_coupon_id, stripe_promotion_code_id, notes.strip(), _now(), _now()),
+        )
+        return cur.lastrowid
+
+
+def get_promotion(promotion_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promotions WHERE id = ?", (promotion_id,)).fetchone()
+
+
+def get_promotion_by_code(code: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promotions WHERE code = ?", (code.strip().upper(),)).fetchone()
+
+
+def get_promotion_by_stripe_promotion_code(stripe_promotion_code_id: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promotions WHERE stripe_promotion_code_id = ?", (stripe_promotion_code_id,)).fetchone()
+
+
+def set_promotion_active(promotion_id: int, active: bool) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE promotions SET active = ?, updated_at = ? WHERE id = ?", (1 if active else 0, _now(), promotion_id))
+
+
+_PROMOTIONS_WITH_STATS = (
+    "SELECT promotions.*, promoters.name AS promoter_name, "
+    "(SELECT COUNT(*) FROM promo_redemptions r WHERE r.promotion_id = promotions.id) AS redemption_count, "
+    "(SELECT COALESCE(SUM(share_cents), 0) FROM promo_payouts p WHERE p.promotion_id = promotions.id) AS share_cents, "
+    "(SELECT COALESCE(SUM(gross_cents), 0) FROM promo_payouts p WHERE p.promotion_id = promotions.id) AS gross_cents "
+    "FROM promotions LEFT JOIN promoters ON promoters.id = promotions.promoter_id"
+)
+
+
+def list_promotions(promoter_id: Optional[int] = None) -> list[sqlite3.Row]:
+    with connection() as conn:
+        if promoter_id is not None:
+            return conn.execute(_PROMOTIONS_WITH_STATS + " WHERE promotions.promoter_id = ? ORDER BY promotions.active DESC, promotions.created_at DESC", (promoter_id,)).fetchall()
+        return conn.execute(_PROMOTIONS_WITH_STATS + " ORDER BY promotions.active DESC, promotions.created_at DESC").fetchall()
+
+
+def count_redemptions(promotion_id: int) -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM promo_redemptions WHERE promotion_id = ?", (promotion_id,)).fetchone()[0]
+
+
+def record_redemption(*, promotion_id: int, customer_id: int, subscription_id: Optional[int], stripe_subscription_id: Optional[str]) -> Optional[int]:
+    """One redemption per customer per code -- a webhook replay or a
+    re-sync must not count twice."""
+    with connection() as conn:
+        existing = conn.execute("SELECT id FROM promo_redemptions WHERE promotion_id = ? AND customer_id = ?", (promotion_id, customer_id)).fetchone()
+        if existing:
+            conn.execute("UPDATE promo_redemptions SET subscription_id = COALESCE(?, subscription_id), stripe_subscription_id = COALESCE(?, stripe_subscription_id) WHERE id = ?",
+                         (subscription_id, stripe_subscription_id, existing["id"]))
+            return None
+        cur = conn.execute(
+            "INSERT INTO promo_redemptions (promotion_id, customer_id, subscription_id, stripe_subscription_id, redeemed_at) VALUES (?, ?, ?, ?, ?)",
+            (promotion_id, customer_id, subscription_id, stripe_subscription_id, _now()),
+        )
+        return cur.lastrowid
+
+
+_REDEMPTIONS_WITH_CONTEXT = (
+    "SELECT r.*, promotions.code, promotions.kind, promotions.percent_off, promotions.duration_months, promotions.share_pct, promotions.promoter_id, "
+    "promoters.name AS promoter_name, customers.name AS customer_name, customers.email AS customer_email, subscriptions.status AS subscription_status "
+    "FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id LEFT JOIN promoters ON promoters.id = promotions.promoter_id "
+    "JOIN customers ON customers.id = r.customer_id LEFT JOIN subscriptions ON subscriptions.id = r.subscription_id"
+)
+
+
+def list_redemptions_for_customer(customer_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE r.customer_id = ? ORDER BY r.redeemed_at DESC", (customer_id,)).fetchall()
+
+
+def list_redemptions_for_promoter(promoter_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE promotions.promoter_id = ? ORDER BY r.redeemed_at DESC", (promoter_id,)).fetchall()
+
+
+def list_redemptions_for_promotion(promotion_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE r.promotion_id = ? ORDER BY r.redeemed_at DESC", (promotion_id,)).fetchall()
+
+
+def redemption_for_subscription(subscription_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE r.subscription_id = ? ORDER BY r.redeemed_at DESC LIMIT 1", (subscription_id,)).fetchone()
+
+
+def record_promo_payout(*, promoter_id: int, promotion_id: int, customer_id: Optional[int], payment_id: Optional[int], gross_cents: int, fee_cents: int,
+                        net_cents: int, share_pct: float, share_cents: int, fee_source: str) -> Optional[int]:
+    with connection() as conn:
+        if payment_id is not None and conn.execute("SELECT 1 FROM promo_payouts WHERE payment_id = ?", (payment_id,)).fetchone():
+            return None
+        cur = conn.execute(
+            "INSERT INTO promo_payouts (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, fee_source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, fee_source, _now()),
+        )
+        return cur.lastrowid
+
+
+def list_promo_payouts_for_promoter(promoter_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT p.*, promotions.code, customers.email AS customer_email, customers.name AS customer_name FROM promo_payouts p "
+            "JOIN promotions ON promotions.id = p.promotion_id LEFT JOIN customers ON customers.id = p.customer_id WHERE p.promoter_id = ? ORDER BY p.created_at DESC",
+            (promoter_id,),
+        ).fetchall()
+
+
+def list_promo_payouts_for_customer(customer_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT p.*, promotions.code, promoters.name AS promoter_name FROM promo_payouts p JOIN promotions ON promotions.id = p.promotion_id "
+                            "JOIN promoters ON promoters.id = p.promoter_id WHERE p.customer_id = ? ORDER BY p.created_at DESC", (customer_id,)).fetchall()
+
+
+def record_promoter_payment(*, promoter_id: int, amount_cents: int, paid_at: str, note: str) -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO promoter_payments (promoter_id, amount_cents, paid_at, note, created_at) VALUES (?, ?, ?, ?, ?)", (promoter_id, amount_cents, paid_at, note.strip(), _now()))
+        return cur.lastrowid
+
+
+def list_promoter_payments(promoter_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promoter_payments WHERE promoter_id = ? ORDER BY paid_at DESC, id DESC", (promoter_id,)).fetchall()
+
+
+def promoter_totals(promoter_id: int) -> dict:
+    """The promoter's ledger in one row: what their codes brought in, what
+    they earned, what they've been paid, what's owed."""
+    with connection() as conn:
+        p = conn.execute("SELECT COUNT(*) AS payouts, COALESCE(SUM(gross_cents), 0) AS gross, COALESCE(SUM(net_cents), 0) AS net, COALESCE(SUM(share_cents), 0) AS earned FROM promo_payouts WHERE promoter_id = ?", (promoter_id,)).fetchone()
+        paid = conn.execute("SELECT COALESCE(SUM(amount_cents), 0) FROM promoter_payments WHERE promoter_id = ?", (promoter_id,)).fetchone()[0]
+        referred = conn.execute("SELECT COUNT(DISTINCT r.customer_id) FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id WHERE promotions.promoter_id = ?", (promoter_id,)).fetchone()[0]
+        active = conn.execute(
+            "SELECT COUNT(DISTINCT r.customer_id) FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id JOIN subscriptions s ON s.id = r.subscription_id "
+            "WHERE promotions.promoter_id = ? AND s.status IN ('active','trialing','past_due')", (promoter_id,)).fetchone()[0]
+        codes = conn.execute("SELECT COUNT(*) FROM promotions WHERE promoter_id = ?", (promoter_id,)).fetchone()[0]
+    return {"referred": referred, "active": active, "codes": codes, "payouts": p["payouts"], "gross_cents": p["gross"], "net_cents": p["net"],
+            "earned_cents": p["earned"], "paid_cents": paid, "owed_cents": p["earned"] - paid}
+
+
+def promotions_overview() -> dict:
+    """The Promotions page's tiles."""
+    month_start = datetime.utcnow().date().replace(day=1).isoformat()
+    with connection() as conn:
+        active_codes = conn.execute("SELECT COUNT(*) FROM promotions WHERE active = 1").fetchone()[0]
+        redemptions = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN redeemed_at >= ? THEN 1 ELSE 0 END) AS this_month FROM promo_redemptions", (month_start,)).fetchone()
+        earned = conn.execute("SELECT COALESCE(SUM(share_cents), 0) AS total, COALESCE(SUM(CASE WHEN created_at >= ? THEN share_cents ELSE 0 END), 0) AS this_month FROM promo_payouts", (month_start,)).fetchone()
+        paid = conn.execute("SELECT COALESCE(SUM(amount_cents), 0) FROM promoter_payments").fetchone()[0]
+        promoters = conn.execute("SELECT COUNT(*) FROM promoters WHERE active = 1").fetchone()[0]
+    return {"active_codes": active_codes, "promoters": promoters, "redemptions": redemptions["total"] or 0, "redemptions_this_month": redemptions["this_month"] or 0,
+            "earned_cents": earned["total"], "earned_this_month_cents": earned["this_month"], "paid_cents": paid, "owed_cents": earned["total"] - paid}

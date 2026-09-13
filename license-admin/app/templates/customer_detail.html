@@ -77,6 +77,29 @@
         <p class="muted">No subscription yet.</p>
         {% endfor %}
 
+        <h3>Promotions</h3>
+        {% for r in redemptions %}
+        <div class="muted small" style="margin-bottom:6px">
+          <strong class="mono">{{ r.code }}</strong> — {{ r.description }}{% if r.promoter_name %}, referred by <a href="/admin/promoters/{{ r.promoter_id }}">{{ r.promoter_name }}</a> ({{ r.share_pct|round(1) }}% share){% endif %}.
+          Redeemed {{ r.redeemed_at|short_date }} &middot; {{ 'discount is ongoing' if r.cycles_remaining is none else (r.cycles_remaining ~ ' discounted cycle(s) left') }}.
+        </div>
+        {% else %}
+        <p class="muted small">No promotion code used.</p>
+        {% endfor %}
+        {% if promo_payouts %}
+        <table>
+          <tr><th>Payment</th><th>Paid</th><th>Net</th><th>Promoter share</th></tr>
+          {% for p in promo_payouts %}<tr><td class="muted">{{ p.created_at|short_date }}</td><td>{{ p.gross_cents|money }}</td><td>{{ p.net_cents|money }}</td><td>{{ p.share_cents|money }} to {{ p.promoter_name }}</td></tr>{% endfor %}
+        </table>
+        {% endif %}
+        {% if validity.entitled and validity.status in ('active', 'past_due') and active_promotions %}
+        <form method="post" action="/admin/customers/{{ customer.id }}/apply-promotion" style="display:flex; gap:8px; align-items:flex-end; margin-top:8px">
+          <div style="flex:1"><label for="apply_code">Apply a discount from their next invoice</label>
+            <select id="apply_code" name="code">{% for p in active_promotions %}<option value="{{ p.code }}">{{ p.code }} — {{ describe(p) }}{% if p.kind == 'promoter' %} (promoter: {{ p.promoter_name }}){% endif %}</option>{% endfor %}</select></div>
+          <button type="submit" class="small secondary">Apply</button>
+        </form>
+        {% endif %}
+
         <h3>Grant complimentary access</h3>
         <form method="post" action="/admin/customers/{{ customer.id }}/comp">
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px">

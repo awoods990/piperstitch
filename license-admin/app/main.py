@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, promotions, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -135,6 +135,7 @@ class DownloadConfirmedIn(BaseModel):
 class CheckoutIn(BaseModel):
     """POST /api/checkout — called via fetch() from the subscribe form on
     the marketing site's pricing page."""
+    promo_code: str = ""
 
     customer_name: str
     customer_email: str
@@ -179,6 +180,16 @@ class WebTokenIn(BaseModel):
     token: str
 
 
+class WebCheckoutIn(BaseModel):
+    token: str
+    promo_code: str = ""
+
+
+class WebPromoIn(BaseModel):
+    token: str
+    code: str
+
+
 class WebProjectIn(BaseModel):
     token: str
     id: str
@@ -212,7 +223,7 @@ def subscribe_form(request: Request, name: str = "", email: str = ""):
     return templates.TemplateResponse(request, "subscribe.html", {"customer_name": name, "customer_email": email})
 
 
-def _start_checkout(*, customer_name: str, customer_email: str, phone: str = "", address: str = "") -> tuple[Optional["stripe.checkout.Session"], Optional[str]]:
+def _start_checkout(*, customer_name: str, customer_email: str, phone: str = "", address: str = "", promo_code: str = "") -> tuple[Optional["stripe.checkout.Session"], Optional[str]]:
     """Shared by the HTML form and the JSON API: upserts the customer (so
     the subscription's webhook can find them by our id), creates the
     Stripe Checkout Session in subscription mode, records it as pending."""
@@ -226,13 +237,20 @@ def _start_checkout(*, customer_name: str, customer_email: str, phone: str = "",
             return None, "This email already has an active PiperStitch subscription — sign in inside the app, or manage it from your account page."
     customer_id = db.upsert_customer(name=customer_name, email=customer_email, phone=phone, address=address, source="checkout" if existing is None else existing["source"])
 
+    promotion = None
+    if promo_code.strip():
+        try:
+            promotion = promotions.validate(promo_code, email=customer_email)
+        except promotions.PromoError as e:
+            return None, e.message
     try:
-        session = stripe_client.create_subscription_checkout(customer_name=customer_name, customer_email=customer_email, customer_id=customer_id)
+        session = stripe_client.create_subscription_checkout(customer_name=customer_name, customer_email=customer_email, customer_id=customer_id, promotion=promotion)
     except stripe.error.StripeError as e:
         log.error("Stripe checkout session creation failed: %s", e)
         return None, "Payment setup failed — please try again in a moment."
 
-    db.create_checkout_session(stripe_session_id=session.id, customer_name=customer_name, customer_email=customer_email, customer_id=customer_id)
+    db.create_checkout_session(stripe_session_id=session.id, customer_name=customer_name, customer_email=customer_email, customer_id=customer_id,
+                               promotion_id=promotion["id"] if promotion else None)
     return session, None
 
 
@@ -251,11 +269,27 @@ def subscribe_submit(request: Request, customer_name: str = Form(...), customer_
 
 @app.post("/api/checkout")
 def api_checkout(body: CheckoutIn):
-    session, error = _start_checkout(customer_name=body.customer_name, customer_email=body.customer_email, phone=body.phone, address=body.address)
+    session, error = _start_checkout(customer_name=body.customer_name, customer_email=body.customer_email, phone=body.phone, address=body.address, promo_code=body.promo_code)
     if error:
         status = 502 if "Payment setup failed" in error else 400
         return JSONResponse({"error": error}, status_code=status)
     return {"checkout_url": session.url}
+
+
+class PromoValidateIn(BaseModel):
+    code: str
+    email: str = ""
+
+
+@app.post("/api/promo/validate")
+def api_promo_validate(body: PromoValidateIn):
+    """Public (CORS'd to the marketing site): is this code usable, and
+    what does it give? Reveals nothing beyond what redeeming would."""
+    try:
+        promo = promotions.validate(body.code, email=body.email)
+    except promotions.PromoError as e:
+        return JSONResponse({"valid": False, "error": e.code, "message": e.message}, status_code=200)
+    return {"valid": True, **promotions.payload(promo)}
 
 
 @app.get("/subscribe/success", response_class=HTMLResponse)
@@ -520,11 +554,26 @@ def api_web_signout(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
     return {"ok": web_access.sign_out(token=body.token)}
 
 
-@app.post("/api/web/checkout")
-def api_web_checkout(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+@app.post("/api/web/promo/validate")
+def api_web_promo_validate(body: WebPromoIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
     try:
-        return {"url": web_access.checkout_url(token=body.token)}
+        state = web_access.state(token=body.token)
+        promo = promotions.validate(body.code, email=state["email"])
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+    except promotions.PromoError as e:
+        return JSONResponse({"valid": False, "error": e.code, "message": e.message}, status_code=200)
+    return {"valid": True, **promotions.payload(promo)}
+
+
+@app.post("/api/web/checkout")
+def api_web_checkout(body: WebCheckoutIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return {"url": web_access.checkout_url(token=body.token, promo_code=body.promo_code)}
+    except promotions.PromoError as e:
+        return JSONResponse({"error": e.code, "message": e.message}, status_code=400)
     except activation.ActivationError as e:
         return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
     except stripe.error.StripeError as e:
@@ -727,6 +776,10 @@ def customer_detail(request: Request, customer_id: int, message: str = "", error
         "devices": db.list_active_devices(customer_id),
         "web_sessions": db.list_active_web_sessions(customer_id),
         "projects": db.list_projects(customer_id),
+        "redemptions": [dict(r, cycles_remaining=promotions.cycles_remaining(r), description=promotions.describe(r)) for r in db.list_redemptions_for_customer(customer_id)],
+        "promo_payouts": db.list_promo_payouts_for_customer(customer_id),
+        "active_promotions": [p for p in db.list_promotions() if p["active"]],
+        "describe": promotions.describe,
         "payments": db.list_payments_for_customer(customer_id),
         "events": db.list_events_for_customer(customer_id),
         "trial_ends": trial_ends,
@@ -916,6 +969,192 @@ def export_csv():
         writer.writerow([r["id"], r["customer_name"], r["customer_email"], r["status"], r["source"], r["stripe_subscription_id"], r["current_period_end"], r["cancel_at_period_end"], r["amount_cents"], r["created_at"], r["ended_at"], r["notes"]])
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=piperstitch_subscriptions.csv"})
+
+
+# ----------------------------------------------------------- promotions ---
+# Promoter referral codes with revenue share, and direct discounts. Every
+# code is a Stripe coupon + promotion code created from here; the admin
+# never needs the Stripe Dashboard for any of it. See promotions.py.
+
+
+def _promotions_redirect(*, message: str = "", error: str = "", anchor: str = "") -> RedirectResponse:
+    q = []
+    if message: q.append("message=" + quote_plus(message))
+    if error: q.append("error=" + quote_plus(error))
+    return RedirectResponse("/admin/promotions" + ("?" + "&".join(q) if q else "") + (f"#{anchor}" if anchor else ""), status_code=303)
+
+
+def _promoter_redirect(promoter_id: int, *, message: str = "", error: str = "") -> RedirectResponse:
+    q = []
+    if message: q.append("message=" + quote_plus(message))
+    if error: q.append("error=" + quote_plus(error))
+    return RedirectResponse(f"/admin/promoters/{promoter_id}" + ("?" + "&".join(q) if q else ""), status_code=303)
+
+
+def _parse_expiry(value: str) -> Optional[datetime]:
+    if not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip()).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+    except ValueError:
+        raise promotions.PromoError("invalid_expiry", "The expiry date must look like 2026-12-31.")
+
+
+def _parse_number(value: str, *, name: str, lo: float, hi: float, blank_ok: bool = False) -> Optional[float]:
+    v = value.strip().replace("%", "")
+    if not v:
+        if blank_ok:
+            return None
+        raise promotions.PromoError("invalid_number", f"{name} is required.")
+    try:
+        n = float(v)
+    except ValueError:
+        raise promotions.PromoError("invalid_number", f"{name} must be a number.")
+    if not (lo <= n <= hi):
+        raise promotions.PromoError("invalid_number", f"{name} must be between {lo:g} and {hi:g}.")
+    return n
+
+
+@app.get("/admin/promotions", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_promotions(request: Request, message: str = "", error: str = ""):
+    promoters = [dict(p, totals=db.promoter_totals(p["id"])) for p in db.list_promoters()]
+    return templates.TemplateResponse(request, "promotions.html", {
+        "active_nav": "promotions",
+        "overview": db.promotions_overview(),
+        "promoters": promoters,
+        "promotions": db.list_promotions(),
+        "describe": promotions.describe,
+        "message": message or None,
+        "error": error or None,
+    })
+
+
+@app.post("/admin/promoters", dependencies=[Depends(auth.require_admin)])
+def admin_create_promoter(name: str = Form(...), email: str = Form(""), organization: str = Form(""), default_share_pct: str = Form("0"), notes: str = Form("")):
+    if not name.strip():
+        return _promotions_redirect(error="A promoter needs a name.", anchor="promoters")
+    try:
+        share = _parse_number(default_share_pct or "0", name="Default revenue share", lo=0, hi=100) or 0
+    except promotions.PromoError as e:
+        return _promotions_redirect(error=e.message, anchor="promoters")
+    pid = db.create_promoter(name=name, email=email, organization=organization, default_share_pct=share, notes=notes)
+    return _promoter_redirect(pid, message=f"Promoter {name.strip()} added. Now give them a code.")
+
+
+@app.get("/admin/promoters/{promoter_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_promoter_detail(request: Request, promoter_id: int, message: str = "", error: str = ""):
+    promoter = db.get_promoter(promoter_id)
+    if promoter is None:
+        return _promotions_redirect(error="That promoter doesn't exist.")
+    return templates.TemplateResponse(request, "promoter_detail.html", {
+        "active_nav": "promotions",
+        "promoter": promoter,
+        "totals": db.promoter_totals(promoter_id),
+        "codes": db.list_promotions(promoter_id),
+        "redemptions": db.list_redemptions_for_promoter(promoter_id),
+        "payouts": db.list_promo_payouts_for_promoter(promoter_id),
+        "payments": db.list_promoter_payments(promoter_id),
+        "describe": promotions.describe,
+        "today": datetime.now(timezone.utc).date().isoformat(),
+        "message": message or None,
+        "error": error or None,
+    })
+
+
+@app.post("/admin/promoters/{promoter_id}", dependencies=[Depends(auth.require_admin)])
+def admin_update_promoter(promoter_id: int, name: str = Form(...), email: str = Form(""), organization: str = Form(""), default_share_pct: str = Form("0"), notes: str = Form(""), active: str = Form("")):
+    if db.get_promoter(promoter_id) is None:
+        return _promotions_redirect(error="That promoter doesn't exist.")
+    try:
+        share = _parse_number(default_share_pct or "0", name="Default revenue share", lo=0, hi=100) or 0
+    except promotions.PromoError as e:
+        return _promoter_redirect(promoter_id, error=e.message)
+    db.update_promoter(promoter_id, name=name, email=email, organization=organization, default_share_pct=share, notes=notes, active=bool(active))
+    return _promoter_redirect(promoter_id, message="Promoter updated.")
+
+
+@app.post("/admin/promoters/{promoter_id}/payments", dependencies=[Depends(auth.require_admin)])
+def admin_record_promoter_payment(promoter_id: int, amount: str = Form(...), paid_at: str = Form(""), note: str = Form("")):
+    if db.get_promoter(promoter_id) is None:
+        return _promotions_redirect(error="That promoter doesn't exist.")
+    try:
+        dollars = _parse_number(amount, name="Amount", lo=0.01, hi=1_000_000)
+    except promotions.PromoError as e:
+        return _promoter_redirect(promoter_id, error=e.message)
+    when = paid_at.strip() or datetime.now(timezone.utc).date().isoformat()
+    db.record_promoter_payment(promoter_id=promoter_id, amount_cents=round(dollars * 100), paid_at=when, note=note)
+    return _promoter_redirect(promoter_id, message=f"Recorded a ${dollars:,.2f} payout.")
+
+
+@app.post("/admin/promotions", dependencies=[Depends(auth.require_admin)])
+def admin_create_promotion(code: str = Form(...), kind: str = Form("direct"), promoter_id: str = Form(""), percent_off: str = Form(...), duration_months: str = Form(""),
+                           share_pct: str = Form(""), max_redemptions: str = Form(""), expires_at: str = Form(""), allowed_emails: str = Form(""), notes: str = Form("")):
+    anchor = "codes"
+    try:
+        pid = int(promoter_id) if promoter_id.strip().isdigit() else None
+        promoter = db.get_promoter(pid) if pid else None
+        pct = _parse_number(percent_off, name="Discount", lo=0.01, hi=100)
+        months = _parse_number(duration_months, name="Duration", lo=1, hi=120, blank_ok=True)
+        share = _parse_number(share_pct, name="Revenue share", lo=0, hi=100, blank_ok=True)
+        if share is None:
+            share = float(promoter["default_share_pct"]) if promoter else 0
+        max_r = _parse_number(max_redemptions, name="Maximum uses", lo=1, hi=1_000_000, blank_ok=True)
+        promotion_id = promotions.create_promotion(
+            code=code, kind=kind, promoter_id=pid, percent_off=pct, duration_months=int(months) if months else None, share_pct=share,
+            max_redemptions=int(max_r) if max_r else None, expires_at=_parse_expiry(expires_at), allowed_emails=allowed_emails, notes=notes,
+        )
+    except promotions.PromoError as e:
+        return (_promoter_redirect(int(promoter_id), error=e.message) if promoter_id.strip().isdigit() else _promotions_redirect(error=e.message, anchor=anchor))
+    promo = db.get_promotion(promotion_id)
+    msg = f"Code {promo['code']} created: {promotions.describe(promo)}."
+    return _promoter_redirect(promo["promoter_id"], message=msg) if promo["promoter_id"] else _promotions_redirect(message=msg, anchor=anchor)
+
+
+@app.get("/admin/promotions/{promotion_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_promotion_detail(request: Request, promotion_id: int, message: str = "", error: str = ""):
+    promo = db.get_promotion(promotion_id)
+    if promo is None:
+        return _promotions_redirect(error="That code doesn't exist.")
+    rows = [dict(r, cycles_remaining=promotions.cycles_remaining(r)) for r in db.list_redemptions_for_promotion(promotion_id)]
+    return templates.TemplateResponse(request, "promotion_detail.html", {
+        "active_nav": "promotions",
+        "promo": promo,
+        "promoter": db.get_promoter(promo["promoter_id"]) if promo["promoter_id"] else None,
+        "redemptions": rows,
+        "describe": promotions.describe,
+        "message": message or None,
+        "error": error or None,
+    })
+
+
+@app.post("/admin/promotions/{promotion_id}/toggle", dependencies=[Depends(auth.require_admin)])
+def admin_toggle_promotion(promotion_id: int):
+    promo = db.get_promotion(promotion_id)
+    if promo is None:
+        return _promotions_redirect(error="That code doesn't exist.")
+    try:
+        promotions.set_active(promotion_id, not promo["active"])
+    except promotions.PromoError as e:
+        return _promotions_redirect(error=e.message, anchor="codes")
+    state = "reactivated" if not promo["active"] else "deactivated"
+    return RedirectResponse(f"/admin/promotions/{promotion_id}?message=" + quote_plus(f"Code {promo['code']} {state}."), status_code=303)
+
+
+@app.post("/admin/customers/{customer_id}/apply-promotion", dependencies=[Depends(auth.require_admin)])
+def admin_apply_promotion(customer_id: int, code: str = Form(...)):
+    """Give a current subscriber a discount from their next invoice."""
+    customer = db.get_customer(customer_id)
+    if customer is None:
+        return RedirectResponse("/admin/subscribers", status_code=303)
+    sub = db.best_subscription_for_customer(customer_id)
+    if sub is None or sub["status"] not in db.ENTITLED_STATUSES:
+        return _customer_redirect(customer_id, error="They don't have a live subscription to discount. Give them a code to use when they subscribe instead.")
+    try:
+        promo = promotions.validate(code, email=customer["email"])
+        promotions.apply_to_existing_subscription(promotion_id=promo["id"], subscription_row=sub)
+    except promotions.PromoError as e:
+        return _customer_redirect(customer_id, error=e.message)
+    return _customer_redirect(customer_id, message=f"Applied {promo['code']} ({promotions.describe(promo)}) from their next invoice.")
 
 
 # ----------------------------------------------------------- financials ---

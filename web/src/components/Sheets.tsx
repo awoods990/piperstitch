@@ -3,7 +3,7 @@ import glossary from "../glossary.json";
 import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, RGBColor, ThreadColor } from "../types";
 import { LETTERING_FONTS, generateLetteringShapes, type LetteringSpec } from "../lettering";
 import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
-import { AccountMenu, price, statusLine } from "./Account";
+import { AccountMenu, PromoBox, price, statusLine } from "./Account";
 import { api } from "../api";
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
@@ -182,6 +182,7 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
 }) {
   const [tab, setTab] = useState<"account" | "preferences" | "threads">(account ? "account" : "preferences");
   const [error, setError] = useState<string | null>(null);
+  const [promo, setPromo] = useState<{ code: string | null; description: string | null }>({ code: null, description: null });
   const go = async (fn: () => Promise<string>) => { try { window.location.assign(await fn()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } };
   const set = <K extends keyof Preferences>(k: K, v: Preferences[K]) => onPrefs({ ...prefs, [k]: v });
   return (
@@ -197,8 +198,9 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
           <div className="kv"><span>Name</span><b>{account.name}</b></div>
           <div className="kv"><span>Plan</span><b>{statusLine(account)}</b></div>
           <div className="kv"><span>Price</span><b>{price(account)}</b></div>
+          {account.status === "trialing" && <PromoBox onChange={(code, description) => setPromo({ code, description })} />}
           <div className="btn-row">
-            {account.status === "trialing" && <button className="btn primary" onClick={() => go(api.checkoutURL)}>Subscribe · {price(account)}</button>}
+            {account.status === "trialing" && <button className="btn primary" onClick={() => go(() => api.checkoutURL(promo.code ?? undefined))}>Subscribe · {promo.description ?? price(account)}</button>}
             <a className="btn ghost" href="https://www.piperstitch.com/" target="_blank" rel="noopener">piperstitch.com</a>
             {account.has_billing && <button className="btn" onClick={() => go(api.billingPortalURL)}>Manage billing, card & invoices</button>}
             {account.has_billing && account.status === "active" && !account.cancel_at_period_end && <button className="btn ghost" onClick={() => go(api.billingPortalURL)}>Cancel subscription</button>}

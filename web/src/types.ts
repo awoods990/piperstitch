@@ -144,3 +144,13 @@ export interface ProjectSummary {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface PromoValidation {
+  valid: boolean;
+  code?: string;
+  percent_off?: number;
+  duration_months?: number | null;
+  description?: string;
+  error?: string;
+  message?: string;
+}
