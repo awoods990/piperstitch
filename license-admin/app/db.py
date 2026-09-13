@@ -261,6 +261,17 @@ def _connect() -> sqlite3.Connection:
 def init_db() -> None:
     with _connect() as conn:
         conn.executescript(_SCHEMA)
+        # Columns added after a table first shipped: CREATE TABLE IF NOT
+        # EXISTS leaves an existing table alone, so add them here.
+        _add_column_if_missing(conn, "checkout_sessions", "promotion_id", "INTEGER REFERENCES promotions(id)")
+        _add_column_if_missing(conn, "payments", "fee_cents", "INTEGER")            # Stripe's processing fee, when known
+        _add_column_if_missing(conn, "payments", "balance_transaction_id", "TEXT")
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 @contextmanager

@@ -124,3 +124,21 @@ def test_checkout_applies_a_validated_code(isolated_db, test_keypair, fake_strip
     assert r.status_code == 400 and "recognised" in r.json()["error"]
     r = client.post("/api/promo/validate", json={"code": "SITE10", "email": "a@example.com"})
     assert r.json()["valid"] is True and r.json()["description"] == "10% off your first month"
+
+
+def test_init_db_migrates_an_older_database(tmp_path, monkeypatch):
+    """A database created before promotions existed gains the new columns."""
+    import sqlite3
+    from app import config
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE checkout_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, stripe_session_id TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, customer_email TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT, created_at TEXT NOT NULL, completed_at TEXT)")
+    conn.execute("CREATE TABLE payments (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, subscription_id INTEGER, stripe_invoice_id TEXT UNIQUE, stripe_payment_intent TEXT, amount_cents INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'usd', status TEXT NOT NULL, paid_at TEXT, created_at TEXT NOT NULL)")
+    conn.commit(); conn.close()
+    monkeypatch.setattr(config, "DATABASE_PATH", str(path))
+    db.init_db()
+    db.create_checkout_session(stripe_session_id="cs_1", customer_name="A", customer_email="a@x.com", promotion_id=None)
+    with db.connection() as c:
+        assert "promotion_id" in {r[1] for r in c.execute("PRAGMA table_info(checkout_sessions)")}
+        assert "fee_cents" in {r[1] for r in c.execute("PRAGMA table_info(payments)")}
+    db.init_db()  # idempotent
