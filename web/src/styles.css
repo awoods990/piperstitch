@@ -252,6 +252,11 @@ button, input, select { font: inherit; color: inherit; }
 .lettering-preview svg { max-width: 100%; max-height: 120px; }
 .merge-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
 .merge-list li { display: flex; align-items: center; gap: 8px; }
+.feedback-previews { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.feedback-preview-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.feedback-previews img { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.feedback-preview-missing { display: flex; align-items: center; justify-content: center; min-height: 90px; padding: 10px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 12px; text-align: center; }
+.modal-body textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; box-sizing: border-box; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
 .tabs button { background: none; border: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 13px; }
 .tabs button.on { color: var(--navy800); border-bottom-color: var(--blue500); font-weight: 600; }

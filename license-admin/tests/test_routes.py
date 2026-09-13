@@ -270,6 +270,41 @@ def test_admin_login_and_pages(admin, fake_smtp):
     assert "period,payments" in admin.get("/admin/financials.csv").text
 
 
+def test_admin_feedback_pages(admin, fake_smtp):
+    from app import web_access
+
+    cid = _subscribed_customer()
+    customer = db.get_customer(cid)
+    web_access.request_code(email=customer["email"])
+    signed_in = web_access.verify_code(email=customer["email"], code=_code(fake_smtp))
+    fake_smtp.sent.clear()
+
+    submitted = web_access.submit_feedback(
+        token=signed_in.token, note="Colors looked flat.", design_name="Test Logo", stitch_count=1234,
+        original_image_base64="b3JpZ2luYWw=", original_image_type="image/png",
+        digitized_image_base64="ZGlnaXRpemVk", digitized_image_type="image/png",
+    )
+    fid = submitted["id"]
+
+    listing = admin.get("/admin/feedback")
+    assert listing.status_code == 200 and "Test Logo" in listing.text and customer["email"] in listing.text
+
+    detail = admin.get(f"/admin/feedback/{fid}")
+    assert detail.status_code == 200 and "Colors looked flat." in detail.text and "not yet reviewed" in detail.text
+
+    original = admin.get(f"/admin/feedback/{fid}/image/original")
+    assert original.status_code == 200 and original.headers["content-type"] == "image/png" and original.content == b"original"
+    digitized = admin.get(f"/admin/feedback/{fid}/image/digitized")
+    assert digitized.content == b"digitized"
+
+    fake_smtp.sent.clear()
+    review = admin.post(f"/admin/feedback/{fid}/review", follow_redirects=False)
+    assert review.status_code == 303
+    assert len(fake_smtp.sent) == 1 and "used your feedback" in fake_smtp.sent[0]["Subject"]
+    assert db.get_feedback(fid)["reviewed_at"] is not None
+    assert "reviewed" in admin.get(f"/admin/feedback/{fid}").text
+
+
 def test_admin_wrong_password_and_lockout(client, admin_password_configured):
     assert client.post("/admin/login", data={"username": "admin", "password": "nope"}).status_code == 401
     for _ in range(10):

@@ -7,6 +7,13 @@
       "runtimeArgs": ["run", "dev"],
       "cwd": "web",
       "port": 5173
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8420"],
+      "cwd": "website",
+      "port": 8420
     }
   ]
 }

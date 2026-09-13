@@ -12,11 +12,12 @@ import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
 import Editor from "./components/Editor";
 import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
-import { HelpSheet, LetteringSheet, MergeColorsSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
+import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
 import type { Tool } from "./components/StitchCanvas";
 import { loadPrefs, savePrefs, type Preferences } from "./prefs";
 import { transformShape } from "./geometry";
 import { generateLetteringShapes, type LetteringSpec } from "./lettering";
+import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
 
 interface Imported {
   name: string;
@@ -29,7 +30,7 @@ interface Imported {
 }
 
 type Phase = "start" | "setup" | "editor";
-type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | null;
+type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
 
@@ -51,6 +52,7 @@ export default function App() {
   const [selectedIDs, setSelectedIDs] = useState<Set<string>>(new Set());
   const [tool, setTool] = useState<Tool>("select");
   const [sheet, setSheet] = useState<Sheet>(null);
+  const [feedbackImages, setFeedbackImages] = useState<{ original: string | null; digitized: string } | null>(null);
   const [pendingPaint, setPendingPaint] = useState<PendingPaint | null>(null);
   const [undoStack, setUndoStack] = useState<Snapshot[]>([]);
   const [globalSatin, setGlobalSatin] = useState(0.32);
@@ -327,6 +329,25 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
     setStatus(`Downloaded ${a.download}.`);
   });
+  const onOpenFeedback = async () => {
+    if (!document || !digitized) return;
+    const digitizedPNG = renderDigitizedPNGDataURL(document, digitized);
+    let originalPNG: string | null = null;
+    if (imported?.decoded?.previewURL) originalPNG = await blobURLToPNGDataURL(imported.decoded.previewURL);
+    else if (imported?.svgText) originalPNG = await renderSVGPNGDataURL(imported.svgText);
+    setFeedbackImages({ original: originalPNG, digitized: digitizedPNG });
+    setSheet("feedback");
+  };
+  const onSendFeedback = async (note: string) => {
+    if (!feedbackImages || !document) return;
+    const dig = dataURLToBase64(feedbackImages.digitized);
+    const orig = feedbackImages.original ? dataURLToBase64(feedbackImages.original) : null;
+    await api.sendFeedback({
+      note, designName: document.name, stitchCount: digitized?.stats.stitchCount ?? 0,
+      digitizedImageBase64: dig.base64, digitizedImageType: dig.type,
+      originalImageBase64: orig?.base64, originalImageType: orig?.type,
+    });
+  };
   const onStartOver = () => {
     generation.current++;
     if (imported?.decoded) URL.revokeObjectURL(imported.decoded.previewURL);
@@ -352,6 +373,10 @@ export default function App() {
       {sheet === "threadLibrary" && <ThreadLibrarySheet library={prefs.threadLibrary} onChange={(lib) => setPrefs({ ...prefs, threadLibrary: lib })} onClose={() => setSheet(null)} />}
       {sheet === "lettering" && document && <LetteringSheet palette={palette} selectedCount={selectedIDs.size} onClose={() => setSheet(null)} onAdd={onAddLettering} />}
       {sheet === "mergeColors" && document && <MergeColorsSheet objects={document.objects} palette={palette} onClose={() => setSheet(null)} onMerge={onMergeColors} />}
+      {sheet === "feedback" && feedbackImages && document && (
+        <FeedbackSheet originalImage={feedbackImages.original} digitizedImage={feedbackImages.digitized} designName={document.name}
+          stitchCount={digitized?.stats.stitchCount ?? 0} onClose={() => { setSheet(null); setFeedbackImages(null); }} onSend={onSendFeedback} />
+      )}
       {pendingPaint && (
         <Modal title="Extend this object?" onClose={() => setPendingPaint(null)}>
           <p>Your stroke touches <b>{pendingPaint.targetName}</b>. Add the painted area to it, or keep it as a separate shape in the same colour?</p>
@@ -380,7 +405,7 @@ export default function App() {
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}
           onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
-          onExport={onExport} onOpenSheet={setSheet} />
+          onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} />
         {sheets}
       </>
     );

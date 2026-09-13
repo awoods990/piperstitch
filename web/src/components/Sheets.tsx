@@ -175,6 +175,57 @@ export function ThreadLibrarySheet({ library, onChange, onClose }: { library: Th
   return <Modal title="Thread library" onClose={onClose}><ThreadLibraryEditor library={library} onChange={onChange} /><div className="modal-foot"><button className="btn primary" onClick={onClose}>Done</button></div></Modal>;
 }
 
+// --- Send Feedback ----------------------------------------------------------------
+
+export function FeedbackSheet({ originalImage, digitizedImage, designName, stitchCount, onClose, onSend }: {
+  originalImage: string | null; digitizedImage: string; designName: string; stitchCount: number;
+  onClose: () => void; onSend: (note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const send = async () => {
+    setBusy(true); setError(null);
+    try { await onSend(note); setSent(true); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  if (sent) {
+    return (
+      <Modal title="Feedback sent" onClose={onClose}>
+        <p>Thanks — we've got both images and will take a look. You'll get an email confirming that, and another if we use it to make a change.</p>
+        <div className="modal-foot"><button className="btn primary" onClick={onClose}>Done</button></div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Send feedback" onClose={onClose}>
+      <p className="hint">Sends PiperStitch's team the original artwork and a picture of the digitized result — not the embroidery file itself — so we can see where the automatic digitizing did well or poorly and make it better. "{designName}" · {stitchCount.toLocaleString()} stitches.</p>
+      <div className="feedback-previews">
+        <div>
+          <div className="feedback-preview-label">Original artwork</div>
+          {originalImage ? <img src={originalImage} alt="Original artwork" /> : <div className="feedback-preview-missing">No separate original to show (this design was made from a font)</div>}
+        </div>
+        <div>
+          <div className="feedback-preview-label">Digitized result</div>
+          <img src={digitizedImage} alt="Digitized result" />
+        </div>
+      </div>
+      <label htmlFor="feedback-note">What looked wrong? (optional)</label>
+      <textarea id="feedback-note" rows={3} placeholder="e.g. the satin on the O looks lumpy, the colors didn't carry over…" value={note} onChange={(e) => setNote(e.target.value)} disabled={busy} />
+      {error && <div className="error-text">{error}</div>}
+      <div className="modal-foot">
+        <button className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
+        <button className="btn primary" onClick={send} disabled={busy}>{busy ? "Sending…" : "Send feedback"}</button>
+      </div>
+    </Modal>
+  );
+}
+
 // --- Settings ---------------------------------------------------------------------
 
 export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount }: {

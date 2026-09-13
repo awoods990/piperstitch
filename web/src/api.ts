@@ -109,6 +109,12 @@ export const api = {
   lettering: (body: { document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D; replaceIDs?: string[] }) =>
     postJSON<EditResponse>("/edit/lettering", body),
 
+  sendFeedback: (body: {
+    note: string; designName: string; stitchCount: number;
+    originalImageBase64?: string; originalImageType?: string;
+    digitizedImageBase64: string; digitizedImageType?: string;
+  }) => postJSON<{ id: number }>("/feedback", body),
+
   async export(document: StitchDocument, format: string): Promise<Blob> {
     const res = await fetch(`${BASE}/export/${format}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ document }),

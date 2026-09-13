@@ -145,6 +145,44 @@ func authRoutes(_ api: RoutesBuilder) {
         struct Out: Decodable { var deleted: Bool }
         return ["deleted": try await req.licenseAdmin.post("/api/web/projects/delete", TokenIn(token: session.token), query: ["id": id], as: Out.self).deleted]
     }
+
+    // "Send feedback": the original artwork and a picture of the digitized
+    // result, forwarded to License Admin for review (repo: license-admin/
+    // -- see its own /api/web/feedback and the /admin/feedback pages).
+    // Gated the same as projects: only a signed-in, entitled account can
+    // send feedback, which is already guaranteed by the time there's a
+    // digitized result to send.
+    let feedback = api.grouped("feedback").grouped(EntitlementGate())
+    feedback.post { req -> [String: Int] in
+        let session = try await requireSession(req)
+        struct Body: Content {
+            var note: String?
+            var designName: String?
+            var stitchCount: Int?
+            var originalImageBase64: String?
+            var originalImageType: String?
+            var digitizedImageBase64: String
+            var digitizedImageType: String?
+        }
+        let body = try req.content.decode(Body.self)
+        struct In: Content {
+            var token: String
+            var note: String
+            var design_name: String
+            var stitch_count: Int
+            var original_image_base64: String?
+            var original_image_type: String
+            var digitized_image_base64: String
+            var digitized_image_type: String
+        }
+        struct Out: Decodable { var id: Int }
+        let out = try await req.licenseAdmin.post("/api/web/feedback", In(
+            token: session.token, note: body.note ?? "", design_name: body.designName ?? "", stitch_count: body.stitchCount ?? 0,
+            original_image_base64: body.originalImageBase64, original_image_type: body.originalImageType ?? "image/png",
+            digitized_image_base64: body.digitizedImageBase64, digitized_image_type: body.digitizedImageType ?? "image/png"
+        ), as: Out.self)
+        return ["id": out.id]
+    }
 }
 
 struct PromoValidation: Content {

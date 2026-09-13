@@ -96,6 +96,32 @@ def test_projects_round_trip_and_isolation(isolated_db, test_keypair, fake_smtp)
     assert web_access.delete_project(token=a.token, project_id=listed[0]["id"]) is True
 
 
+def test_feedback_submission_is_stored_and_acknowledged_by_email(isolated_db, test_keypair, fake_smtp):
+    from app import db as _db
+
+    session = _sign_in(fake_smtp, email="feedback@example.com")
+    fake_smtp.sent.clear()
+    result = web_access.submit_feedback(
+        token=session.token, note="The satin on the O looks wrong.", design_name="Logo", stitch_count=4200,
+        original_image_base64="b3JpZ2luYWw=", original_image_type="image/png",
+        digitized_image_base64="ZGlnaXRpemVk", digitized_image_type="image/png",
+    )
+    assert result["id"] > 0
+    stored = _db.get_feedback(result["id"])
+    assert stored["customer_email"] == "feedback@example.com" and stored["note"] == "The satin on the O looks wrong."
+    assert stored["original_image_data"] == "b3JpZ2luYWw=" and stored["digitized_image_data"] == "ZGlnaXRpemVk"
+    assert stored["reviewed_at"] is None
+    assert len(fake_smtp.sent) == 1 and "Thanks for the feedback" in fake_smtp.sent[0]["Subject"]
+
+    # An oversized image is rejected before anything is written.
+    with pytest.raises(activation.ActivationError):
+        web_access.submit_feedback(
+            token=session.token, note="", design_name="Too big", stitch_count=0,
+            original_image_base64=None, original_image_type="image/png",
+            digitized_image_base64="x" * (web_access.MAX_FEEDBACK_IMAGE_BASE64_CHARS + 1), digitized_image_type="image/png",
+        )
+
+
 def test_web_routes_require_the_shared_key(isolated_db, test_keypair, fake_smtp, monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app

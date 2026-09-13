@@ -1,0 +1,45 @@
+{% extends "admin_base.html" %}
+{% block title %}Feedback #{{ submission.id }} — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">{{ submission.design_name or 'Untitled' }}</h2>
+      <div class="grow"></div>
+      {% if submission.reviewed_at %}<span class="pill">reviewed {{ submission.reviewed_at|short_date }}</span>{% else %}<span class="pill ended">not yet reviewed</span>{% endif %}
+    </div>
+    <p class="muted small" style="margin-top:0">
+      From {% if submission.customer_id %}<a href="/admin/customers/{{ submission.customer_id }}">{{ submission.customer_email }}</a>{% else %}{{ submission.customer_email }}{% endif %}
+      · sent {{ submission.created_at|short_dt }} · {{ submission.stitch_count }} stitches
+    </p>
+    {% if submission.note %}<p><strong>Their note:</strong> {{ submission.note }}</p>{% endif %}
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-top:16px">
+      <div>
+        <h3 style="margin-bottom:6px">Original artwork</h3>
+        {% if submission.original_image_data %}
+        <a href="/admin/feedback/{{ submission.id }}/image/original" target="_blank"><img src="/admin/feedback/{{ submission.id }}/image/original" alt="Original artwork" style="max-width:100%; border:1px solid var(--line); border-radius:8px"></a>
+        <p class="muted small"><a href="/admin/feedback/{{ submission.id }}/image/original" download>Download original</a></p>
+        {% else %}
+        <p class="muted small">No separate original image (this design was made from a font/vector source with nothing to save as one).</p>
+        {% endif %}
+      </div>
+      <div>
+        <h3 style="margin-bottom:6px">Digitized result</h3>
+        <a href="/admin/feedback/{{ submission.id }}/image/digitized" target="_blank"><img src="/admin/feedback/{{ submission.id }}/image/digitized" alt="Digitized result" style="max-width:100%; border:1px solid var(--line); border-radius:8px"></a>
+        <p class="muted small"><a href="/admin/feedback/{{ submission.id }}/image/digitized" download>Download digitized result</a></p>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-top:20px; border-top:1px solid var(--line); padding-top:16px">
+      <form method="post" action="/admin/feedback/{{ submission.id }}/review" onsubmit="return confirm('Email {{ submission.customer_email }} to say we used their feedback and encourage them to try PiperStitch again?')">
+        <button type="submit">{{ 'Email the customer again' if submission.reviewed_at else 'Mark reviewed & email the customer' }}</button>
+      </form>
+      <span class="muted small" style="margin-left:10px">Sends a thank-you telling them we used their feedback and inviting them to try PiperStitch again. They already got an automatic "thanks" the moment they sent this.</span>
+    </div>
+  </div>
+</main>
+{% endblock %}

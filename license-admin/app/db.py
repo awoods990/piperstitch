@@ -162,6 +162,31 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE INDEX IF NOT EXISTS idx_projects_customer ON projects(customer_id, updated_at);
 
+CREATE TABLE IF NOT EXISTS feedback_submissions (
+    -- A customer's "send this to PiperStitch" from the web editor: the
+    -- original artwork and a rendered picture of the digitized result,
+    -- so an admin can review where the engine did well or poorly and
+    -- feed genuinely bad cases to Claude or another model for a closer
+    -- look. Images are stored as base64 right in this row (not on disk)
+    -- because this database is the one thing already on a durable
+    -- volume -- a separate file store would risk losing them on a
+    -- redeploy, see README/DEPLOY.md.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER REFERENCES customers(id),
+    customer_email TEXT NOT NULL,
+    design_name TEXT NOT NULL DEFAULT '',
+    stitch_count INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    original_image_data TEXT,               -- base64; NULL when the import had no separate raster original
+    original_image_type TEXT NOT NULL DEFAULT 'image/png',
+    digitized_image_data TEXT NOT NULL,     -- base64 PNG of the rendered stitch preview
+    digitized_image_type TEXT NOT NULL DEFAULT 'image/png',
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    reviewed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback_submissions(created_at);
+
 CREATE TABLE IF NOT EXISTS promoters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,                 -- a person or an organization
@@ -1289,3 +1314,40 @@ def period_financials(start: str, end: str) -> dict:
         "promoter_share_accrued_cents": share,
         "started": started, "ended": ended,
     }
+
+
+# -------------------------------------------------------------- feedback --
+
+
+def add_feedback(*, customer_id: Optional[int], customer_email: str, design_name: str, stitch_count: int, note: str,
+                  original_image_data: Optional[str], original_image_type: str,
+                  digitized_image_data: str, digitized_image_type: str) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO feedback_submissions (customer_id, customer_email, design_name, stitch_count, note, original_image_data, original_image_type, digitized_image_data, digitized_image_type, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (customer_id, customer_email, design_name, stitch_count, note.strip(), original_image_data, original_image_type, digitized_image_data, digitized_image_type, _now()),
+        )
+        return cur.lastrowid
+
+
+def list_feedback(*, limit: int = 200, only_unreviewed: bool = False) -> list[sqlite3.Row]:
+    with connection() as conn:
+        if only_unreviewed:
+            return conn.execute("SELECT id, customer_id, customer_email, design_name, stitch_count, note, created_at, reviewed_at, reviewed_by FROM feedback_submissions WHERE reviewed_at IS NULL ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return conn.execute("SELECT id, customer_id, customer_email, design_name, stitch_count, note, created_at, reviewed_at, reviewed_by FROM feedback_submissions ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+
+
+def count_feedback_unreviewed() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM feedback_submissions WHERE reviewed_at IS NULL").fetchone()[0]
+
+
+def get_feedback(feedback_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM feedback_submissions WHERE id = ?", (feedback_id,)).fetchone()
+
+
+def mark_feedback_reviewed(feedback_id: int, *, reviewed_by: str) -> bool:
+    with connection() as conn:
+        return conn.execute("UPDATE feedback_submissions SET reviewed_at = ?, reviewed_by = ? WHERE id = ?", (_now(), reviewed_by, feedback_id)).rowcount > 0

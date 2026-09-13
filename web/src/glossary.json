@@ -194,6 +194,10 @@
    {
     "term": "Color Reduction Preset",
     "definition": "Controls how many thread colors an imported *image* is simplified down to (vector art always keeps its own exact colors, untouched). \"Preserve Artwork\" keeps every color the image has; \"Normal Embroidery\" and \"Production Efficient\" simplify progressively more for a faster, cleaner sew-out; \"Minimal Colors\" reduces to as few thread changes as possible."
+   },
+   {
+    "term": "Send Feedback",
+    "definition": "Sends PiperStitch's team a picture of your original artwork alongside a picture of the digitized result -- not the embroidery file itself, just the two images, plus an optional note about what looked wrong. It's how the automatic digitizing itself gets better over time: every submission helps show where the engine made a good call and where it didn't. You'll get an email confirming we received it, and a second one later if we use it to make a change -- there's nothing else to do after sending."
    }
   ]
  },

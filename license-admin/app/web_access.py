@@ -267,3 +267,39 @@ def save_project(*, token: str, project_id: str, name: str, document: dict) -> d
 def delete_project(*, token: str, project_id: str) -> bool:
     session = _session(token)
     return db.delete_project(session["customer_id"], project_id)
+
+
+# -------------------------------------------------------------- feedback ---
+
+# Generous enough for a real screenshot-sized PNG (a few hundred KB to
+# low single-digit MB) but not for someone trying to stuff arbitrary
+# files through this the way MAX_PROJECT_BYTES guards project saves.
+MAX_FEEDBACK_IMAGE_BASE64_CHARS = 8 * 1024 * 1024
+
+
+def submit_feedback(*, token: str, note: str, design_name: str, stitch_count: int,
+                     original_image_base64: Optional[str], original_image_type: str,
+                     digitized_image_base64: str, digitized_image_type: str) -> dict:
+    """"Send feedback" from the web editor: the original artwork and a
+    picture of the digitized result, stored for review and immediately
+    acknowledged by email (see send_feedback_received_email) -- actually
+    *using* the feedback and telling the customer so is a separate admin
+    action (main.py's /admin/feedback/{id}/review), since nobody has
+    looked at it yet at submission time."""
+    session = _session(token)
+    customer = db.get_customer(session["customer_id"])
+    if not digitized_image_base64 or len(digitized_image_base64) > MAX_FEEDBACK_IMAGE_BASE64_CHARS:
+        raise ActivationError("invalid_feedback", "That image is missing or too large to send.")
+    if original_image_base64 and len(original_image_base64) > MAX_FEEDBACK_IMAGE_BASE64_CHARS:
+        raise ActivationError("invalid_feedback", "That image is missing or too large to send.")
+    feedback_id = db.add_feedback(
+        customer_id=customer["id"], customer_email=customer["email"], design_name=(design_name or "")[:200], stitch_count=max(0, int(stitch_count)),
+        note=(note or "")[:4000],
+        original_image_data=original_image_base64 or None, original_image_type=original_image_type or "image/png",
+        digitized_image_data=digitized_image_base64, digitized_image_type=digitized_image_type or "image/png",
+    )
+    try:
+        email_sender.send_feedback_received_email(to_email=customer["email"], customer_name=customer["name"])
+    except email_sender.EmailSendError as e:
+        log.warning("Feedback %s saved but the thank-you email failed: %s", feedback_id, e)
+    return {"id": feedback_id}

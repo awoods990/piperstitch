@@ -36,6 +36,7 @@ export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "
   onSave: () => void;
   onExport: (format: string) => void;
   onOpenSheet: (s: "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary") => void;
+  onSendFeedback: () => void;
 }
 
 const FORMATS: [string, string, string][] = [["dst", "Tajima (.dst)", "most machines"], ["pes", "Brother / Baby Lock (.pes)", ""], ["jef", "Janome (.jef)", ""], ["exp", "Melco / Bernina (.exp)", ""], ["vp3", "Husqvarna Viking / Pfaff (.vp3)", ""]];
@@ -73,6 +74,7 @@ export default function Editor(p: EditorProps) {
           )}
         </div>
         <span className="grow" />
+        <button className="pill" onClick={p.onSendFeedback} disabled={!digitized || !!p.busy} title="Send PiperStitch's team a picture of the original artwork and the digitized result, so we can see where the automatic digitizing did well or poorly.">💬 Send feedback</button>
         <button className="pill" onClick={() => p.onOpenSheet("help")} title="Definitions of the digitizing terms used throughout this app, and why they matter.">? Help</button>
         <button className="pill" onClick={() => p.onOpenSheet("settings")} title="Account, billing, and preferences.">⚙ Settings</button>
       </div>

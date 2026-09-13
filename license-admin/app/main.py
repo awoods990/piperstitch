@@ -9,6 +9,7 @@ is, how to configure it, and how to deploy it.
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import hmac
@@ -26,7 +27,7 @@ import httpx
 import stripe
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
@@ -75,7 +76,7 @@ def _price_label() -> str:
     return f"${cents // 100}" if cents % 100 == 0 else f"${cents / 100:.2f}"
 
 
-templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES)
+templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES, unreviewed_feedback_count=db.count_feedback_unreviewed)
 
 
 def _browser_name(user_agent: str) -> str:
@@ -195,6 +196,17 @@ class WebProjectIn(BaseModel):
     id: str
     name: str = ""
     document: dict
+
+
+class WebFeedbackIn(BaseModel):
+    token: str
+    note: str = ""
+    design_name: str = ""
+    stitch_count: int = 0
+    original_image_base64: Optional[str] = None
+    original_image_type: str = "image/png"
+    digitized_image_base64: str
+    digitized_image_type: str = "image/png"
 
 
 
@@ -633,6 +645,19 @@ def api_web_projects_delete(body: WebTokenIn, id: str, x_api_key: Optional[str] 
         return {"deleted": web_access.delete_project(token=body.token, project_id=id)}
     except activation.ActivationError as e:
         return _activation_error(e, status=401)
+
+
+@app.post("/api/web/feedback")
+def api_web_feedback(body: WebFeedbackIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.submit_feedback(
+            token=body.token, note=body.note, design_name=body.design_name, stitch_count=body.stitch_count,
+            original_image_base64=body.original_image_base64, original_image_type=body.original_image_type,
+            digitized_image_base64=body.digitized_image_base64, digitized_image_type=body.digitized_image_type,
+        )
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
 
 
 # -------------------------------------------------------- stripe webhook ---
@@ -1274,6 +1299,64 @@ def financials_csv(view: str = "monthly", year: int = 0):
                          *[f"{r['expenses_by_category'].get(c, 0) / 100:.2f}" for c in cats], f"{r['total_expenses_cents'] / 100:.2f}", f"{r['net_cents'] / 100:.2f}", f"{r['promoter_share_accrued_cents'] / 100:.2f}", r["started"], r["ended"]])
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=piperstitch_financials_{ctx['view']}_{ctx['year']}.csv"})
+
+
+# -------------------------------------------------------------- feedback ---
+# "Send feedback" in the web editor: the original artwork and a picture of
+# the digitized result, for reviewing where the algorithm did well or
+# poorly. See db.feedback_submissions and web_access.submit_feedback.
+
+
+@app.get("/admin/feedback", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_feedback(request: Request, only_unreviewed: bool = False):
+    return templates.TemplateResponse(request, "feedback.html", {
+        "active_nav": "feedback",
+        "submissions": db.list_feedback(only_unreviewed=only_unreviewed),
+        "unreviewed_count": db.count_feedback_unreviewed(),
+        "only_unreviewed": only_unreviewed,
+    })
+
+
+@app.get("/admin/feedback/{feedback_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_feedback_detail(request: Request, feedback_id: int, message: str = "", error: str = ""):
+    submission = db.get_feedback(feedback_id)
+    if submission is None:
+        return RedirectResponse("/admin/feedback", status_code=303)
+    return templates.TemplateResponse(request, "feedback_detail.html", {
+        "active_nav": "feedback", "submission": submission, "message": message or None, "error": error or None,
+    })
+
+
+@app.get("/admin/feedback/{feedback_id}/image/{which}", dependencies=[Depends(auth.require_admin)])
+def admin_feedback_image(feedback_id: int, which: str):
+    submission = db.get_feedback(feedback_id)
+    if submission is None or which not in ("original", "digitized"):
+        raise HTTPException(status_code=404)
+    data = submission[f"{which}_image_data"]
+    if not data:
+        raise HTTPException(status_code=404)
+    content_type = submission[f"{which}_image_type"] or "image/png"
+    ext = "jpg" if "jpeg" in content_type else content_type.split("/")[-1]
+    filename = f"piperstitch_feedback_{feedback_id}_{which}.{ext}"
+    return Response(base64.b64decode(data), media_type=content_type, headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
+@app.post("/admin/feedback/{feedback_id}/review", dependencies=[Depends(auth.require_admin)])
+def admin_feedback_review(feedback_id: int):
+    submission = db.get_feedback(feedback_id)
+    if submission is None:
+        return RedirectResponse("/admin/feedback", status_code=303)
+    if submission["reviewed_at"] is None:
+        db.mark_feedback_reviewed(feedback_id, reviewed_by="admin")
+    customer = db.get_customer(submission["customer_id"]) if submission["customer_id"] else None
+    try:
+        email_sender.send_feedback_reviewed_email(to_email=submission["customer_email"], customer_name=customer["name"] if customer else "", account_url=config.WEB_APP_URL)
+    except email_sender.EmailSendError as e:
+        return RedirectResponse(f"/admin/feedback/{feedback_id}?error=Send failed: {quote_plus(str(e))}", status_code=303)
+    if submission["customer_id"]:
+        db.add_event(customer_id=submission["customer_id"], subscription_id=None, kind="email",
+                     detail=f"Told we used their feedback (submission #{feedback_id}) and to try PiperStitch again.")
+    return RedirectResponse(f"/admin/feedback/{feedback_id}?message=" + quote_plus("Marked reviewed and emailed the customer."), status_code=303)
 
 
 # --------------------------------------------------------------- updates ---

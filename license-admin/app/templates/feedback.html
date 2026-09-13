@@ -1,0 +1,32 @@
+{% extends "admin_base.html" %}
+{% block title %}Feedback — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">Design feedback</h2>
+      <div class="grow"></div>
+      <a href="/admin/feedback{{ '' if only_unreviewed else '?only_unreviewed=1' }}" class="small secondary" style="text-decoration:none; padding:6px 12px; border-radius:6px">
+        {{ 'Show all' if only_unreviewed else 'Show unreviewed only' }}
+      </a>
+    </div>
+    <p class="muted small" style="margin-top:0">Sent from the web editor's "Send feedback" button: the original artwork alongside a picture of what PiperStitch digitized from it. Open one to see both images full-size, or download them straight from there to hand to Claude or any other model reviewing the algorithm.</p>
+
+    <table>
+      <tr><th>Sent</th><th>Customer</th><th>Design</th><th>Stitches</th><th>Note</th><th>Status</th></tr>
+      {% for s in submissions %}
+      <tr>
+        <td class="muted small">{{ s.created_at|short_dt }}</td>
+        <td>{% if s.customer_id %}<a href="/admin/customers/{{ s.customer_id }}">{{ s.customer_email }}</a>{% else %}{{ s.customer_email }}{% endif %}</td>
+        <td><a href="/admin/feedback/{{ s.id }}"><strong>{{ s.design_name or 'Untitled' }}</strong></a></td>
+        <td>{{ s.stitch_count }}</td>
+        <td class="muted small">{{ (s.note[:60] + '…') if s.note and s.note|length > 60 else (s.note or '—') }}</td>
+        <td>{% if s.reviewed_at %}<span class="pill">reviewed {{ s.reviewed_at|short_date }}</span>{% else %}<span class="pill ended">new</span>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No feedback submissions {{ 'left to review' if only_unreviewed else 'yet' }}.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

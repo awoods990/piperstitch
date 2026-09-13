@@ -177,6 +177,38 @@ If anything doesn't work, just reply to this email."""
     _send_smtp(_compose(to_email=to_email, subject="Your complimentary PiperStitch access", body=body, html_body=html))
 
 
+def send_feedback_received_email(*, to_email: str, customer_name: str) -> None:
+    """Sent immediately when someone uses "Send feedback" in the web
+    editor -- before anyone on our side has actually looked at it, so
+    this promises review, not a fix."""
+    body = f"""Hi {customer_name or 'there'},
+
+Thanks for sending us that design — we've received the original artwork and the digitized result you sent, and someone on the PiperStitch team will look it over.
+
+This is exactly how we improve the automatic digitizing itself: every submission helps us see where the algorithm is making good calls and where it isn't, so we can make tomorrow's PiperStitch better than today's.
+
+There's nothing else for you to do. If we make a change because of what you sent, we'll follow up.
+
+Thanks again for helping us make PiperStitch better."""
+    html = email_branding.render(body_text=body, preheader="We received your design and will look it over.")
+    _send_smtp(_compose(to_email=to_email, subject="Thanks for the feedback — we're on it", body=body, html_body=html))
+
+
+def send_feedback_reviewed_email(*, to_email: str, customer_name: str, account_url: str) -> None:
+    """Admin-triggered from the feedback submission's own page, once
+    someone has actually looked at it (and, ideally, used it to make a
+    real improvement)."""
+    body = f"""Hi {customer_name or 'there'},
+
+We've reviewed the design you sent us and used it to help improve PiperStitch's digitizing.
+
+We'd love for you to try it again — open PiperStitch and give it another run. If anything still looks off, send us that one too; every real design like yours makes the engine a little better.
+
+Thanks for helping us make PiperStitch better."""
+    html = email_branding.render(body_text=body, cta_label="Open PiperStitch", cta_url=account_url, preheader="We used your feedback — come try PiperStitch again.")
+    _send_smtp(_compose(to_email=to_email, subject="We used your feedback — come try PiperStitch again", body=body, html_body=html))
+
+
 def send_plain_email(*, to_email: str, subject: str, body: str, html_body: str = "", reply_to: str = "") -> None:
     """A free-form email from the admin. Plain text is what the admin
     wrote; an HTML rendering of it is added as an alternative."""
