@@ -2,7 +2,7 @@
 // everything (see server/Sources/StitchPilotServer/Auth.swift); these
 // only show its answers and send the two sign-in requests.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { AccountState, PromoValidation } from "../types";
 
@@ -75,18 +75,45 @@ export function PromoBox({ onChange }: { onChange: (code: string | null, descrip
 // --- sign in ----------------------------------------------------------------
 
 export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => void }) {
-  // The marketing site's "Start your free trial" form hands the address over
-  // as ?email= so the visitor doesn't type it twice.
-  const [email, setEmail] = useState(() => {
-    const e = new URLSearchParams(window.location.search).get("email")?.trim() ?? "";
-    if (e) window.history.replaceState(null, "", window.location.pathname);
-    return e;
+  // The marketing site's "Start your free trial" form hands the address
+  // over as ?email= so the visitor doesn't type it twice; the sign-in
+  // email's own "Sign in instantly" link hands over ?email= and &code=
+  // together, so this can skip straight to verifying instead of making
+  // them type the code back in. Read both once, synchronously, and clear
+  // the URL in the same pass -- splitting this across two separate
+  // useState initializers would race, since the first one's own
+  // history.replaceState already wipes what the second would try to read.
+  const [initial] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const e = params.get("email")?.trim() ?? "";
+    const c = params.get("code")?.trim() ?? "";
+    if (e || c) window.history.replaceState(null, "", window.location.pathname);
+    return { email: e, code: c };
   });
+  const [email, setEmail] = useState(initial.email);
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
   const [resent, setResent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(!!initial.code);
   const [error, setError] = useState<string | null>(null);
+  const [linkFailed, setLinkFailed] = useState(false);
+  const autoVerifyRan = useRef(false);
+
+  const doVerify = async (emailToUse: string, codeToUse: string) => {
+    setBusy(true); setError(null);
+    try {
+      const me = await api.verifyCode(emailToUse, codeToUse);
+      if (me.account) onSignedIn(me.account);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSent(true); // falls back to manual code entry, email already filled in
+      setLinkFailed(true);
+    } finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (initial.code && !autoVerifyRan.current) { autoVerifyRan.current = true; doVerify(initial.email, initial.code); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const request = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,13 +132,20 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
 
   const verify = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true); setError(null);
-    try {
-      const me = await api.verifyCode(email, code);
-      if (me.account) onSignedIn(me.account);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
+    await doVerify(email, code);
   };
+
+  if (initial.code && busy && !linkFailed) {
+    return (
+      <div className="start">
+        <div className="start-brand">
+          <img src="/icon.png" alt="" width={64} height={64} />
+          <h1>PiperStitch</h1>
+        </div>
+        <div className="auth-card"><p>Signing you in…</p></div>
+      </div>
+    );
+  }
 
   return (
     <div className="start">
@@ -131,6 +165,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
         ) : (
           <>
             <div className="auth-sent">{resent ? <>We sent a fresh code to <b>{email}</b>.</> : <>We emailed a six-digit code to <b>{email}</b>.</>} It's good for 15 minutes.</div>
+            <p className="hint">Don't see it right away? Check your junk or spam folder — it sometimes lands there.</p>
             <label className="field">Sign-in code
               <input inputMode="numeric" pattern="[0-9]*" maxLength={6} required autoFocus autoComplete="one-time-code" placeholder="123456" value={code}
                 onChange={(e) => { setCode(e.target.value.replace(/\D/g, "")); setResent(false); }} className="code" />

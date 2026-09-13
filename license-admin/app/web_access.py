@@ -21,6 +21,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from . import config, db, email_sender, promotions, stripe_client, subscriptions
 from .activation import MAX_CODES_PER_HOUR, MAX_VERIFY_ATTEMPTS, ActivationError
@@ -64,8 +65,9 @@ def request_code(*, email: str) -> dict:
         raise ActivationError("rate_limited", "Too many codes requested for this address — wait an hour, or use a code already in your inbox.")
     code = f"{secrets.randbelow(1_000_000):06d}"
     code_row_id = db.create_activation_code(email=email, code_hash=_hash(code), device_id=WEB_DEVICE_ID, ttl_minutes=config.ACTIVATION_CODE_TTL_MINUTES)
+    sign_in_url = f"{config.WEB_APP_URL}/?email={quote(email)}&code={code}"
     try:
-        email_sender.send_activation_code_email(to_email=email, code=code, device_name="the web")
+        email_sender.send_activation_code_email(to_email=email, code=code, device_name="the web", sign_in_url=sign_in_url)
     except email_sender.EmailSendError as e:
         db.delete_activation_code(code_row_id)
         raise ActivationError("email_failed", f"We couldn't send the code: {e}") from e

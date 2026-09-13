@@ -115,15 +115,26 @@ If anything doesn't work, just reply to this email."""
     _send_smtp(_compose(to_email=to_email, subject="Welcome to PiperStitch — you're all set", body=body, html_body=html))
 
 
-def send_activation_code_email(*, to_email: str, code: str, device_name: str) -> None:
+def send_activation_code_email(*, to_email: str, code: str, device_name: str, sign_in_url: Optional[str] = None) -> None:
+    """`sign_in_url` (web sign-in only, never the Mac app's activation
+    code -- see its own doc comment) carries the code right in the link,
+    so clicking it on any device signs that device in without retyping
+    the code. It's a convenience alongside the code, not a replacement
+    for it: someone reading the email on their phone while signing in on
+    a desktop still needs to type the code by hand."""
+    link_line = f"\n\nOr open this link on the device you're signing in on and skip typing it: {sign_in_url}" if sign_in_url else ""
     body = f"""Your PiperStitch sign-in code:
 
 {code}
 
-Enter it in PiperStitch{(' on ' + device_name) if device_name and device_name != 'the web' else ''} to finish signing in. The code expires in {config.ACTIVATION_CODE_TTL_MINUTES} minutes and only works once.
+Enter it in PiperStitch{(' on ' + device_name) if device_name and device_name != 'the web' else ''} to finish signing in. The code expires in {config.ACTIVATION_CODE_TTL_MINUTES} minutes and only works once.{link_line}
 
 If you didn't just try to sign in to PiperStitch, you can ignore this email — nothing happens without the code."""
-    html = email_branding.render(body_text=body, preheader=f"{code} is your PiperStitch sign-in code.", footer_note="Sent because someone entered this address in PiperStitch's sign-in screen.")
+    html = email_branding.render(
+        body_text=body, preheader=f"{code} is your PiperStitch sign-in code.",
+        footer_note="Sent because someone entered this address in PiperStitch's sign-in screen.",
+        cta_label="Sign in instantly" if sign_in_url else "", cta_url=sign_in_url or "",
+    )
     _send_smtp(_compose(to_email=to_email, subject=f"{code} is your PiperStitch sign-in code", body=body, html_body=html))
 
 
