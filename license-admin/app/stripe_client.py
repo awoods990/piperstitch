@@ -36,6 +36,11 @@ def create_subscription_checkout(*, customer_name: str, customer_email: str, cus
         cancel_url=cancel_url or f"{config.PUBLIC_BASE_URL}/subscribe/cancel",
         metadata={"customer_id": str(customer_id), "customer_name": customer_name, "customer_email": customer_email},
         subscription_data={"metadata": {"customer_id": str(customer_id), "customer_email": customer_email}},
+        # Stripe's Managed Payments (merchant-of-record mode, higher fees,
+        # on by default for new accounts) is opted out of per session:
+        # PiperStitch is the merchant, like Amerus. Turn this off if you
+        # ever decide to let Stripe handle sales tax instead.
+        managed_payments={"enabled": False},
     )
 
 
