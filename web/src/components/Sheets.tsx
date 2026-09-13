@@ -226,13 +226,57 @@ export function FeedbackSheet({ originalImage, digitizedImage, designName, stitc
   );
 }
 
+// --- Send a file --------------------------------------------------------------------
+
+export function SendSheet({ designName, onClose, onSend }: { designName: string; onClose: () => void; onSend: (format: string, toEmail: string, message: string) => Promise<void> }) {
+  const [to, setTo] = useState("");
+  const [format, setFormat] = useState("dst");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const formats: [string, string][] = [["dst", "Tajima (.dst) — most machines"], ["pes", "Brother / Baby Lock (.pes)"], ["jef", "Janome (.jef)"], ["exp", "Melco / Bernina (.exp)"], ["vp3", "Husqvarna Viking / Pfaff (.vp3)"]];
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try { await onSend(format, to, message); setDone(true); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Send the embroidery file" onClose={onClose}>
+      {done ? (
+        <>
+          <p>Sent <b>{designName}.{format}</b> to <b>{to}</b>. They'll get it from hello@piperstitch.com with you as the reply-to.</p>
+          <div className="modal-foot"><button className="btn primary" onClick={onClose}>Done</button></div>
+        </>
+      ) : (
+        <>
+          <p className="hint">Emails the finished machine file to a customer, a colleague, or yourself — the same file the Download button gives you.</p>
+          <label className="field">Send to<input type="email" autoFocus value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" /></label>
+          <label className="field">Machine format<select value={format} onChange={(e) => setFormat(e.target.value)}>{formats.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+          <label className="field">Note (optional)<textarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Here's the logo we talked about — 10 × 10 cm for a 4×4 hoop." /></label>
+          {error && <div className="error-text">{error}</div>}
+          <div className="modal-foot"><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !to.includes("@")} onClick={submit}>{busy ? "Sending…" : "Send"}</button></div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 // --- Settings ---------------------------------------------------------------------
 
-export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount }: {
+export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount, onAccount }: {
   catalog: Catalog; prefs: Preferences; account: AccountState | null; onPrefs: (p: Preferences) => void; onClose: () => void; onSignOut: () => void; onRefreshAccount: () => void;
+  onAccount: (a: AccountState) => void;
 }) {
-  const [tab, setTab] = useState<"account" | "preferences" | "threads">(account ? "account" : "preferences");
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState(account?.name ?? "");
+  const [savingName, setSavingName] = useState(false);
+  const saveName = async () => {
+    setSavingName(true); setError(null);
+    try { const me = await api.updateName(name); if (me.account) onAccount(me.account); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setSavingName(false); }
+  };
+  const [tab, setTab] = useState<"account" | "preferences" | "threads">(account ? "account" : "preferences");
   const [promo, setPromo] = useState<{ code: string | null; description: string | null }>({ code: null, description: null });
   const go = async (fn: () => Promise<string>) => { try { window.location.assign(await fn()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } };
   const set = <K extends keyof Preferences>(k: K, v: Preferences[K]) => onPrefs({ ...prefs, [k]: v });
@@ -246,7 +290,8 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
       {tab === "account" && account && (
         <div className="stack">
           <div className="kv"><span>Signed in as</span><b>{account.email}</b></div>
-          <div className="kv"><span>Name</span><b>{account.name}</b></div>
+          <div className="kv"><span>Your name</span><span className="row-inline"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Shown on files you send" style={{ minWidth: 200 }} />
+            <button className="btn small" disabled={savingName || !name.trim() || name.trim() === account.name} onClick={saveName}>{savingName ? "Saving…" : "Save"}</button></span></div>
           <div className="kv"><span>Plan</span><b>{statusLine(account)}</b></div>
           <div className="kv"><span>Price</span><b>{price(account)}</b></div>
           {account.status === "trialing" && <PromoBox onChange={(code, description) => setPromo({ code, description })} />}

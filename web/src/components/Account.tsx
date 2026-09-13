@@ -201,7 +201,7 @@ export function AccountMenu({ account, onSignOut }: { account: AccountState; onS
   return (
     <div className="account">
       <button className={"btn ghost account-btn" + (trial ? " trial" : "")} onClick={() => setOpen((o) => !o)} title={account.email}>
-        <span className="account-dot" />{trial ? statusLine(account) : account.email}
+        <span className="account-dot" /><b>{account.name || account.email}</b>{trial && <span className="account-sub">· {statusLine(account)}</span>}
       </button>
       {open && (
         <div className="menu" onMouseLeave={() => setOpen(false)}>

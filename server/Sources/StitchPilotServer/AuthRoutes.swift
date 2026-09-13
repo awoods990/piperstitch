@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import StitchPilotCore
 
 /// What the browser sees of its own account. `authEnabled: false` means
 /// the server runs without License Admin (development) and everything is
@@ -88,6 +89,38 @@ func authRoutes(_ api: RoutesBuilder) {
         struct In: Content { var token: String; var promo_code: String }
         struct Out: Decodable { var url: String }
         return ["url": try await req.licenseAdmin.post("/api/web/checkout", In(token: session.token, promo_code: body.promoCode ?? ""), as: Out.self).url]
+    }
+
+    auth.post("profile") { req -> Response in
+        let session = try await requireSession(req)
+        struct Body: Content { var name: String }
+        let body = try req.content.decode(Body.self)
+        struct In: Content { var token: String; var name: String }
+        let account = try await req.licenseAdmin.post("/api/web/profile", In(token: session.token, name: body.name), as: AccountState.self)
+        var updated = session; updated.account = account; updated.checkedAt = Int(Date().timeIntervalSince1970)
+        let response = try await MeResponse(authEnabled: true, signedIn: true, account: account).encodeResponse(for: req)
+        SessionCookie.set(updated, on: response, app: req.application)
+        return response
+    }
+
+    /// The Send button: flatten the document, encode the machine file, and
+    /// have License Admin email it on the customer's behalf.
+    auth.post("send") { req -> [String: Bool] in
+        let session = try await requireSession(req)
+        struct Body: Content { var document: StitchDocument; var format: String; var toEmail: String; var message: String? }
+        let body = try req.content.decode(Body.self)
+        guard let format = ExportFormat(rawValue: body.format.lowercased()) else { throw Abort(.badRequest, reason: "Unknown export format.") }
+        let document = body.document
+        let data = try await Engine.run { () throws -> Data in
+            let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
+            return try format.write(plan, designName: document.name, threadColors: colors.map(\.rgb))
+        }
+        let safeName = document.name.replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "_", options: .regularExpression)
+        struct In: Content { var token: String; var to_email: String; var filename: String; var content_base64: String; var message: String; var design_name: String }
+        struct Out: Decodable { var sent: Bool }
+        let out = try await req.licenseAdmin.post("/api/web/send-file", In(token: session.token, to_email: body.toEmail, filename: "\(safeName).\(format.rawValue)",
+                                                                        content_base64: data.base64EncodedString(), message: body.message ?? "", design_name: document.name), as: Out.self)
+        return ["sent": out.sent]
     }
 
     /// Is this promo code usable by the signed-in account, and what does it give?

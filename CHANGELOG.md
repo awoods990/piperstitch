@@ -4,6 +4,22 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: $24/month; the web app shows your name and can send files
+
+- **Price is $24 a month** across the site, docs and License Admin's
+  default (`MONTHLY_PRICE_CENTS=2400`). The deployed value and the Stripe
+  price object must be updated by hand — see DEPLOY.md step 4. Existing
+  subscribers keep the price they signed up at.
+- **Your name in the app**: the account button shows the account's name
+  (with the trial countdown), and Settings → Account & billing has an
+  editable name (`/api/web/profile`).
+- **Send** (toolbar, next to Download): emails the finished DST/PES/JEF/
+  EXP/VP3 file to anyone, from hello@piperstitch.com with the sender as
+  reply-to and their note in the body — like the Mac app's Send. License
+  Admin sends it through Postmark/SMTP with the file attached, caps it
+  at 30 sends a day per account, and logs each send on the customer's
+  timeline.
+
 ## Added: Financials — expenses, Stripe fee import, and P&L by month / quarter / year / month-to-date
 
 - **Expenses** (`expenses`, `recurring_expenses` tables; `app/finance.py`):

@@ -77,7 +77,7 @@ on …:8080" line confirms it). Note the URL — something like
 | `WEB_API_KEY` | generated — **the same value goes into app** |
 | `WEB_APP_URL` | the **app** service's URL (step 3; come back and fill it) |
 | `CORS_ALLOWED_ORIGINS` | `https://piperstitch.com,https://www.piperstitch.com` |
-| `MONTHLY_PRICE_CENTS` / `TRIAL_DAYS` / `MAX_DEVICES` | `1900` / `14` / `2` (or your numbers) |
+| `MONTHLY_PRICE_CENTS` / `TRIAL_DAYS` / `MAX_DEVICES` | `2400` / `14` / `2` (or your numbers) |
 
 Deploy (it redeploys on variable changes). **Check:** open
 `<PUBLIC_BASE_URL>/health` → `{"status":"ok"}`, and `<PUBLIC_BASE_URL>/admin`

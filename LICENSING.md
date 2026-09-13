@@ -17,7 +17,7 @@ project was changed; this is a copy that diverged.
 
 Every install gets a **14-day free trial** automatically — no card, no
 account. After that the editor is locked until someone **signs in with an
-email that has an active subscription**. A subscription is **$19/month**,
+email that has an active subscription**. A subscription is **$24/month**,
 started on the website's pricing page through Stripe, and **renews
 automatically** until the customer cancels. There is no licence key: the
 app signs in by email + six-digit code, receives a short-lived
@@ -29,7 +29,7 @@ period; exported files are ordinary files and keep working forever.
 
 The browser app (repo: `web/`, served by `server/`) uses the **same
 License Admin, the same Stripe subscription and the same customer
-record** as the Mac app -- one email, one $19/month, either edition.
+record** as the Mac app -- one email, one $24/month, either edition.
 The difference is where the free trial lives: a Mac gets its 14 days
 from the install with no account, but a browser can't be trusted to
 keep a trial clock, so on the web the trial belongs to the *account* and
@@ -210,7 +210,7 @@ itself.
 
 ## Prices and numbers live in four places
 
-`$19`, `14 days`, `2 Macs`: `license-admin/.env` (`MONTHLY_PRICE_CENTS`,
+`$24`, `14 days`, `2 Macs`: `license-admin/.env` (`MONTHLY_PRICE_CENTS`,
 `TRIAL_DAYS`, `MAX_DEVICES`), the Stripe Price (created once by
 `scripts/create_stripe_prices.py`), the website's prose, and
 `LicenseConfig.production.trialDays`. Change them together.

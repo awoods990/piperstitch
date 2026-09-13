@@ -566,6 +566,44 @@ def api_web_signout(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
     return {"ok": web_access.sign_out(token=body.token)}
 
 
+class WebProfileIn(BaseModel):
+    token: str
+    name: str
+
+
+class WebSendFileIn(BaseModel):
+    token: str
+    to_email: str
+    filename: str
+    content_base64: str
+    message: str = ""
+    design_name: str = ""
+
+
+@app.post("/api/web/profile")
+def api_web_profile(body: WebProfileIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.update_name(token=body.token, name=body.name)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
+
+
+@app.post("/api/web/send-file")
+def api_web_send_file(body: WebSendFileIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    import base64
+    try:
+        data = base64.b64decode(body.content_base64, validate=True)
+    except (ValueError, binascii_error):
+        return JSONResponse({"error": "invalid_file", "message": "The file couldn't be read."}, status_code=400)
+    try:
+        web_access.send_file(token=body.token, to_email=body.to_email, filename=body.filename, data=data, message=body.message, design_name=body.design_name)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else (429 if e.code == "rate_limited" else 400))
+    return {"sent": True}
+
+
 @app.post("/api/web/promo/validate")
 def api_web_promo_validate(body: WebPromoIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)

@@ -46,6 +46,7 @@ def _send_smtp(msg: EmailMessage) -> None:
 
         text_part = msg.get_body(preferencelist=("plain",))
         html_part = msg.get_body(preferencelist=("html",))
+        attachments = [(part.get_filename(), part.get_payload(decode=True), part.get_content_type()) for part in msg.iter_attachments()]
         try:
             email_postmark.send_postmark_email(
                 to_email=str(msg["To"]),
@@ -53,6 +54,7 @@ def _send_smtp(msg: EmailMessage) -> None:
                 text_body=text_part.get_content() if text_part else "",
                 html_body=html_part.get_content() if html_part else "",
                 reply_to=str(msg["Reply-To"]) if msg["Reply-To"] else "",
+                attachments=attachments or None,
             )
         except email_postmark.PostmarkError as e:
             raise EmailSendError(str(e)) from e
@@ -213,3 +215,21 @@ def send_plain_email(*, to_email: str, subject: str, body: str, html_body: str =
     """A free-form email from the admin. Plain text is what the admin
     wrote; an HTML rendering of it is added as an alternative."""
     _send_smtp(_compose(to_email=to_email, subject=subject, body=body, html_body=html_body or email_branding.render(body_text=body), reply_to=reply_to))
+
+
+def send_file_email(*, to_email: str, sender_name: str, sender_email: str, filename: str, data: bytes, message: str = "", design_name: str = "") -> None:
+    """A customer sending an embroidery file to someone from inside the
+    app (the web edition's Send button). From us, reply-to the customer,
+    the file attached, their note in the body."""
+    design = design_name or filename.rsplit(".", 1)[0]
+    intro = f"{sender_name or sender_email} sent you an embroidery file from PiperStitch: {filename}."
+    body = intro + (f"\n\nTheir note:\n\n{message.strip()}" if message.strip() else "") + f"""
+
+Save the attached file and load it on your embroidery machine the way you normally would. Reply to this email to reach {sender_name or 'the sender'} directly.
+
+PiperStitch turns any image into a machine-ready embroidery file in a browser — {config.WEB_APP_URL}"""
+    html = email_branding.render(body_text=body, cta_label="Try PiperStitch free", cta_url=config.WEB_APP_URL, preheader=f"{design} — sent from PiperStitch",
+                                 footer_note=f"Sent by {sender_email} using PiperStitch. Reply to reach them; we only carried the message.")
+    msg = _compose(to_email=to_email, subject=f"{sender_name or sender_email} sent you an embroidery file: {filename}", body=body, html_body=html, reply_to=sender_email)
+    msg.add_attachment(data, maintype="application", subtype="octet-stream", filename=filename)
+    _send_smtp(msg)

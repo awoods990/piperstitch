@@ -12,7 +12,7 @@ import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
 import Editor from "./components/Editor";
 import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
-import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
+import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
 import type { Tool } from "./components/StitchCanvas";
 import { loadPrefs, savePrefs, type Preferences } from "./prefs";
 import { transformShape } from "./geometry";
@@ -30,7 +30,7 @@ interface Imported {
 }
 
 type Phase = "start" | "setup" | "editor";
-type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | null;
+type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
 
@@ -369,7 +369,8 @@ export default function App() {
   const sheets = (
     <>
       {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} />}
-      {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} />}
+      {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })} />}
+      {sheet === "send" && document && <SendSheet designName={document.name} onClose={() => setSheet(null)} onSend={async (format, toEmail, message) => { await api.sendFile(document, format, toEmail, message); setStatus(`Sent ${document.name}.${format} to ${toEmail}.`); }} />}
       {sheet === "threadLibrary" && <ThreadLibrarySheet library={prefs.threadLibrary} onChange={(lib) => setPrefs({ ...prefs, threadLibrary: lib })} onClose={() => setSheet(null)} />}
       {sheet === "lettering" && document && <LetteringSheet palette={palette} selectedCount={selectedIDs.size} onClose={() => setSheet(null)} onAdd={onAddLettering} />}
       {sheet === "mergeColors" && document && <MergeColorsSheet objects={document.objects} palette={palette} onClose={() => setSheet(null)} onMerge={onMergeColors} />}

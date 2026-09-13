@@ -169,3 +169,21 @@ def test_web_sign_in_records_terms_acceptance_once_per_version(isolated_db, test
     assert customer["consent_terms_version"] == "2030-01-01" and customer["consent_accepted_at"] != "2020-01-01T00:00:00Z"
     accepted = [e["detail"] for e in db.list_events_for_customer(session.customer_id) if e["kind"] == "terms_accepted"]
     assert sorted(accepted) == sorted([f"Accepted Terms v{original_version} by signing in on the web.", "Accepted Terms v2030-01-01 by signing in on the web."])
+
+
+def test_profile_name_and_send_file(isolated_db, test_keypair, fake_smtp):
+    session = _sign_in(fake_smtp, email="sender@example.com")
+    assert web_access.update_name(token=session.token, name="  Ashley W ")["name"] == "Ashley W"
+    fake_smtp.sent.clear()
+    web_access.send_file(token=session.token, to_email="Friend@Example.com", filename="badge.dst", data=b"LA:badge" + bytes(600), message="Here's the logo", design_name="badge")
+    msg = fake_smtp.sent[-1]
+    assert msg["To"] == "friend@example.com" and msg["Reply-To"] == "sender@example.com" and "Ashley W" in msg["Subject"]
+    attachments = list(msg.iter_attachments())
+    assert len(attachments) == 1 and attachments[0].get_filename() == "badge.dst" and attachments[0].get_payload(decode=True).startswith(b"LA:badge")
+    assert "Here's the logo" in msg.get_body(preferencelist=("plain",)).get_content()
+    with pytest.raises(activation.ActivationError) as e:
+        web_access.send_file(token=session.token, to_email="friend@example.com", filename="virus.exe", data=b"x")
+    assert e.value.code == "invalid_file"
+    with pytest.raises(activation.ActivationError):
+        web_access.send_file(token=session.token, to_email="nope", filename="a.pes", data=b"x")
+    assert db.count_sent_files(session.customer_id) == 1

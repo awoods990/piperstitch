@@ -14,6 +14,7 @@ an HttpOnly cookie of its own."""
 from __future__ import annotations
 
 import hashlib
+import re
 import hmac
 import json
 import secrets
@@ -303,3 +304,46 @@ def submit_feedback(*, token: str, note: str, design_name: str, stitch_count: in
     except email_sender.EmailSendError as e:
         log.warning("Feedback %s saved but the thank-you email failed: %s", feedback_id, e)
     return {"id": feedback_id}
+
+
+# --------------------------------------------------------------- profile ---
+
+
+def update_name(*, token: str, name: str) -> dict:
+    session = _session(token)
+    if not name.strip():
+        raise ActivationError("invalid_name", "Enter your name.")
+    db.update_customer_name(session["customer_id"], name)
+    return state(token=token)
+
+
+# ------------------------------------------------------------ send a file ---
+
+MAX_SENDS_PER_DAY = 30
+MAX_FILE_BYTES = 5 * 1024 * 1024
+ALLOWED_EXTENSIONS = {"dst", "pes", "jef", "exp", "vp3"}
+
+
+def send_file(*, token: str, to_email: str, filename: str, data: bytes, message: str = "", design_name: str = "") -> None:
+    """The Send button: emails the finished machine file to someone on
+    the customer's behalf, from our address with reply-to the customer.
+    Capped per day so a signed-in account can't become a spam relay."""
+    session = _session(token)
+    customer = db.get_customer(session["customer_id"])
+    to_email = to_email.strip().lower()
+    if "@" not in to_email or "." not in to_email.rsplit("@", 1)[-1]:
+        raise ActivationError("invalid_email", "That doesn't look like an email address.")
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ActivationError("invalid_file", "Only embroidery files (DST, PES, JEF, EXP, VP3) can be sent.")
+    if not data or len(data) > MAX_FILE_BYTES:
+        raise ActivationError("invalid_file", "That file is empty or too large to email.")
+    if db.count_sent_files(customer["id"]) >= MAX_SENDS_PER_DAY:
+        raise ActivationError("rate_limited", f"You've sent {MAX_SENDS_PER_DAY} files today — that's the daily limit. Try again tomorrow, or download the file and attach it yourself.")
+    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", filename)[:80]
+    try:
+        email_sender.send_file_email(to_email=to_email, sender_name=customer["name"], sender_email=customer["email"], filename=safe_name, data=data, message=message[:2000], design_name=design_name)
+    except email_sender.EmailSendError as e:
+        raise ActivationError("email_failed", f"We couldn't send it: {e}") from e
+    db.record_sent_file(customer_id=customer["id"], to_email=to_email, filename=safe_name, size_bytes=len(data))
+    db.add_event(customer_id=customer["id"], subscription_id=None, kind="file_sent", detail=f"Sent {safe_name} to {to_email}.")

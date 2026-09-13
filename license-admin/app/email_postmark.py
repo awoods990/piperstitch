@@ -12,6 +12,8 @@ better-deliverability route is the right default for all of them.
 
 from __future__ import annotations
 
+from typing import Optional
+
 import httpx
 
 from . import config
@@ -23,7 +25,8 @@ class PostmarkError(Exception):
     pass
 
 
-def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "") -> None:
+def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "", attachments: Optional[list] = None) -> None:
+    """`attachments`: [(filename, bytes, content_type)]."""
     payload = {
         "From": config.POSTMARK_FROM or config.SMTP_FROM,
         "To": to_email,
@@ -35,6 +38,9 @@ def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_bod
         payload["HtmlBody"] = html_body
     if reply_to or config.REPLY_TO_EMAIL:
         payload["ReplyTo"] = reply_to or config.REPLY_TO_EMAIL
+    if attachments:
+        import base64
+        payload["Attachments"] = [{"Name": name, "Content": base64.b64encode(data).decode(), "ContentType": ctype} for name, data, ctype in attachments]
 
     try:
         response = httpx.post(

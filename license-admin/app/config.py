@@ -137,7 +137,7 @@ WEBSITE_SFTP_UPDATES_PATH = os.environ.get("WEBSITE_SFTP_UPDATES_PATH", "public_
 # financials, and the Stripe Price created by scripts/create_stripe_prices.py
 # all agree. The marketing site's static pages repeat the number in prose;
 # README.md's go-live checklist says to change both together.
-MONTHLY_PRICE_CENTS = _int("MONTHLY_PRICE_CENTS", 19_00)
+MONTHLY_PRICE_CENTS = _int("MONTHLY_PRICE_CENTS", 24_00)
 CURRENCY = os.environ.get("CURRENCY", "usd")
 # Stripe's standard card fee, used to estimate a promoter's net revenue
 # share when the actual fee isn't on the invoice webhook (see

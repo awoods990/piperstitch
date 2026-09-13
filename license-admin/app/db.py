@@ -287,6 +287,17 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sent_files (
+    -- The web app's Send button: who sent what to whom. Also the rate limit.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    to_email TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sent_files_customer ON sent_files(customer_id, created_at);
+
 CREATE TABLE IF NOT EXISTS stripe_events (
     id TEXT PRIMARY KEY,                -- Stripe's evt_... id; Stripe retries, we don't double-apply
     type TEXT NOT NULL,
@@ -402,6 +413,11 @@ def upsert_customer(
             (name.strip(), email, phone.strip(), address.strip(), consent_terms_version, consent_accepted_at, source, now, now),
         )
         return cur.lastrowid
+
+
+def update_customer_name(customer_id: int, name: str) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE customers SET name = ?, updated_at = ? WHERE id = ?", (name.strip()[:120], _now(), customer_id))
 
 
 def get_customer(customer_id: int) -> Optional[sqlite3.Row]:
@@ -1351,3 +1367,14 @@ def get_feedback(feedback_id: int) -> Optional[sqlite3.Row]:
 def mark_feedback_reviewed(feedback_id: int, *, reviewed_by: str) -> bool:
     with connection() as conn:
         return conn.execute("UPDATE feedback_submissions SET reviewed_at = ?, reviewed_by = ? WHERE id = ?", (_now(), reviewed_by, feedback_id)).rowcount > 0
+
+
+def record_sent_file(*, customer_id: int, to_email: str, filename: str, size_bytes: int) -> None:
+    with connection() as conn:
+        conn.execute("INSERT INTO sent_files (customer_id, to_email, filename, size_bytes, created_at) VALUES (?, ?, ?, ?, ?)", (customer_id, to_email.strip().lower(), filename, size_bytes, _now()))
+
+
+def count_sent_files(customer_id: int, *, hours: int = 24) -> int:
+    since = (datetime.utcnow() - timedelta(hours=hours)).isoformat(timespec="seconds") + "Z"
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM sent_files WHERE customer_id = ? AND created_at >= ?", (customer_id, since)).fetchone()[0]
