@@ -363,7 +363,9 @@ export default function App() {
 
   if (phase === "setup" && imported && answers) {
     return <SetupFlow catalog={catalog} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
-      recommendedHeightMM={imported.response.recommendedHeightMM} aspectRatio={imported.response.aspectRatio} initial={answers} busy={busy} onFinish={onSetupFinish} onCancel={onStartOver} />;
+      recommendedHeightMM={imported.response.recommendedHeightMM} aspectRatio={imported.response.aspectRatio} initial={answers} busy={busy}
+      matchToThreadLibrary={matchToThreadLibrary} onMatchToThreadLibraryChange={(on) => setPrefs({ ...prefs, matchToThreadLibrary: on })}
+      onFinish={onSetupFinish} onCancel={onStartOver} />;
   }
 
   if (phase === "editor" && document && answers) {

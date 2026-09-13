@@ -27,6 +27,8 @@ interface Props {
   aspectRatio: number;
   initial: SetupAnswers;
   busy: string | null;
+  matchToThreadLibrary: boolean;
+  onMatchToThreadLibraryChange: (on: boolean) => void;
   onFinish: (answers: SetupAnswers) => void;
   onCancel: () => void;
 }
@@ -235,6 +237,18 @@ export default function SetupFlow(props: Props) {
                     selected={a.colorPreset === p.id} disabled={isVector}
                     onClick={() => setA({ ...a, colorPreset: p.id })} />
                 ))}
+              </div>
+              <label className="check">
+                <input type="checkbox" checked={props.matchToThreadLibrary} disabled={isVector}
+                  onChange={(e) => props.onMatchToThreadLibraryChange(e.target.checked)} />
+                Match colours to my thread library
+              </label>
+              <div className="hint">
+                {isVector
+                  ? "Vector artwork always keeps its own exact colours — this only affects images."
+                  : props.matchToThreadLibrary
+                    ? "On: each detected colour is snapped to the nearest colour in your thread library (or a generic palette, if you haven't set one up). Turn this off to keep the exact colours from your file instead."
+                    : "Off: keeps the exact colours detected in your file. Turn this on to snap them to real thread colours you can actually stitch with."}
               </div>
               <div className="summary">
                 {placementName} · {cm(a.widthMM)} × {cm(a.heightMM)} cm · {hoopName} · {fabricName} · {isVector ? "artwork colours" : PRESET_LABELS[a.colorPreset][0]}
