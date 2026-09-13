@@ -403,6 +403,13 @@ def delete_customer(customer_id: int) -> None:
         conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
 
 
+def record_terms_consent(customer_id: int, version: str) -> None:
+    """Stamps acceptance of a Terms version at the moment it happened. The
+    admin's customer page shows the pair; a later version overwrites it."""
+    with connection() as conn:
+        conn.execute("UPDATE customers SET consent_terms_version = ?, consent_accepted_at = ?, updated_at = ? WHERE id = ?", (version, _now(), _now(), customer_id))
+
+
 def record_reminder_sent(customer_id: int) -> None:
     with connection() as conn:
         conn.execute("UPDATE customers SET last_reminder_sent_at = ? WHERE id = ?", (_now(), customer_id))

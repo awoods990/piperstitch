@@ -160,6 +160,11 @@ MAX_DEVICES = _int("MAX_DEVICES", 2)
 ACTIVATION_CODE_TTL_MINUTES = _int("ACTIVATION_CODE_TTL_MINUTES", 15)
 # Magic links to the customer's self-service account page.
 ACCOUNT_LINK_TTL_MINUTES = _int("ACCOUNT_LINK_TTL_MINUTES", 30)
+# The version date shown on website/terms.html. A web sign-in records the
+# customer's acceptance of this version (customers.consent_terms_version);
+# bump it together with the page when the Terms change materially, and
+# each customer's next sign-in stamps the new acceptance.
+TERMS_VERSION = os.environ.get("TERMS_VERSION", "2026-09-13")
 
 
 def require_for_serving() -> list[str]:

@@ -97,11 +97,23 @@ def verify_code(*, email: str, code: str, user_agent: str = "") -> WebSession:
         customer_id = db.upsert_customer(name=email.split("@", 1)[0].replace(".", " ").title(), email=email, source="web_trial")
         customer = db.get_customer(customer_id)
     _start_trial_if_first_visit(customer)
+    _record_terms_acceptance(customer)
 
     token = secrets.token_urlsafe(32)
     session_row_id = db.create_web_session(customer_id=customer["id"], token_hash=_hash(token), user_agent=user_agent)
     db.add_event(customer_id=customer["id"], subscription_id=None, kind="web_signed_in", detail="Signed in on the web.")
     return WebSession(token=token, customer_id=customer["id"], session_row_id=session_row_id)
+
+
+def _record_terms_acceptance(customer) -> None:
+    """The sign-in form says "By continuing you accept the Terms and Privacy
+    Policy" under both its buttons, so a verified code is the acceptance.
+    Recorded once per Terms version: the first sign-in after a bump stamps
+    the new version, later sign-ins leave that timestamp alone."""
+    if customer["consent_terms_version"] == config.TERMS_VERSION:
+        return
+    db.record_terms_consent(customer["id"], config.TERMS_VERSION)
+    db.add_event(customer_id=customer["id"], subscription_id=None, kind="terms_accepted", detail=f"Accepted Terms v{config.TERMS_VERSION} by signing in on the web.")
 
 
 def _start_trial_if_first_visit(customer) -> Optional[int]:

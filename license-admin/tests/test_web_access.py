@@ -121,3 +121,25 @@ def test_failed_sends_do_not_count_toward_the_rate_limit(isolated_db, test_keypa
         assert e.value.code == "email_failed"
     fake_smtp.fail = False
     assert web_access.request_code(email="broken@example.com")["sent"] is True
+
+
+def test_web_sign_in_records_terms_acceptance_once_per_version(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    original_version = config.TERMS_VERSION
+    session = _sign_in(fake_smtp)
+    customer = db.get_customer(session.customer_id)
+    assert customer["consent_terms_version"] == original_version
+    first_stamp = customer["consent_accepted_at"]
+    assert first_stamp
+    # Signing in again under the same version leaves the original timestamp alone.
+    web_access.sign_out(token=session.token)
+    with db.connection() as conn:
+        conn.execute("UPDATE customers SET consent_accepted_at = ? WHERE id = ?", ("2020-01-01T00:00:00Z", session.customer_id))
+    _sign_in(fake_smtp)
+    assert db.get_customer(session.customer_id)["consent_accepted_at"] == "2020-01-01T00:00:00Z"
+    # A bumped Terms version is stamped on the next sign-in, with an event for the admin.
+    monkeypatch.setattr(config, "TERMS_VERSION", "2030-01-01")
+    _sign_in(fake_smtp)
+    customer = db.get_customer(session.customer_id)
+    assert customer["consent_terms_version"] == "2030-01-01" and customer["consent_accepted_at"] != "2020-01-01T00:00:00Z"
+    accepted = [e["detail"] for e in db.list_events_for_customer(session.customer_id) if e["kind"] == "terms_accepted"]
+    assert sorted(accepted) == sorted([f"Accepted Terms v{original_version} by signing in on the web.", "Accepted Terms v2030-01-01 by signing in on the web."])
