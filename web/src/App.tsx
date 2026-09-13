@@ -12,7 +12,7 @@ import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
 import Editor from "./components/Editor";
 import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
-import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
+import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, OpenProjectsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
 import type { Tool } from "./components/StitchCanvas";
 import { loadPrefs, savePrefs, type Preferences } from "./prefs";
 import { transformShape } from "./geometry";
@@ -30,7 +30,7 @@ interface Imported {
 }
 
 type Phase = "start" | "setup" | "editor";
-type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | null;
+type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
 
@@ -312,6 +312,15 @@ export default function App() {
 
   // --- projects -----------------------------------------------------------
 
+  /** Opens the "Open a saved project" sheet from anywhere (not just the
+   *  start screen) -- refetches first, since the list the start screen
+   *  loaded could be stale or, if this session arrived via a saved
+   *  project link or the setup flow, never loaded at all. */
+  const onOpenProjectsSheet = () => {
+    setSheet("open");
+    api.listProjects().then(setProjects).catch(() => setProjects([]));
+  };
+
   const onOpenProject = (summary: ProjectSummary) => withBusy("Opening project…", async () => {
     if (!catalog) return;
     const project = await api.getProject(summary.id);
@@ -384,6 +393,7 @@ export default function App() {
       {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} />}
       {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })} />}
       {sheet === "send" && document && <SendSheet designName={document.name} onClose={() => setSheet(null)} onSend={async (format, toEmail, message) => { await api.sendFile(document, format, toEmail, message); setStatus(`Sent ${document.name}.${format} to ${toEmail}.`); }} />}
+      {sheet === "open" && <OpenProjectsSheet projects={projects} busy={busy} onOpen={onOpenProject} onDelete={onDeleteProject} onClose={() => setSheet(null)} />}
       {sheet === "threadLibrary" && (
         <ThreadLibrarySheet library={prefs.threadLibrary} onChange={(lib) => setPrefs({ ...prefs, threadLibrary: lib })}
           suppliers={prefs.threadSuppliers} onSuppliersChange={(ids) => setPrefs({ ...prefs, threadSuppliers: ids })} onClose={() => setSheet(null)} />
@@ -422,7 +432,7 @@ export default function App() {
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}
           onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
-          onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} />
+          onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} onOpenProjects={onOpenProjectsSheet} />
         {sheets}
       </>
     );

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import glossary from "../glossary.json";
-import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, RGBColor, ThreadColor } from "../types";
+import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, ProjectSummary, RGBColor, ThreadColor } from "../types";
 import { LETTERING_FONTS, generateLetteringShapes, type LetteringSpec } from "../lettering";
 import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
 import { AccountMenu, PromoBox, price, statusLine } from "./Account";
 import { THREAD_SUPPLIERS, type ThreadSupplier } from "../threadSuppliers";
+import { cm } from "../format";
 import { api } from "../api";
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
@@ -20,6 +21,37 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
         <div className="modal-body">{children}</div>
       </div>
     </div>
+  );
+}
+
+// --- Open a saved project ----------------------------------------------------------
+
+export function OpenProjectsSheet({ projects, busy, onOpen, onDelete, onClose }: {
+  /** null: still loading; []: none saved yet. */
+  projects: ProjectSummary[] | null; busy: string | null;
+  onOpen: (p: ProjectSummary) => void; onDelete: (p: ProjectSummary) => void; onClose: () => void;
+}) {
+  return (
+    <Modal title="Open a saved project" onClose={onClose}>
+      {!projects && <p className="hint">Loading your saved projects…</p>}
+      {projects && projects.length === 0 && <p className="hint">Nothing saved yet — use Save in the toolbar once you're working on a design, and it'll show up here.</p>}
+      {projects && projects.length > 0 && (
+        <div className="projects">
+          <ul>
+            {projects.map((p) => (
+              <li key={p.id}>
+                <button className="project" onClick={() => { onOpen(p); onClose(); }} disabled={!!busy}>
+                  <b>{p.name}</b>
+                  <span>{cm(p.widthMM)} × {cm(p.heightMM)} cm · {p.objectCount} object{p.objectCount === 1 ? "" : "s"} · {new Date(p.updatedAt).toLocaleDateString()}</span>
+                </button>
+                <button className="icon-btn" title="Delete project" disabled={!!busy} onClick={() => onDelete(p)}>×</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="modal-foot"><button className="btn ghost" onClick={onClose}>Cancel</button></div>
+    </Modal>
   );
 }
 

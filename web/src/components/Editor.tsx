@@ -37,6 +37,7 @@ export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "
   onExport: (format: string) => void;
   onOpenSheet: (s: "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "send") => void;
   onSendFeedback: () => void;
+  onOpenProjects: () => void;
 }
 
 const FORMATS: [string, string, string][] = [["dst", "Tajima (.dst)", "most machines"], ["pes", "Brother / Baby Lock (.pes)", ""], ["jef", "Janome (.jef)", ""], ["exp", "Melco / Bernina (.exp)", ""], ["vp3", "Husqvarna Viking / Pfaff (.vp3)", ""]];
@@ -61,6 +62,7 @@ export default function Editor(p: EditorProps) {
       {/* File row */}
       <div className="toolbar">
         <button className="pill" onClick={p.onNew} title="Start a new project (the current one is kept only if saved).">＋ New</button>
+        {p.canSave && <button className="pill" onClick={p.onOpenProjects} disabled={!!p.busy} title="Open one of your saved projects.">📂 Open</button>}
         {p.hasSource && <button className="pill" onClick={p.onRedo} disabled={!!p.busy} title="Discard edits made since import and regenerate fresh from the original artwork.">↻ Start over</button>}
         {p.canSave && <button className="pill" onClick={p.onSave} disabled={!!p.busy} title="Save this project to your account.">{p.savedAt ? "Saved ✓" : "💾 Save"}</button>}
         <button className="pill" onClick={p.onUndo} disabled={!p.canUndo || !!p.busy} title="Undo the last edit.">↶ Back</button>
