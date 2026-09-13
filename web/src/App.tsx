@@ -371,7 +371,10 @@ export default function App() {
       {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} />}
       {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })} />}
       {sheet === "send" && document && <SendSheet designName={document.name} onClose={() => setSheet(null)} onSend={async (format, toEmail, message) => { await api.sendFile(document, format, toEmail, message); setStatus(`Sent ${document.name}.${format} to ${toEmail}.`); }} />}
-      {sheet === "threadLibrary" && <ThreadLibrarySheet library={prefs.threadLibrary} onChange={(lib) => setPrefs({ ...prefs, threadLibrary: lib })} onClose={() => setSheet(null)} />}
+      {sheet === "threadLibrary" && (
+        <ThreadLibrarySheet library={prefs.threadLibrary} onChange={(lib) => setPrefs({ ...prefs, threadLibrary: lib })}
+          suppliers={prefs.threadSuppliers} onSuppliersChange={(ids) => setPrefs({ ...prefs, threadSuppliers: ids })} onClose={() => setSheet(null)} />
+      )}
       {sheet === "lettering" && document && <LetteringSheet palette={palette} selectedCount={selectedIDs.size} onClose={() => setSheet(null)} onAdd={onAddLettering} />}
       {sheet === "mergeColors" && document && <MergeColorsSheet objects={document.objects} palette={palette} onClose={() => setSheet(null)} onMerge={onMergeColors} />}
       {sheet === "feedback" && feedbackImages && document && (

@@ -4,6 +4,7 @@ import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType
 import { LETTERING_FONTS, generateLetteringShapes, type LetteringSpec } from "../lettering";
 import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
 import { AccountMenu, PromoBox, price, statusLine } from "./Account";
+import { THREAD_SUPPLIERS } from "../threadSuppliers";
 import { api } from "../api";
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
@@ -155,13 +156,32 @@ export function MergeColorsSheet({ objects, palette, onClose, onMerge }: {
 
 // --- Thread Library -------------------------------------------------------------
 
-export function ThreadLibraryEditor({ library, onChange }: { library: ThreadColor[]; onChange: (lib: ThreadColor[]) => void }) {
+export function ThreadLibraryEditor({ library, onChange, suppliers, onSuppliersChange }: {
+  library: ThreadColor[]; onChange: (lib: ThreadColor[]) => void;
+  suppliers: string[]; onSuppliersChange: (ids: string[]) => void;
+}) {
   const [name, setName] = useState("");
   const [hex, setHex] = useState("#c0392b");
   const add = () => { if (!name.trim()) return; onChange([...library, { id: crypto.randomUUID(), name: name.trim(), rgb: hexRGB(hex) }]); setName(""); };
+  const toggleSupplier = (id: string) => onSuppliersChange(suppliers.includes(id) ? suppliers.filter((s) => s !== id) : [...suppliers, id]);
   return (
     <div className="stack">
-      <p className="hint">Your own thread inventory. When it has colours, imports and the colour pickers match against <b>only</b> these instead of the built-in palette. Leave it empty to use the built-in palette.</p>
+      <div>
+        <p className="hint">Which thread manufacturer(s) do you sew with? Most jobs use just one or two — this is reference only, it doesn't add colours for you.</p>
+        <div className="chip-row">
+          {THREAD_SUPPLIERS.map((s) => (
+            <button key={s.id} type="button" className={"chip" + (suppliers.includes(s.id) ? " on" : "")} onClick={() => toggleSupplier(s.id)}>{s.name}</button>
+          ))}
+        </div>
+        {suppliers.length > 0 && (
+          <div className="supplier-notes">
+            {THREAD_SUPPLIERS.filter((s) => suppliers.includes(s.id)).map((s) => (
+              <div key={s.id} className="supplier-note"><b>{s.name}</b> <span className="muted">· {s.lines}</span><p>{s.guidance}</p></div>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="hint">Your own thread inventory. When it has colours, imports and the colour pickers match against <b>only</b> these instead of the built-in palette. Leave it empty to use the built-in palette. No manufacturer publishes official RGB values for their catalog, so add colours by eye or against a physical color card — the name field is a good place for the catalog number (e.g. "Madeira Polyneon 1802").</p>
       <ul className="merge-list">
         {library.map((c) => <li key={c.id}><span className="swatch" style={{ background: rgbCSS(c.rgb) }} /> {c.name} <span className="grow" /><button className="icon-btn" title="Remove" onClick={() => onChange(library.filter((x) => x.id !== c.id))}>×</button></li>)}
         {library.length === 0 && <li className="hint">No custom colours yet — using the built-in palette.</li>}
@@ -171,8 +191,10 @@ export function ThreadLibraryEditor({ library, onChange }: { library: ThreadColo
   );
 }
 
-export function ThreadLibrarySheet({ library, onChange, onClose }: { library: ThreadColor[]; onChange: (lib: ThreadColor[]) => void; onClose: () => void }) {
-  return <Modal title="Thread library" onClose={onClose}><ThreadLibraryEditor library={library} onChange={onChange} /><div className="modal-foot"><button className="btn primary" onClick={onClose}>Done</button></div></Modal>;
+export function ThreadLibrarySheet({ library, onChange, suppliers, onSuppliersChange, onClose }: {
+  library: ThreadColor[]; onChange: (lib: ThreadColor[]) => void; suppliers: string[]; onSuppliersChange: (ids: string[]) => void; onClose: () => void;
+}) {
+  return <Modal title="Thread library" onClose={onClose}><ThreadLibraryEditor library={library} onChange={onChange} suppliers={suppliers} onSuppliersChange={onSuppliersChange} /><div className="modal-foot"><button className="btn primary" onClick={onClose}>Done</button></div></Modal>;
 }
 
 // --- Send Feedback ----------------------------------------------------------------
@@ -323,7 +345,7 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
           <p className="hint">Defaults apply to the next design you import. Everything can still be changed per design.</p>
         </div>
       )}
-      {tab === "threads" && <ThreadLibraryEditor library={prefs.threadLibrary} onChange={(lib) => set("threadLibrary", lib)} />}
+      {tab === "threads" && <ThreadLibraryEditor library={prefs.threadLibrary} onChange={(lib) => set("threadLibrary", lib)} suppliers={prefs.threadSuppliers} onSuppliersChange={(ids) => set("threadSuppliers", ids)} />}
       <div className="modal-foot"><button className="btn primary" onClick={onClose}>Done</button></div>
     </Modal>
   );

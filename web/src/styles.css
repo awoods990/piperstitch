@@ -41,6 +41,11 @@ button, input, select { font: inherit; color: inherit; }
 .btn.small { padding: 5px 10px; font-size: 13px; }
 .chip { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--ink2); cursor: pointer; }
 .chip:hover { border-color: var(--blue200); color: var(--navy700); }
+.chip.on { background: var(--blue500); border-color: var(--blue500); color: #fff; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.supplier-notes { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.supplier-note { padding: 8px 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.supplier-note p { margin: 3px 0 0; color: var(--ink2); font-size: 12px; line-height: 1.5; }
 .icon-btn { border: none; background: transparent; color: var(--label); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
 .icon-btn:hover { background: var(--critBG); color: var(--critText); }
 

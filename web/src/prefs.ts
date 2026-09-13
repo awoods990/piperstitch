@@ -15,6 +15,10 @@ export interface Preferences {
   paintColor: RGBColor;
   /** The user's own thread inventory; empty = the built-in palette. */
   threadLibrary: ThreadColor[];
+  /** Which manufacturer(s) the user actually sews with -- reference only
+   *  (see threadSuppliers.ts), shown alongside threadLibrary above. Ids
+   *  from THREAD_SUPPLIERS, not a color source. */
+  threadSuppliers: string[];
   showJumps: boolean;
 }
 
@@ -27,6 +31,7 @@ export const DEFAULT_PREFS: Preferences = {
   paintBrushRadiusMM: 1.5,
   paintColor: { r: 0, g: 0, b: 0 },
   threadLibrary: [],
+  threadSuppliers: [],
   showJumps: false,
 };
 

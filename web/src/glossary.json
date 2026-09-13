@@ -107,7 +107,7 @@
    },
    {
     "term": "Thread Library",
-    "definition": "Your own list of thread colors to match designs against, instead of a generic color wheel -- useful if you sew with one manufacturer's numbered thread set and want the app's automatic color matching to only ever suggest colors you actually own."
+    "definition": "Your own list of thread colors to match designs against, instead of a generic color wheel -- useful if you sew with one manufacturer's numbered thread set and want the app's automatic color matching to only ever suggest colors you actually own. The same screen lets you flag which manufacturer(s) you sew with (Isacord, Madeira, Robison-Anton...) for reference -- a quick note on that brand's fiber options and any well-known handling difference. It doesn't add colors for you: no thread manufacturer publishes official color values for their catalog, so building the actual list is still done by hand, against a physical color card or by eye."
    },
    {
     "term": "Applique",
