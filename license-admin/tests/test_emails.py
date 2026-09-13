@@ -104,3 +104,27 @@ def test_unsubscribe_link_is_signed(isolated_db, test_keypair, fake_smtp, monkey
     # clicking the link again doesn't send another
     client.get(f"/unsubscribe?c={cid}&t={emails.unsubscribe_token(cid)}")
     assert len(fake_smtp.sent) == 1
+
+
+def test_backfill_enrols_existing_customers_without_a_burst(isolated_db, test_keypair, fake_smtp):
+    # A trial that started 6 days ago, never enrolled (predates the feature)
+    cid = db.upsert_customer(name="Old Trial", email="old@example.com")
+    start = datetime.now(timezone.utc) - timedelta(days=6)
+    db.upsert_subscription(customer_id=cid, stripe_subscription_id=None, stripe_customer_id=None, status="trialing",
+                           current_period_start=start.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                           current_period_end=(start + timedelta(days=14)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                           cancel_at_period_end=True, canceled_at=None, ended_at=None, source="manual", amount_cents=0, notes="Web free trial")
+    counts = emails.backfill_existing_customers()
+    assert counts["trial"] == 1
+    statuses = [(d["delay_days"], d["status"]) for d in db.list_deliveries_for_customer(cid)]
+    assert statuses == [(0, "skipped"), (1, "skipped"), (3, "skipped"), (5, "skipped"), (7, "scheduled"), (10, "scheduled"), (12, "scheduled"), (14, "scheduled")]
+    fake_smtp.sent.clear()
+    assert emails.process_due() == 0            # nothing bursts out today
+    assert emails.backfill_existing_customers()["trial"] == 0   # idempotent
+    # unsubscribing cancels what's left immediately
+    from fastapi.testclient import TestClient
+    from app import config
+    from app.main import app
+    import pytest as _p
+    TestClient(app).get(f"/unsubscribe?c={cid}&t={emails.unsubscribe_token(cid)}")
+    assert all(d["status"] == "skipped" for d in db.list_deliveries_for_customer(cid))

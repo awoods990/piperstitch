@@ -442,6 +442,56 @@ def enroll(customer_id: int, sequence_key: str, *, start: Optional[datetime] = N
     return n
 
 
+def enroll_from(customer_id: int, sequence_key: str, *, start: datetime, now: Optional[datetime] = None) -> int:
+    """Enrol as of a start date in the past, without sending the steps
+    that would already have gone: those are recorded as skipped ("before
+    enrolment") so the record is complete and only future steps send."""
+    n = enroll(customer_id, sequence_key, start=start)
+    if not n:
+        return 0
+    now = now or _now()
+    seq = db.get_sequence(sequence_key)
+    with db.connection() as conn:
+        conn.execute("UPDATE sequence_deliveries SET status = 'skipped', note = 'before enrolment' WHERE customer_id = ? AND sequence_id = ? AND status = 'scheduled' AND scheduled_for < ?",
+                     (customer_id, seq["id"], _iso(now - timedelta(hours=12))))
+    return n
+
+
+def backfill_existing_customers() -> dict:
+    """Run at startup: anyone already on a web trial or a live Stripe
+    subscription who was never enrolled joins the right series from
+    their real start date. Idempotent."""
+    counts = {"trial": 0, "subscriber": 0}
+    trial_seq, sub_seq = db.get_sequence("trial"), db.get_sequence("subscriber")
+    if trial_seq is None or sub_seq is None:
+        return counts
+    with db.connection() as conn:
+        trials = conn.execute("SELECT customer_id, current_period_start FROM subscriptions WHERE source = 'manual' AND status = 'trialing' AND notes = 'Web free trial' AND current_period_end > ?", (_iso(_now()),)).fetchall()
+        subs = conn.execute("SELECT customer_id, created_at FROM subscriptions WHERE source = 'stripe' AND status IN ('active','trialing','past_due')").fetchall()
+    for row in trials:
+        cid = row["customer_id"]
+        if db.customer_in_sequence(cid, trial_seq["id"]) or db.customer_in_sequence(cid, sub_seq["id"]):
+            continue
+        start = datetime.fromisoformat((row["current_period_start"] or _iso(_now())).replace("Z", "+00:00"))
+        counts["trial"] += 1 if enroll_from(cid, "trial", start=start) else 0
+    for row in subs:
+        cid = row["customer_id"]
+        if db.customer_in_sequence(cid, sub_seq["id"]):
+            continue
+        skip_pending(cid, "trial", "subscribed")
+        start = datetime.fromisoformat((row["created_at"] or _iso(_now())).replace("Z", "+00:00"))
+        counts["subscriber"] += 1 if enroll_from(cid, "subscriber", start=start) else 0
+    return counts
+
+
+def stop_all_marketing(customer_id: int, note: str) -> int:
+    """Unsubscribed: every pending sequence email is cancelled now."""
+    total = 0
+    for seq in db.list_sequences():
+        total += skip_pending(customer_id, seq["key"], note)
+    return total
+
+
 def skip_pending(customer_id: int, sequence_key: str, note: str) -> int:
     seq = db.get_sequence(sequence_key)
     if seq is None:
@@ -516,7 +566,7 @@ def winback_check(*, now: Optional[datetime] = None) -> int:
 def run_scheduled_work() -> dict:
     """Everything the background loop does each tick."""
     from . import finance
-    result = {"sent": 0, "winback": 0, "recurring": 0}
+    result = {"sent": 0, "winback": 0, "recurring": 0, "backfilled": 0}
     try:
         result["sent"] = process_due()
     except Exception as e:  # noqa: BLE001 - the loop must survive
@@ -525,6 +575,10 @@ def run_scheduled_work() -> dict:
         result["winback"] = winback_check()
     except Exception as e:  # noqa: BLE001
         log.exception("Win-back check failed: %s", e)
+    try:
+        result["backfilled"] = sum(backfill_existing_customers().values())
+    except Exception as e:  # noqa: BLE001
+        log.exception("Sequence backfill failed: %s", e)
     try:
         result["recurring"] = finance.materialize_recurring(through=finance.today())
     except Exception as e:  # noqa: BLE001

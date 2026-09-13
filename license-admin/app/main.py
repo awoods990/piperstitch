@@ -1230,7 +1230,9 @@ def admin_customer_marketing(customer_id: int, opt_out: str = Form("")):
     if db.get_customer(customer_id) is None:
         return RedirectResponse("/admin/subscribers", status_code=303)
     db.set_marketing_opt_out(customer_id, bool(opt_out))
-    return _customer_redirect(customer_id, message="Unsubscribed from tip emails." if opt_out else "Re-subscribed to tip emails.")
+    if opt_out:
+        emails.stop_all_marketing(customer_id, "unsubscribed by admin")
+    return _customer_redirect(customer_id, message="Unsubscribed from tip emails; pending ones cancelled." if opt_out else "Re-subscribed to tip emails. Use Enroll from today to restart a series.")
 
 
 # public unsubscribe (link in every sequence email)
@@ -1242,6 +1244,7 @@ def unsubscribe(request: Request, c: int = 0, t: str = ""):
     if ok:
         already = bool(customer["marketing_opt_out"])
         db.set_marketing_opt_out(c, True)
+        emails.stop_all_marketing(c, "unsubscribed")
         if not already:
             db.add_event(customer_id=c, subscription_id=None, kind="unsubscribed", detail="Unsubscribed from tip emails via the link.")
             # Say plainly, in their inbox, that the subscription itself is untouched.
