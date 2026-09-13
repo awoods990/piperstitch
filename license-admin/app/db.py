@@ -233,6 +233,35 @@ CREATE TABLE IF NOT EXISTS promoter_payments (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,                 -- YYYY-MM-DD
+    category TEXT NOT NULL,             -- see EXPENSE_CATEGORIES
+    vendor TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    amount_cents INTEGER NOT NULL,      -- positive = money out
+    source TEXT NOT NULL DEFAULT 'manual',   -- 'manual' | 'stripe' | 'recurring'
+    external_id TEXT UNIQUE,            -- Stripe balance transaction id, or rec:<id>:<YYYY-MM>; makes imports idempotent
+    recurring_id INTEGER,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+
+CREATE TABLE IF NOT EXISTS recurring_expenses (
+    -- A monthly bill (Railway, Postmark, the domain): materialized into
+    -- expenses for each month it covers, so the report never forgets it.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    amount_cents INTEGER NOT NULL,
+    day_of_month INTEGER NOT NULL DEFAULT 1,
+    start_month TEXT NOT NULL,          -- YYYY-MM
+    end_month TEXT,                     -- YYYY-MM inclusive; NULL = ongoing
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS stripe_events (
     id TEXT PRIMARY KEY,                -- Stripe's evt_... id; Stripe retries, we don't double-apply
     type TEXT NOT NULL,
@@ -1129,7 +1158,14 @@ def list_promo_payouts_for_customer(customer_id: int) -> list[sqlite3.Row]:
 def record_promoter_payment(*, promoter_id: int, amount_cents: int, paid_at: str, note: str) -> int:
     with connection() as conn:
         cur = conn.execute("INSERT INTO promoter_payments (promoter_id, amount_cents, paid_at, note, created_at) VALUES (?, ?, ?, ?, ?)", (promoter_id, amount_cents, paid_at, note.strip(), _now()))
-        return cur.lastrowid
+        payment_id = cur.lastrowid
+        promoter = conn.execute("SELECT name FROM promoters WHERE id = ?", (promoter_id,)).fetchone()
+        # Money out: it belongs on the profit-and-loss too.
+        conn.execute(
+            "INSERT INTO expenses (date, category, vendor, description, amount_cents, source, external_id, created_at) VALUES (?, 'Promoter payouts', ?, ?, ?, 'manual', ?, ?)",
+            (paid_at[:10], promoter["name"] if promoter else "Promoter", (note.strip() or "Revenue share payout"), amount_cents, f"promoter_payment:{payment_id}", _now()),
+        )
+        return payment_id
 
 
 def list_promoter_payments(promoter_id: int) -> list[sqlite3.Row]:
@@ -1163,3 +1199,93 @@ def promotions_overview() -> dict:
         promoters = conn.execute("SELECT COUNT(*) FROM promoters WHERE active = 1").fetchone()[0]
     return {"active_codes": active_codes, "promoters": promoters, "redemptions": redemptions["total"] or 0, "redemptions_this_month": redemptions["this_month"] or 0,
             "earned_cents": earned["total"], "earned_this_month_cents": earned["this_month"], "paid_cents": paid, "owed_cents": earned["total"] - paid}
+
+
+# --------------------------------------------------------------- finance --
+
+
+EXPENSE_CATEGORIES = ["Hosting", "Email", "Domain", "Software", "Marketing", "Professional services", "Promoter payouts", "Stripe fees", "Refunds", "Taxes", "Other"]
+
+
+def set_payment_fee(payment_id: int, *, fee_cents: int, balance_transaction_id: Optional[str]) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE payments SET fee_cents = ?, balance_transaction_id = COALESCE(?, balance_transaction_id) WHERE id = ?", (fee_cents, balance_transaction_id, payment_id))
+
+
+def add_expense(*, date: str, category: str, vendor: str, description: str, amount_cents: int, source: str = "manual", external_id: Optional[str] = None, recurring_id: Optional[int] = None) -> Optional[int]:
+    """Returns None when an expense with this external_id already exists
+    (imports and recurring materialization are idempotent)."""
+    with connection() as conn:
+        if external_id and conn.execute("SELECT 1 FROM expenses WHERE external_id = ?", (external_id,)).fetchone():
+            return None
+        cur = conn.execute(
+            "INSERT INTO expenses (date, category, vendor, description, amount_cents, source, external_id, recurring_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (date, category, vendor.strip(), description.strip(), amount_cents, source, external_id, recurring_id, _now()),
+        )
+        return cur.lastrowid
+
+
+def delete_expense(expense_id: int) -> bool:
+    """Imported Stripe rows can't be deleted -- they'd just come back."""
+    with connection() as conn:
+        return conn.execute("DELETE FROM expenses WHERE id = ? AND source != 'stripe'", (expense_id,)).rowcount > 0
+
+
+def list_expenses(start: str, end: str) -> list[sqlite3.Row]:
+    """Expenses dated in [start, end] (YYYY-MM-DD inclusive)."""
+    with connection() as conn:
+        return conn.execute("SELECT * FROM expenses WHERE date >= ? AND date <= ? ORDER BY date DESC, id DESC", (start, end)).fetchall()
+
+
+def add_recurring_expense(*, vendor: str, category: str, description: str, amount_cents: int, day_of_month: int, start_month: str, end_month: Optional[str]) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO recurring_expenses (vendor, category, description, amount_cents, day_of_month, start_month, end_month, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (vendor.strip(), category, description.strip(), amount_cents, day_of_month, start_month, end_month, _now()),
+        )
+        return cur.lastrowid
+
+
+def list_recurring_expenses() -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM recurring_expenses ORDER BY active DESC, vendor COLLATE NOCASE").fetchall()
+
+
+def get_recurring_expense(recurring_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM recurring_expenses WHERE id = ?", (recurring_id,)).fetchone()
+
+
+def update_recurring_expense(recurring_id: int, *, amount_cents: int, active: bool, end_month: Optional[str]) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE recurring_expenses SET amount_cents = ?, active = ?, end_month = ? WHERE id = ?", (amount_cents, 1 if active else 0, end_month, recurring_id))
+
+
+def period_financials(start: str, end: str) -> dict:
+    """One profit-and-loss row for the dates [start, end] inclusive.
+    Revenue is paid invoices by the day they were paid; expenses by their
+    date; Stripe fees and refunds are expense categories the Stripe import
+    fills; the promoter share is shown both as accrued (earned in the
+    period) and, within expenses, as actually paid out."""
+    with connection() as conn:
+        rev = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents), 0) AS cents FROM payments WHERE status = 'paid' AND paid_at IS NOT NULL AND substr(paid_at, 1, 10) >= ? AND substr(paid_at, 1, 10) <= ?", (start, end)).fetchone()
+        by_cat = conn.execute("SELECT category, COALESCE(SUM(amount_cents), 0) AS cents FROM expenses WHERE date >= ? AND date <= ? GROUP BY category", (start, end)).fetchall()
+        share = conn.execute("SELECT COALESCE(SUM(share_cents), 0) FROM promo_payouts WHERE substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?", (start, end)).fetchone()[0]
+        started = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE source = 'stripe' AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?", (start, end)).fetchone()[0]
+        ended = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE source = 'stripe' AND ended_at IS NOT NULL AND substr(ended_at, 1, 10) >= ? AND substr(ended_at, 1, 10) <= ?", (start, end)).fetchone()[0]
+    categories = {r["category"]: r["cents"] for r in by_cat}
+    stripe_fees = categories.get("Stripe fees", 0)
+    refunds = categories.get("Refunds", 0)
+    other = {k: v for k, v in categories.items() if k not in ("Stripe fees", "Refunds")}
+    total_expenses = sum(categories.values())
+    return {
+        "start": start, "end": end,
+        "payments": rev["n"], "revenue_cents": rev["cents"],
+        "stripe_fees_cents": stripe_fees, "refunds_cents": refunds,
+        "net_revenue_cents": rev["cents"] - stripe_fees - refunds,
+        "expenses_by_category": other, "other_expenses_cents": sum(other.values()),
+        "total_expenses_cents": total_expenses,
+        "net_cents": rev["cents"] - total_expenses,
+        "promoter_share_accrued_cents": share,
+        "started": started, "ended": ended,
+    }

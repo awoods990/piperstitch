@@ -2,25 +2,126 @@
 {% block title %}Financials — PiperStitch License Admin{% endblock %}
 {% block admin_body %}
 <main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
   <div class="kpi-grid">
-    <div class="kpi-tile"><div class="kpi-value">{{ counts.mrr_cents|money }}</div><div class="kpi-label">MRR right now</div><div class="kpi-sub">{{ counts.paying }} paying &times; {{ price_label() }}/mo (actual prices summed)</div></div>
-    <div class="kpi-tile"><div class="kpi-value">{{ counts.revenue_this_month_cents|money }}</div><div class="kpi-label">Collected this month</div><div class="kpi-sub">Paid invoices, Stripe fees not deducted</div></div>
-    <div class="kpi-tile"><div class="kpi-value">{{ counts.new_this_month }} / {{ counts.churned_this_month }}</div><div class="kpi-label">Started / ended this month</div><div class="kpi-sub">Paid subscriptions only</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.mrr_cents|money }}</div><div class="kpi-label">MRR right now</div><div class="kpi-sub">{{ counts.paying }} paying subscriber{{ '' if counts.paying == 1 else 's' }}</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ rows[0].revenue_cents|money if view == 'mtd' else counts.revenue_this_month_cents|money }}</div><div class="kpi-label">Collected this month</div><div class="kpi-sub">paid invoices, before fees</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.new_this_month }} / {{ counts.churned_this_month }}</div><div class="kpi-label">Started / ended this month</div><div class="kpi-sub">paid subscriptions only</div></div>
   </div>
+
   <div class="card">
     <div class="toolbar">
-      <h2 style="margin:0">Revenue by month</h2>
-      <a class="button secondary small" href="/admin/financials.csv">Export CSV</a>
+      <h2 style="margin:0">Profit &amp; loss</h2>
+      <div class="actions" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+        {% for v, label in [('mtd', 'Month to date'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('annual', 'Annual')] %}
+        <a class="button small {{ '' if view == v else 'secondary' }}" href="/admin/financials?view={{ v }}&amp;year={{ year }}">{{ label }}</a>
+        {% endfor %}
+        {% if view in ('monthly', 'quarterly') %}
+        <form method="get" action="/admin/financials" style="display:inline"><input type="hidden" name="view" value="{{ view }}"><select name="year" onchange="this.form.submit()" style="padding:5px 8px">{% for y in years %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></form>
+        {% endif %}
+        <a class="button secondary small" href="/admin/financials.csv?view={{ view }}&amp;year={{ year }}">Export CSV</a>
+      </div>
     </div>
-    <p class="muted" style="margin-top:0">Every paid invoice Stripe reported, grouped by the month it was paid. Comps never appear here — no money changed hands. Refunds issued in the Stripe Dashboard are not subtracted; see Stripe for the net.</p>
+    <p class="muted small" style="margin-top:0">Revenue is every paid invoice by the day it was paid. Stripe fees and refunds come from Stripe's own records (import below). Everything else is what you enter — one-off expenses and recurring bills. Net = revenue − all expenses. Promoter share <em>accrued</em> is what promoters earned in the period; the <em>Promoter payouts</em> column is what you actually paid them.</p>
+    <div style="overflow-x:auto">
     <table>
-      <tr><th>Month</th><th>Payments</th><th>Revenue</th><th>Started</th><th>Ended</th></tr>
-      {% for m in months %}
-      <tr><td>{{ m.month }}</td><td>{{ m.payment_count }}</td><td>{{ m.revenue_cents|money }}</td><td>{{ m.started }}</td><td>{{ m.ended }}</td></tr>
-      {% else %}
-      <tr><td colspan="5" class="muted">No payments yet.</td></tr>
+      <tr>
+        <th>Period</th><th>Payments</th><th>Revenue</th><th>Stripe fees</th><th>Refunds</th><th>Net revenue</th>
+        {% for c in categories %}<th>{{ c }}</th>{% endfor %}
+        <th>All expenses</th><th>Net</th><th class="muted">Share accrued</th><th class="muted">Subs +/−</th>
+      </tr>
+      {% for r in rows %}
+      <tr {% if r.is_total %}style="font-weight:600; border-top:2px solid var(--border)"{% endif %}>
+        <td>{{ r.label }}</td><td>{{ r.payments }}</td><td>{{ r.revenue_cents|money }}</td><td class="muted">{{ r.stripe_fees_cents|money }}</td><td class="muted">{{ r.refunds_cents|money }}</td><td>{{ r.net_revenue_cents|money }}</td>
+        {% for c in categories %}<td class="muted">{{ r.expenses_by_category.get(c, 0)|money }}</td>{% endfor %}
+        <td>{{ r.total_expenses_cents|money }}</td>
+        <td style="color: {{ '#2f6b41' if r.net_cents >= 0 else '#a3312a' }}"><strong>{{ r.net_cents|money }}</strong></td>
+        <td class="muted">{{ r.promoter_share_accrued_cents|money }}</td><td class="muted">+{{ r.started }} / −{{ r.ended }}</td>
+      </tr>
       {% endfor %}
     </table>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <div class="toolbar">
+          <h2 style="margin:0">Expenses — {{ ledger_label }}</h2>
+          <div class="actions"><a class="button secondary small" href="/admin/financials?view={{ view }}&amp;year={{ year }}&amp;month={{ prev_month }}">&larr;</a><a class="button secondary small" href="/admin/financials?view={{ view }}&amp;year={{ year }}&amp;month={{ next_month }}">&rarr;</a></div>
+        </div>
+        <table>
+          <tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Amount</th><th></th></tr>
+          {% for e in expenses %}
+          <tr><td class="muted">{{ e.date }}</td><td>{{ e.category }}</td><td>{{ e.vendor }}</td><td class="muted small">{{ e.description }}{% if e.source == 'stripe' %} <span class="pill active" title="Imported from Stripe">stripe</span>{% elif e.source == 'recurring' %} <span class="pill trialing" title="From a recurring bill">recurring</span>{% endif %}</td><td>{{ e.amount_cents|money }}</td>
+            <td>{% if e.source != 'stripe' %}<form method="post" action="/admin/expenses/{{ e.id }}/delete" onsubmit="return confirm('Delete this expense?');"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="year" value="{{ year }}"><button class="small secondary" type="submit">Delete</button></form>{% endif %}</td></tr>
+          {% else %}<tr><td colspan="6" class="muted">No expenses recorded for {{ ledger_label }}.</td></tr>{% endfor %}
+        </table>
+        <h3>Add an expense</h3>
+        <form method="post" action="/admin/expenses">
+          <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="year" value="{{ year }}">
+          <div style="display:grid; grid-template-columns: 1fr 1.2fr 1fr 1fr; gap:10px">
+            <div><label>Date</label><input type="date" name="date" value="{{ today }}" required></div>
+            <div><label>Category</label><select name="category">{% for c in expense_categories if c not in ('Stripe fees', 'Refunds') %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+            <div><label>Vendor</label><input type="text" name="vendor" placeholder="Railway"></div>
+            <div><label>Amount ($)</label><input type="number" name="amount" step="0.01" required placeholder="12.34"></div>
+          </div>
+          <label>Description</label><input type="text" name="description" placeholder="what it was for">
+          <div style="margin-top:12px"><button type="submit" class="small">Add expense</button></div>
+        </form>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h2>Stripe fees &amp; refunds</h2>
+        <p class="muted small" style="margin-top:0">Each paid invoice's fee is booked the moment Stripe reports it. This pulls Stripe's full balance history for the last few months — every processing fee, Stripe's own billing, and refunds — so nothing is missed. Safe to run any time; nothing is counted twice.</p>
+        <form method="post" action="/admin/financials/import-stripe" style="display:flex; gap:8px; align-items:flex-end">
+          <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="year" value="{{ year }}">
+          <div><label>Months back</label><select name="months"><option value="1">This month</option><option value="3" selected>3 months</option><option value="6">6 months</option><option value="12">12 months</option><option value="24">24 months</option></select></div>
+          <button type="submit" class="small">Import from Stripe</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Recurring monthly bills</h2>
+        <p class="muted small" style="margin-top:0">Hosting (Railway), email (Postmark), the domain, software — anything billed monthly. Each is booked automatically into every month it covers. Those services don't publish invoices through an API, so set the amount here and adjust it when a bill differs.</p>
+        <table>
+          <tr><th>Vendor</th><th>Category</th><th>Monthly</th><th>From</th><th></th></tr>
+          {% for r in recurring %}
+          <tr>
+            <td>{{ r.vendor }}{% if not r.active %} <span class="pill ended">off</span>{% endif %}<br><span class="muted small">{{ r.description }}</span></td><td>{{ r.category }}</td>
+            <td colspan="3">
+              <form method="post" action="/admin/recurring/{{ r.id }}" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+                <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="year" value="{{ year }}">
+                $<input type="number" name="amount" step="0.01" value="{{ '%.2f'|format(r.amount_cents / 100) }}" style="width:90px; padding:4px 6px">
+                <span class="muted small">from {{ r.start_month }}, day {{ r.day_of_month }}</span>
+                <input type="month" name="end_month" value="{{ r.end_month or '' }}" title="Last month (blank = ongoing)" style="padding:4px 6px">
+                <label class="inline small"><input type="checkbox" name="active" value="1" {% if r.active %}checked{% endif %}> on</label>
+                <button class="small secondary" type="submit">Save</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}<tr><td colspan="5" class="muted">No recurring bills yet. Railway, Postmark and the domain are the usual three.</td></tr>{% endfor %}
+        </table>
+        <h3>Add a recurring bill</h3>
+        <form method="post" action="/admin/recurring">
+          <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="year" value="{{ year }}">
+          <div style="display:grid; grid-template-columns: 1.2fr 1fr 1fr; gap:10px">
+            <div><label>Vendor</label><input type="text" name="vendor" required placeholder="Railway"></div>
+            <div><label>Category</label><select name="category">{% for c in expense_categories if c not in ('Stripe fees', 'Refunds', 'Promoter payouts') %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></div>
+            <div><label>Monthly amount ($)</label><input type="number" name="amount" step="0.01" required placeholder="5.00"></div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:10px">
+            <div><label>First month</label><input type="month" name="start_month" value="{{ today[:7] }}" required></div>
+            <div><label>Billed on day</label><input type="number" name="day_of_month" value="1" min="1" max="28"></div>
+            <div><label>Last month (optional)</label><input type="month" name="end_month"></div>
+          </div>
+          <label>Description</label><input type="text" name="description" placeholder="e.g. Hobby plan + usage">
+          <div style="margin-top:12px"><button type="submit" class="small">Add recurring bill</button></div>
+        </form>
+      </div>
+    </div>
   </div>
 </main>
 {% endblock %}

@@ -126,6 +126,29 @@ def apply_coupon_to_subscription(stripe_subscription_id: str, stripe_coupon_id: 
     return stripe.Subscription.modify(stripe_subscription_id, discounts=[{"coupon": stripe_coupon_id}])
 
 
+def charge_fee_and_transaction(invoice: dict) -> tuple[Optional[int], Optional[str]]:
+    """(fee, balance transaction id) for a paid invoice's charge, or
+    (None, None) when the invoice carries no charge id or Stripe can't be
+    reached."""
+    charge_id = invoice.get("charge") if isinstance(invoice.get("charge"), str) else None
+    if not charge_id:
+        return None, None
+    try:
+        charge = stripe.Charge.retrieve(charge_id, expand=["balance_transaction"])
+        bt = charge.get("balance_transaction")
+        if not bt or bt.get("fee") is None:
+            return None, None
+        return int(bt["fee"]), bt.get("id")
+    except stripe.error.StripeError:
+        return None, None
+
+
+def list_balance_transactions(*, since_ts: int, until_ts: int):
+    """Every balance transaction in the window (charges, fees, refunds,
+    payouts...), newest first, auto-paged."""
+    return stripe.BalanceTransaction.list(created={"gte": since_ts, "lte": until_ts}, limit=100).auto_paging_iter()
+
+
 def charge_fee_cents(invoice: dict) -> Optional[int]:
     """Stripe's actual processing fee for a paid invoice, from the charge's
     balance transaction -- None if the invoice carries no charge id (newer

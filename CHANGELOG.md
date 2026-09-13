@@ -4,6 +4,27 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: Financials — expenses, Stripe fee import, and P&L by month / quarter / year / month-to-date
+
+- **Expenses** (`expenses`, `recurring_expenses` tables; `app/finance.py`):
+  one-off entries (date, category, vendor, amount) and **recurring
+  monthly bills** (Railway, Postmark, the domain…) that are booked into
+  every month they cover automatically, with an amount you adjust when
+  a bill differs. Promoter payouts recorded on a promoter's page land on
+  the P&L as expenses too.
+- **Stripe fees imported exactly**: each paid invoice's processing fee is
+  booked the moment Stripe reports it (and stored on the payment), and
+  an **Import from Stripe** button pulls the balance history for the last
+  1–24 months — every processing fee, Stripe's own billing, and refunds —
+  keyed by transaction id so re-running never doubles.
+- **The report**: Month to date (with last month for comparison), Monthly
+  (12 rows + year total), Quarterly (+ total), Annual (every year with
+  data); columns for revenue, Stripe fees, refunds, net revenue, each
+  expense category, all expenses, net, promoter share accrued, and
+  subscriptions started/ended. CSV export of whatever view is shown.
+- Railway, Postmark and GoDaddy don't publish invoices through an API
+  in dollars, so those are recurring entries rather than imports.
+
 ## Added: promotion codes — promoter referrals with revenue share, and direct discounts
 
 - **License Admin → Promotions** (`app/promotions.py`, new tables

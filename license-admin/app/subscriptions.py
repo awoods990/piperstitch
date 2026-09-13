@@ -15,7 +15,7 @@ from typing import Optional
 
 import stripe
 
-from . import config, db, email_sender, entitlement, promotions
+from . import config, db, email_sender, entitlement, finance, promotions
 
 log = logging.getLogger("license_admin.subscriptions")
 
@@ -210,6 +210,7 @@ def record_invoice(invoice: dict, *, paid: bool, stripe_event_id: Optional[str] 
 
     if paid:
         db.add_event(customer_id=customer_id, subscription_id=subscription["id"] if subscription else None, kind="payment", detail=f"Paid ${int(amount or 0) / 100:.2f}.", stripe_event_id=stripe_event_id)
+        finance.record_fee_for_invoice(payment_id=inserted, invoice=invoice, gross_cents=int(amount or 0))
         promotions.record_share_for_payment(payment_id=inserted, subscription_row=subscription, customer_id=customer_id, gross_cents=int(amount or 0), invoice=invoice)
     else:
         db.add_event(customer_id=customer_id, subscription_id=subscription["id"] if subscription else None, kind="payment_failed", detail=f"Charge of ${int(amount or 0) / 100:.2f} failed.", stripe_event_id=stripe_event_id)

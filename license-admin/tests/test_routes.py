@@ -264,10 +264,10 @@ def test_admin_login_and_pages(admin, fake_smtp):
     assert "jane@example.com" in admin.get("/admin/registrations").text
     detail = admin.get(f"/admin/customers/{cid}")
     assert detail.status_code == 200 and "Entitled to use PiperStitch" in detail.text
-    assert "Revenue by month" in admin.get("/admin/financials").text
+    assert "Profit &amp; loss" in admin.get("/admin/financials").text
     csv_text = admin.get("/admin/export.csv").text
     assert "jane@example.com" in csv_text and "sub_123" in csv_text
-    assert "month,payments" in admin.get("/admin/financials.csv").text
+    assert "period,payments" in admin.get("/admin/financials.csv").text
 
 
 def test_admin_wrong_password_and_lockout(client, admin_password_configured):

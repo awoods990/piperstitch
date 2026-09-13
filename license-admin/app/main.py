@@ -17,7 +17,7 @@ import logging
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, promotions, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, finance, promotions, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -1160,20 +1160,120 @@ def admin_apply_promotion(customer_id: int, code: str = Form(...)):
 # ----------------------------------------------------------- financials ---
 
 
+def _financials_redirect(*, view: str = "monthly", year: Optional[int] = None, message: str = "", error: str = "") -> RedirectResponse:
+    q = [f"view={view}", f"year={year or finance.today().year}"]
+    if message: q.append("message=" + quote_plus(message))
+    if error: q.append("error=" + quote_plus(error))
+    return RedirectResponse("/admin/financials?" + "&".join(q), status_code=303)
+
+
+def _report_context(view: str, year: int) -> dict:
+    view = view if view in ("mtd", "monthly", "quarterly", "annual") else "monthly"
+    rows = finance.report(view, year)
+    categories = sorted({c for r in rows for c in r["expenses_by_category"]})
+    return {"view": view, "year": year, "rows": rows, "categories": categories}
+
+
 @app.get("/admin/financials", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
-def financials(request: Request):
-    return templates.TemplateResponse(request, "financials.html", {"months": db.monthly_revenue(), "counts": db.subscriber_counts(), "active_nav": "financials"})
+def financials(request: Request, view: str = "monthly", year: int = 0, month: str = "", message: str = "", error: str = ""):
+    year = year or finance.today().year
+    ctx = _report_context(view, year)
+    # The expense ledger shown below the report: one month at a time.
+    t = finance.today()
+    ledger_month = month if re.match(r"^\d{4}-\d{2}$", month or "") else f"{t.year:04d}-{t.month:02d}"
+    ly, lm = (int(x) for x in ledger_month.split("-"))
+    start, end = finance.month_bounds(ly, lm)
+    return templates.TemplateResponse(request, "financials.html", {
+        **ctx,
+        "active_nav": "financials",
+        "counts": db.subscriber_counts(),
+        "ledger_month": ledger_month,
+        "ledger_label": date(ly, lm, 1).strftime("%B %Y"),
+        "prev_month": f"{(ly if lm > 1 else ly - 1):04d}-{(lm - 1 if lm > 1 else 12):02d}",
+        "next_month": f"{(ly if lm < 12 else ly + 1):04d}-{(lm + 1 if lm < 12 else 1):02d}",
+        "expenses": db.list_expenses(start, end),
+        "recurring": db.list_recurring_expenses(),
+        "expense_categories": db.EXPENSE_CATEGORIES,
+        "years": list(range((finance._first_year() or t.year), t.year + 1)),
+        "today": t.isoformat(),
+        "message": message or None,
+        "error": error or None,
+    })
+
+
+@app.post("/admin/expenses", dependencies=[Depends(auth.require_admin)])
+def add_expense(date_: str = Form(..., alias="date"), category: str = Form(...), vendor: str = Form(""), description: str = Form(""), amount: str = Form(...), view: str = Form("monthly"), year: str = Form("")):
+    try:
+        cents = round(float(amount.replace("$", "").replace(",", "")) * 100)
+        datetime.fromisoformat(date_)
+    except ValueError:
+        return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, error="Give a date like 2026-09-13 and an amount like 19.99.")
+    if cents == 0:
+        return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, error="The amount can't be zero.")
+    db.add_expense(date=date_, category=category if category in db.EXPENSE_CATEGORIES else "Other", vendor=vendor, description=description, amount_cents=cents)
+    return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, message=f"Expense of ${cents / 100:,.2f} recorded.")
+
+
+@app.post("/admin/expenses/{expense_id}/delete", dependencies=[Depends(auth.require_admin)])
+def delete_expense(expense_id: int, view: str = Form("monthly"), year: str = Form("")):
+    ok = db.delete_expense(expense_id)
+    return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, message="Expense deleted." if ok else "", error="" if ok else "Imported Stripe entries can't be deleted — they'd come back on the next import.")
+
+
+@app.post("/admin/recurring", dependencies=[Depends(auth.require_admin)])
+def add_recurring(vendor: str = Form(...), category: str = Form(...), description: str = Form(""), amount: str = Form(...), day_of_month: str = Form("1"), start_month: str = Form(...), end_month: str = Form(""), view: str = Form("monthly"), year: str = Form("")):
+    try:
+        cents = round(float(amount.replace("$", "").replace(",", "")) * 100)
+        if not re.match(r"^\d{4}-\d{2}$", start_month) or (end_month and not re.match(r"^\d{4}-\d{2}$", end_month)):
+            raise ValueError
+        day = max(1, min(28, int(day_of_month or 1)))
+    except ValueError:
+        return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, error="Give an amount like 5.00, a start month like 2026-09, and a day between 1 and 28.")
+    db.add_recurring_expense(vendor=vendor, category=category if category in db.EXPENSE_CATEGORIES else "Other", description=description, amount_cents=cents, day_of_month=day, start_month=start_month, end_month=end_month or None)
+    created = finance.materialize_recurring(through=finance.today())
+    return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, message=f"Recurring bill added; {created} month(s) booked so far.")
+
+
+@app.post("/admin/recurring/{recurring_id}", dependencies=[Depends(auth.require_admin)])
+def update_recurring(recurring_id: int, amount: str = Form(...), active: str = Form(""), end_month: str = Form(""), view: str = Form("monthly"), year: str = Form("")):
+    if db.get_recurring_expense(recurring_id) is None:
+        return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, error="That recurring bill doesn't exist.")
+    try:
+        cents = round(float(amount.replace("$", "").replace(",", "")) * 100)
+    except ValueError:
+        return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, error="Give an amount like 5.00.")
+    db.update_recurring_expense(recurring_id, amount_cents=cents, active=bool(active), end_month=end_month or None)
+    return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, message="Recurring bill updated (future months use the new amount).")
+
+
+@app.post("/admin/financials/import-stripe", dependencies=[Depends(auth.require_admin)])
+def import_stripe_fees(months: str = Form("3"), view: str = Form("monthly"), year: str = Form("")):
+    n = max(1, min(24, int(months) if months.isdigit() else 3))
+    t = finance.today()
+    y, m = t.year, t.month
+    for _ in range(n - 1):
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+    start = date(y, m, 1)
+    try:
+        counts = finance.import_stripe_fees(start=start, end=t)
+    except stripe.error.StripeError as e:
+        return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, error=f"Stripe import failed: {getattr(e, 'user_message', None) or e}")
+    msg = f"Imported from Stripe since {start.isoformat()}: {counts['fees']} new fee entr{'y' if counts['fees'] == 1 else 'ies'} (${counts['fee_cents'] / 100:,.2f}), {counts['refunds']} refund{'' if counts['refunds'] == 1 else 's'} (${counts['refund_cents'] / 100:,.2f})."
+    return _financials_redirect(view=view, year=int(year) if year.isdigit() else None, message=msg)
 
 
 @app.get("/admin/financials.csv", dependencies=[Depends(auth.require_admin)])
-def financials_csv():
+def financials_csv(view: str = "monthly", year: int = 0):
+    ctx = _report_context(view, year or finance.today().year)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["month", "payments", "revenue_usd", "subscriptions_started", "subscriptions_ended"])
-    for m in db.monthly_revenue(months=1000):
-        writer.writerow([m["month"], m["payment_count"], f"{m['revenue_cents'] / 100:.2f}", m["started"], m["ended"]])
+    cats = ctx["categories"]
+    writer.writerow(["period", "payments", "revenue_usd", "stripe_fees_usd", "refunds_usd", "net_revenue_usd", *[f"{c.lower().replace(' ', '_')}_usd" for c in cats], "total_expenses_usd", "net_usd", "promoter_share_accrued_usd", "subscriptions_started", "subscriptions_ended"])
+    for r in ctx["rows"]:
+        writer.writerow([r["label"], r["payments"], f"{r['revenue_cents'] / 100:.2f}", f"{r['stripe_fees_cents'] / 100:.2f}", f"{r['refunds_cents'] / 100:.2f}", f"{r['net_revenue_cents'] / 100:.2f}",
+                         *[f"{r['expenses_by_category'].get(c, 0) / 100:.2f}" for c in cats], f"{r['total_expenses_cents'] / 100:.2f}", f"{r['net_cents'] / 100:.2f}", f"{r['promoter_share_accrued_cents'] / 100:.2f}", r["started"], r["ended"]])
     buffer.seek(0)
-    return StreamingResponse(buffer, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=piperstitch_revenue.csv"})
+    return StreamingResponse(buffer, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=piperstitch_financials_{ctx['view']}_{ctx['year']}.csv"})
 
 
 # --------------------------------------------------------------- updates ---
