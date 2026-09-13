@@ -187,3 +187,29 @@ def test_profile_name_and_send_file(isolated_db, test_keypair, fake_smtp):
     with pytest.raises(activation.ActivationError):
         web_access.send_file(token=session.token, to_email="nope", filename="a.pes", data=b"x")
     assert db.count_sent_files(session.customer_id) == 1
+
+
+def test_project_view_requires_a_reason_and_logs_it(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import config, project_view
+    from app.main import app
+    session = _sign_in(fake_smtp, email="pv@example.com")
+    doc = {"schemaVersion": 1, "name": "Badge", "physicalWidthMM": 50, "physicalHeightMM": 40, "objects": [
+        {"id": "1", "name": "Ring", "stitchType": "satin", "threadColor": {"id": "t", "name": "Red", "rgb": {"r": 200, "g": 30, "b": 30}},
+         "parameters": {"satinDensityMM": 0.32, "minSatinWidthMM": 1.5, "maxSatinWidthMM": 12, "fabricType": "knit"}, "stitchTypeIsManualOverride": True, "isApplique": False,
+         "shape": {"subPaths": [{"closed": True, "points": [{"x": 0, "y": 0}, {"x": 50, "y": 0}, {"x": 50, "y": 40}, {"x": 0, "y": 40}]}]}}]}
+    web_access.save_project(token=session.token, project_id="aaaaaaaa-0000-0000-0000-000000000001", name="Badge", document=doc)
+    monkeypatch.setattr(config, "ADMIN_USERNAME", "admin"); monkeypatch.setattr(config, "ADMIN_PASSWORD_HASH", __import__("app.auth", fromlist=["auth"]).hash_password("testpassword123"))
+    monkeypatch.setattr(project_view, "digitize", lambda document, **kw: {"plan": {"commands": [[1, 0, 0], [0, 10, 0], [0, 10, 10], [2, 10, 10], [0, 0, 10]]},
+                                                                            "colors": [{"name": "Red", "rgb": {"r": 200, "g": 30, "b": 30}}, {"name": "Blue", "rgb": {"r": 0, "g": 0, "b": 200}}],
+                                                                            "report": {"score": 92, "isReadyToSew": True, "issues": []},
+                                                                            "stats": {"stitchCount": 3, "colorChangeCount": 1, "trimCount": 0, "maxStitchLengthMM": 10, "totalThreadMM": 30}})
+    c = TestClient(app); c.post("/admin/login", data={"username": "admin", "password": "testpassword123"})
+    cid = session.customer_id; pid = "aaaaaaaa-0000-0000-0000-000000000001"
+    assert "Open “Badge”?" in c.get(f"/admin/customers/{cid}/projects/{pid}").text
+    r = c.post(f"/admin/customers/{cid}/projects/{pid}", data={"reason": "short", "basis": "support"})
+    assert r.status_code == 400 and "Say why" in r.text
+    r = c.post(f"/admin/customers/{cid}/projects/{pid}", data={"reason": "Customer emailed: ring came out as satin, expected fill", "basis": "support"})
+    assert r.status_code == 200 and "Traced artwork" in r.text and "<polyline" in r.text and "Satin" in r.text and "manual" in r.text and "knit" in r.text
+    events = [e for e in db.list_events_for_customer(cid) if e["kind"] == "project_viewed"]
+    assert len(events) == 1 and "ring came out as satin" in events[0]["detail"]

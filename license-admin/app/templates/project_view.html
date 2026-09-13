@@ -1,0 +1,35 @@
+{% extends "admin_base.html" %}
+{% block title %}{{ project.name }} — {{ customer.name }} — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  <p class="muted small"><a href="/admin/customers/{{ customer.id }}">&larr; {{ customer.name }}</a> &middot; viewing recorded on their timeline: “{{ reason }}”</p>
+  <div class="card">
+    <div class="toolbar">
+      <div><h1 style="margin:0">{{ project.name }}</h1><div class="muted">{{ '%.1f'|format(document.physicalWidthMM / 10) }} &times; {{ '%.1f'|format(document.physicalHeightMM / 10) }} cm &middot; {{ objects|length }} object{{ '' if objects|length == 1 else 's' }} &middot; fabric: {{ fabric }} &middot; last saved {{ project.updated_at|short_dt }}</div></div>
+      {% if digitized %}<div class="actions"><span class="pill {{ 'active' if digitized.report.isReadyToSew else 'past_due' }}">{{ digitized.report.score }}/100 &middot; {{ 'Ready to sew' if digitized.report.isReadyToSew else 'Review recommended' }}</span></div>{% endif %}
+    </div>
+    {% if digitized %}
+    <div class="muted small">{{ '{:,}'.format(digitized.stats.stitchCount) }} stitches &middot; {{ digitized.colors|length }} colours &middot; {{ digitized.stats.colorChangeCount }} changes &middot; {{ digitized.stats.trimCount }} trims &middot; longest stitch {{ '%.1f'|format(digitized.stats.maxStitchLengthMM) }} mm &middot; {{ '%.1f'|format(digitized.stats.totalThreadMM / 1000) }} m thread</div>
+    {% if digitized.report.issues %}<ul class="muted small" style="margin:6px 0 0 18px">{% for i in digitized.report.issues %}<li><strong>{{ i.severity }}</strong> {{ i.message }}</li>{% endfor %}</ul>{% endif %}
+    {% else %}<div class="error" style="margin-top:8px">Couldn't reach the app server to generate the stitch preview (APP_SERVER_URL / WEB_API_KEY). The traced artwork and parameters below are from the saved project itself.</div>{% endif %}
+  </div>
+  <div class="two-col">
+    <div class="card"><h2 style="margin-top:0">Traced artwork <span class="muted small">(the shapes PiperStitch found — the original image is not kept)</span></h2>{{ outlines_svg|safe }}</div>
+    <div class="card"><h2 style="margin-top:0">Stitch preview</h2>{% if plan_svg %}{{ plan_svg|safe }}
+      <div class="muted small" style="margin-top:6px">Colour sequence: {% for c in digitized.colors %}<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb({{ c.rgb.r }},{{ c.rgb.g }},{{ c.rgb.b }});vertical-align:middle;margin:0 3px 0 6px"></span>{{ c.name }}{% endfor %}</div>
+      {% else %}<p class="muted">Unavailable.</p>{% endif %}</div>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Objects and parameters <span class="muted small">(in sewing order)</span></h2>
+    <table>
+      <tr><th>#</th><th>Object</th><th>Thread</th><th>Stitch type</th><th>Key settings</th><th>Underlay</th><th>Compensation</th><th></th></tr>
+      {% for o in objects %}
+      <tr><td class="muted">{{ loop.index }}</td><td>{{ o.name }}<br><span class="muted small">{{ o.subpaths }} path{{ '' if o.subpaths == 1 else 's' }}</span></td>
+        <td><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:{{ o.rgb }};vertical-align:middle;margin-right:5px"></span>{{ o.color }}</td>
+        <td>{{ o.stitch_type }}{% if o.manual %} <span class="pill trialing" title="Chosen by the customer, not auto-classified">manual</span>{% endif %}{% if o.applique %} <span class="pill active">appliqué</span>{% endif %}</td>
+        <td class="muted small">{{ o.key }}</td><td class="muted small">{{ o.underlay }}</td><td class="muted small">{{ o.compensation }}</td><td></td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

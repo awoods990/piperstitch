@@ -15,6 +15,7 @@ import csv
 import hashlib
 import hmac
 import io
+import json
 import logging
 import re
 import tempfile
@@ -34,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, emails, finance, promotions, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, emails, finance, project_view, promotions, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -1255,6 +1256,44 @@ def unsubscribe(request: Request, c: int = 0, t: str = ""):
     return templates.TemplateResponse(request, "unsubscribe.html", {"ok": ok})
 
 
+# ---------------------------------------------------------- project view ---
+# Support's look at a customer's saved project. The Privacy Policy allows
+# staff to view saved projects only "when you ask us for help with a
+# specific project" (or for abuse/security/legal), so the page requires a
+# reason and every view is written to the customer's timeline.
+
+
+@app.get("/admin/customers/{customer_id}/projects/{project_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_project_gate(request: Request, customer_id: int, project_id: str):
+    customer = db.get_customer(customer_id)
+    project = db.get_project(customer_id, project_id) if customer else None
+    if project is None:
+        return _customer_redirect(customer_id, error="That project doesn't exist.")
+    return templates.TemplateResponse(request, "project_gate.html", {"active_nav": "subscribers", "customer": customer, "project": project})
+
+
+@app.post("/admin/customers/{customer_id}/projects/{project_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_project_view(request: Request, customer_id: int, project_id: str, reason: str = Form(""), basis: str = Form("support")):
+    customer = db.get_customer(customer_id)
+    project = db.get_project(customer_id, project_id) if customer else None
+    if project is None:
+        return _customer_redirect(customer_id, error="That project doesn't exist.")
+    if len(reason.strip()) < 8:
+        return templates.TemplateResponse(request, "project_gate.html", {"active_nav": "subscribers", "customer": customer, "project": project, "error": "Say why you're opening it — a sentence is enough. It's recorded on the customer's timeline."}, status_code=400)
+    basis_label = {"support": "customer asked for help", "abuse": "abuse / security investigation", "legal": "legal requirement"}.get(basis, "customer asked for help")
+    db.add_event(customer_id=customer_id, subscription_id=None, kind="project_viewed", detail=f"Admin opened saved project “{project['name']}” ({basis_label}): {reason.strip()[:300]}")
+    document = json.loads(project["document"]) if isinstance(project["document"], str) else project["document"]
+    digitized = project_view.digitize(document)
+    return templates.TemplateResponse(request, "project_view.html", {
+        "active_nav": "subscribers", "customer": customer, "project": project, "document": document,
+        "outlines_svg": project_view.outlines_svg(document),
+        "plan_svg": project_view.plan_svg(document, digitized) if digitized else None,
+        "digitized": digitized, "objects": project_view.object_rows(document),
+        "fabric": (document.get("objects") or [{}])[0].get("parameters", {}).get("fabricType", "standard") if document.get("objects") else "standard",
+        "reason": reason.strip(),
+    })
+
+
 # ----------------------------------------------------------- promotions ---
 # Promoter referral codes with revenue share, and direct discounts. Every
 # code is a Stripe coupon + promotion code created from here; the admin
@@ -1567,10 +1606,13 @@ def financials_csv(view: str = "monthly", year: int = 0):
 
 
 @app.get("/admin/feedback", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
-def admin_feedback(request: Request, only_unreviewed: bool = False):
+def admin_feedback(request: Request, only_unreviewed: bool = False, customer_id: int = 0):
+    submissions = db.list_feedback(only_unreviewed=only_unreviewed)
+    if customer_id:
+        submissions = [f for f in submissions if f["customer_id"] == customer_id]
     return templates.TemplateResponse(request, "feedback.html", {
         "active_nav": "feedback",
-        "submissions": db.list_feedback(only_unreviewed=only_unreviewed),
+        "submissions": submissions,
         "unreviewed_count": db.count_feedback_unreviewed(),
         "only_unreviewed": only_unreviewed,
     })

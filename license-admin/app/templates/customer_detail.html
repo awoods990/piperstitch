@@ -166,10 +166,11 @@
           {% endfor %}
         </table>
         {% if projects %}
-        <table style="margin-top:10px">
+        <p class="muted small" style="margin:8px 0 0">Saved projects can be opened for support — the Privacy Policy allows it when the customer asks for help; you'll be asked why, and it's logged. Designs they didn't save aren't kept. Their <a href="/admin/feedback?customer_id={{ customer.id }}">feedback submissions</a> include the original artwork with their consent.</p>
+        <table style="margin-top:6px">
           <tr><th>Saved project</th><th>Size</th><th>Objects</th><th>Last saved</th></tr>
           {% for p in projects %}
-          <tr><td>{{ p.name }}</td><td class="muted">{{ '%.1f'|format(p.width_mm / 10) }} &times; {{ '%.1f'|format(p.height_mm / 10) }} cm</td><td class="muted">{{ p.object_count }}</td><td class="muted">{{ p.updated_at|short_dt }}</td></tr>
+          <tr><td><a href="/admin/customers/{{ customer.id }}/projects/{{ p.id }}" title="Open for support (reason required; recorded on the timeline)">{{ p.name }}</a></td><td class="muted">{{ '%.1f'|format(p.width_mm / 10) }} &times; {{ '%.1f'|format(p.height_mm / 10) }} cm</td><td class="muted">{{ p.object_count }}</td><td class="muted">{{ p.updated_at|short_dt }}</td></tr>
           {% endfor %}
         </table>
         {% endif %}

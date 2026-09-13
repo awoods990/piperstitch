@@ -11,6 +11,27 @@ func routes(_ app: Application) throws {
     // routes below require a signed-in, entitled account whenever License
     // Admin is configured.
     authRoutes(api)
+
+    // Server-to-server: License Admin re-digitizes a saved project to show
+    // support staff the stitch preview and parameters. Guarded by the same
+    // shared key License Admin's own web API uses.
+    api.post("internal", "digitize") { req -> DigitizeResponse in
+        let key = req.application.auth.webAPIKey
+        guard req.application.auth.enabled, !key.isEmpty, req.headers.first(name: "X-API-Key") == key else {
+            throw Abort(.unauthorized, reason: "Invalid API key")
+        }
+        let body = try req.content.decode(DigitizeRequest.self)
+        let started = Date()
+        let (plan, colors, report) = try await Engine.run { () throws -> (StitchPlan, [ThreadColor], EmbroideryReadinessReport) in
+            let (plan, colors) = try DigitizePipeline.flattenWithColors(body.document)
+            let report = QualityAnalyzer.analyze(plan, hoopWidthMM: body.hoopWidthMM, hoopHeightMM: body.hoopHeightMM, document: body.document)
+            return (plan, colors, report)
+        }
+        return DigitizeResponse(plan: WirePlan(plan), colors: colors, report: WireReport(report),
+                                stats: WireStats(stitchCount: plan.stitchCount, colorChangeCount: plan.colorChangeCount, trimCount: plan.trimCount,
+                                                 maxStitchLengthMM: plan.maxStitchLength(), totalThreadMM: plan.totalStitchLength, bounds: plan.boundingBox),
+                                elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
+    }
     let engine = api.grouped(EntitlementGate())
     editRoutes(engine)
 

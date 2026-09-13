@@ -4,6 +4,28 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: support view of a customer's saved project (within the Privacy Policy)
+
+- On a customer's page, each **saved project** opens for support: the
+  traced artwork (the shapes PiperStitch found, drawn in thread colour),
+  the **stitch preview** (the app server re-digitizes the saved document
+  through a new server-to-server `POST /api/v1/internal/digitize`,
+  guarded by the shared key), the readiness score and issues, stitch /
+  colour / trim / thread statistics, and every object's parameters in
+  sewing order (stitch type and whether it was set by hand, thread,
+  density or spacing, pattern, angle, underlay, pull/push compensation,
+  fabric, appliqué).
+- **Policy check**: the Privacy Policy says artwork and stitch data are
+  not retained except for saved projects, and staff may view saved
+  projects only when the customer asks for help (or for abuse/security/
+  legal reasons). So: nothing is stored beyond what already is; unsaved
+  designs cannot be viewed; the original image is not kept (the traced
+  shapes stand in for it); opening a project requires a basis and a
+  reason, and every view is recorded on the customer's timeline as
+  `project_viewed`. Feedback submissions (which carry artwork with the
+  customer's consent) are linked from the customer page. New config
+  `APP_SERVER_URL` (defaults to `WEB_APP_URL`).
+
 ## Added: editable emails, the trial and subscriber email series, and "we're missing you"
 
 - **Every system email is a template in the database** (`email_templates`,

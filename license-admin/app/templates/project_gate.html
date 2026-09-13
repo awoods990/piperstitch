@@ -1,0 +1,19 @@
+{% extends "admin_base.html" %}
+{% block title %}Open saved project — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="/admin/customers/{{ customer.id }}">&larr; {{ customer.name }}</a></p>
+  <div class="card" style="max-width:640px">
+    <h1 style="margin-top:0">Open “{{ project.name }}”?</h1>
+    <p>This is {{ customer.name }}'s saved project. The Privacy Policy lets staff look at a saved project only <strong>when the customer asks for help with it</strong> (or to investigate abuse, or when the law requires). The reason you give is written to their timeline.</p>
+    <form method="post" action="/admin/customers/{{ customer.id }}/projects/{{ project.id }}">
+      <label>Basis</label>
+      <select name="basis"><option value="support">The customer asked for help with this project</option><option value="abuse">Investigating abuse or a security incident</option><option value="legal">Required by law</option></select>
+      <label>Reason (what they asked / what you're checking)</label>
+      <input type="text" name="reason" required minlength="8" placeholder="e.g. Emailed 2026-09-13: letters came out as running stitch, expected satin">
+      <div style="margin-top:12px; display:flex; gap:10px"><button type="submit" class="small">Open project</button><a class="button secondary small" href="/admin/customers/{{ customer.id }}">Cancel</a></div>
+    </form>
+  </div>
+</main>
+{% endblock %}
