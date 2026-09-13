@@ -5,8 +5,10 @@
   <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
   <div class="card">
     {% if ok %}
-    <h1>You're unsubscribed.</h1>
+    <h1>You're unsubscribed from tips.</h1>
     <p>We won't send you tips or check-in emails. Sign-in codes, receipts and billing notices still come through, because the app needs them.</p>
+    <p><strong>This does not cancel your PiperStitch subscription.</strong> If you're subscribed, it continues as before. To cancel the subscription itself, use your <a href="/account">account page</a> — access continues to the end of the period you've paid for.</p>
+    <p class="muted small">We've emailed you a confirmation saying the same.</p>
     <p class="muted small">Changed your mind? Reply to any email from us and we'll switch them back on.</p>
     {% else %}
     <h1>That link isn't valid.</h1>

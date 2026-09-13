@@ -1240,8 +1240,15 @@ def unsubscribe(request: Request, c: int = 0, t: str = ""):
     customer = db.get_customer(c) if c else None
     ok = customer is not None and hmac.compare_digest(t, emails.unsubscribe_token(c))
     if ok:
+        already = bool(customer["marketing_opt_out"])
         db.set_marketing_opt_out(c, True)
-        db.add_event(customer_id=c, subscription_id=None, kind="unsubscribed", detail="Unsubscribed from tip emails via the link.")
+        if not already:
+            db.add_event(customer_id=c, subscription_id=None, kind="unsubscribed", detail="Unsubscribed from tip emails via the link.")
+            # Say plainly, in their inbox, that the subscription itself is untouched.
+            try:
+                emails.send_system("unsubscribe_confirmed", to_email=customer["email"], customer_id=c, vars=emails.variables(customer))
+            except email_sender.EmailSendError as e:
+                log.warning("Unsubscribe confirmation not sent to %s: %s", customer["email"], e)
     return templates.TemplateResponse(request, "unsubscribe.html", {"ok": ok})
 
 

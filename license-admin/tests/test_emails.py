@@ -94,5 +94,13 @@ def test_unsubscribe_link_is_signed(isolated_db, test_keypair, fake_smtp, monkey
     cid = db.upsert_customer(name="U", email="u@example.com")
     client = TestClient(app)
     assert "isn't valid" in client.get(f"/unsubscribe?c={cid}&t=wrong").text
-    assert "unsubscribed" in client.get(f"/unsubscribe?c={cid}&t={emails.unsubscribe_token(cid)}").text.lower()
+    fake_smtp.sent.clear()
+    page = client.get(f"/unsubscribe?c={cid}&t={emails.unsubscribe_token(cid)}").text
+    assert "unsubscribed from tips" in page.lower() and "does not cancel" in page
     assert db.get_customer(cid)["marketing_opt_out"] == 1
+    # a confirmation email that says the subscription is unchanged
+    assert len(fake_smtp.sent) == 1 and "subscription is unchanged" in fake_smtp.sent[0]["Subject"]
+    assert "does not cancel your PiperStitch subscription" in fake_smtp.sent[0].get_body(preferencelist=("plain",)).get_content()
+    # clicking the link again doesn't send another
+    client.get(f"/unsubscribe?c={cid}&t={emails.unsubscribe_token(cid)}")
+    assert len(fake_smtp.sent) == 1

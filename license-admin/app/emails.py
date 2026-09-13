@@ -116,6 +116,18 @@ We'd love for you to try it again — open PiperStitch and give it another run. 
 
 Thanks for helping us make PiperStitch better.""",
          cta_label="Open PiperStitch", cta_url="{app_url}", preheader="We used your feedback — come try PiperStitch again.", placeholders=COMMON_PLACEHOLDERS),
+    dict(key="unsubscribe_confirmed", name="Unsubscribed from tips (confirmation)", description="Sent when someone clicks the unsubscribe link in a tip email. Makes clear their subscription is unchanged.",
+         subject="You're unsubscribed from PiperStitch tips — your subscription is unchanged",
+         body="""Hi {first_name},
+
+Done — we've stopped the tip and check-in emails to {email}.
+
+One thing to be clear about: this only stops the tips. It does not cancel your PiperStitch subscription. If you're subscribed, it continues exactly as before, and you'll still get the emails the app needs — sign-in codes, receipts and billing notices.
+
+If you did mean to cancel the subscription itself, that's done from your account page (link below): update your card, see invoices, or cancel — access continues to the end of the period you've paid for.
+
+Changed your mind about the tips? Reply to this email and we'll switch them back on.""",
+         cta_label="Manage my subscription", cta_url="{account_url}", preheader="Tips stopped. Your subscription itself is unchanged.", placeholders=COMMON_PLACEHOLDERS),
     dict(key="file_sent", name="Embroidery file sent to someone", description="The email a recipient gets when a customer uses Send. The file is attached automatically.",
          subject="{sender_name} sent you an embroidery file: {filename}",
          body="""{sender_name} sent you an embroidery file from PiperStitch: {filename}.{note_block}
