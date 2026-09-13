@@ -1,0 +1,47 @@
+{% extends "admin_base.html" %}
+{% block title %}Edit email — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="{{ back }}">&larr; All emails</a></p>
+  <div class="two-col">
+    <div class="card">
+      <h2 style="margin-top:0">{% if kind == 'system' %}{{ row.name }}{% else %}{{ sequence.name }} — day {{ row.delay_days }}: {{ row.name }}{% endif %}</h2>
+      {% if kind == 'system' %}<p class="muted small">{{ row.description }}<br>Placeholders: <span class="mono">{{ '{' ~ row.placeholders.replace(', ', '} {') ~ '}' }}</span></p>
+      {% else %}<p class="muted small">Placeholders: <span class="mono">{first_name} {name} {email} {app_url} {site_url} {account_url} {price} {trial_days} {trial_ends}</span>. An unsubscribe line is added automatically.</p>{% endif %}
+      <form method="post" action="{% if kind == 'system' %}/admin/emails/system/{{ row.key }}{% else %}/admin/emails/steps/{{ row.id }}{% endif %}">
+        {% if kind == 'step' %}
+        <div style="display:grid; grid-template-columns: 90px 1fr; gap:10px">
+          <div><label>Day</label><input type="number" name="delay_days" min="0" max="365" value="{{ row.delay_days }}" required></div>
+          <div><label>Step name (internal)</label><input type="text" name="name" value="{{ row.name }}" required></div>
+        </div>
+        {% endif %}
+        <label>Subject</label><input type="text" name="subject" value="{{ row.subject }}" required>
+        <label>Body</label>
+        <textarea name="body" rows="18" required style="width:100%; font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding:10px; border:1px solid var(--border); border-radius:6px">{{ row.body }}</textarea>
+        <div style="display:grid; grid-template-columns: 1fr 2fr; gap:10px; margin-top:8px">
+          <div><label>Button label</label><input type="text" name="cta_label" value="{{ row.cta_label }}"></div>
+          <div><label>Button link</label><input type="text" name="cta_url" value="{{ row.cta_url }}"></div>
+        </div>
+        {% if kind == 'system' %}<label>Preview line (shown in inboxes next to the subject)</label><input type="text" name="preheader" value="{{ row.preheader }}">{% endif %}
+        <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+          {% if kind == 'step' %}<label class="inline"><input type="checkbox" name="active" value="1" {% if row.active %}checked{% endif %}> Active (sent to customers)</label>{% endif %}
+          <button type="submit" class="small" name="action" value="save">Save</button>
+          {% if kind == 'system' and row.edited %}<button type="submit" class="small secondary" name="action" value="reset" onclick="return confirm('Throw away your edits and go back to the default text?');">Reset to default</button>{% endif %}
+          {% if kind == 'step' %}<button type="submit" class="small danger" name="action" value="delete" onclick="return confirm('Delete this step? Unsent copies are cancelled.');">Delete step</button>{% endif %}
+        </div>
+      </form>
+      <form method="post" action="{% if kind == 'system' %}/admin/emails/system/{{ row.key }}/test{% else %}/admin/emails/steps/{{ row.id }}/test{% endif %}" style="margin-top:14px; display:flex; gap:8px; align-items:flex-end">
+        <div style="flex:1"><label>Send a test (with the text as currently saved) to</label><input type="email" name="to_email" required placeholder="you@piperstitch.com"></div>
+        <button type="submit" class="small secondary">Send test</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Preview <span class="muted small">(sample customer)</span></h2>
+      <div class="muted small">Subject</div><div style="font-weight:600; margin-bottom:10px">{{ preview_subject }}</div>
+      <iframe title="Email preview" srcdoc="{{ preview_html|e }}" style="width:100%; height:640px; border:1px solid var(--border); border-radius:8px; background:#fff"></iframe>
+    </div>
+  </div>
+</main>
+{% endblock %}

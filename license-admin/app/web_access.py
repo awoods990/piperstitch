@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
-from . import config, db, email_sender, promotions, stripe_client, subscriptions
+from . import config, db, email_sender, emails, promotions, stripe_client, subscriptions
 from .activation import MAX_CODES_PER_HOUR, MAX_VERIFY_ATTEMPTS, ActivationError
 
 # activation_codes rows are keyed by (email, device_id); every browser
@@ -141,6 +141,7 @@ def _start_trial_if_first_visit(customer) -> Optional[int]:
         notes=TRIAL_NOTE,
     )
     db.add_event(customer_id=customer["id"], subscription_id=subscription_id, kind="trial_started", detail=f"{config.TRIAL_DAYS}-day web trial through {_iso(until)[:10]}.")
+    emails.enroll(customer["id"], "trial", start=now)
     return subscription_id
 
 
@@ -171,6 +172,7 @@ def state(*, token: str) -> dict:
     they may use the app right now. Cheap -- database only."""
     session = _session(token)
     db.touch_web_session(session["id"])
+    db.touch_customer_activity(session["customer_id"])
     _expire_stale_trial(session["customer_id"])
     customer = db.get_customer(session["customer_id"])
     validity = subscriptions.validity_for(customer["id"])

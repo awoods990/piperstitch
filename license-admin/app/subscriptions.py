@@ -15,7 +15,7 @@ from typing import Optional
 
 import stripe
 
-from . import config, db, email_sender, entitlement, finance, promotions
+from . import config, db, email_sender, emails, entitlement, finance, promotions
 
 log = logging.getLogger("license_admin.subscriptions")
 
@@ -154,6 +154,8 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
         promotions.attribute_subscription(sub, subscription_id=subscription_id, customer_id=customer_id)
         if status in db.ENTITLED_STATUSES:
             _try_email(email_sender.send_welcome_email, to_email=customer["email"], customer_name=customer["name"])
+            emails.skip_pending(customer_id, "trial", "subscribed")
+            emails.enroll(customer_id, "subscriber")
     else:
         if period_end and previous["current_period_end"] and period_end > previous["current_period_end"] and status in ("active", "trialing"):
             kinds.append("renewed")
@@ -163,6 +165,7 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
             db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="status_changed", detail=f"{previous['status']} → {status}.", stripe_event_id=stripe_event_id)
             if status in ("canceled", "unpaid", "incomplete_expired"):
                 db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="ended", detail="Access ended.", stripe_event_id=stripe_event_id)
+                emails.skip_pending(customer_id, "subscriber", "subscription ended")
         now_cancelling = bool(sub.get("cancel_at_period_end"))
         if now_cancelling != bool(previous["cancel_at_period_end"]):
             if now_cancelling:

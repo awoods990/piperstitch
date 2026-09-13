@@ -10,6 +10,7 @@ is, how to configure it, and how to deploy it.
 from __future__ import annotations
 
 import base64
+import asyncio
 import csv
 import hashlib
 import hmac
@@ -33,7 +34,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, finance, promotions, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, emails, finance, promotions, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -41,10 +42,28 @@ log = logging.getLogger("license_admin")
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     db.init_db()
+    emails.seed()
     missing = config.require_for_serving()
     if missing:
         log.warning("License Admin is running with missing configuration: %s — see .env.example", ", ".join(missing))
+    # The scheduler: due sequence emails, the win-back check and recurring
+    # expenses, every few minutes, in-process -- no external cron.
+    task = asyncio.create_task(_scheduler_loop()) if config.SCHEDULER_ENABLED else None
     yield
+    if task:
+        task.cancel()
+
+
+async def _scheduler_loop():
+    await asyncio.sleep(20)
+    while True:
+        try:
+            result = await asyncio.to_thread(emails.run_scheduled_work)
+            if any(result.values()):
+                log.info("Scheduler: %s", result)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Scheduler tick failed: %s", e)
+        await asyncio.sleep(config.SCHEDULER_INTERVAL_SECONDS)
 
 
 app = FastAPI(title="PiperStitch License Admin", lifespan=_lifespan)
@@ -843,6 +862,9 @@ def customer_detail(request: Request, customer_id: int, message: str = "", error
         "promo_payouts": db.list_promo_payouts_for_customer(customer_id),
         "active_promotions": [p for p in db.list_promotions() if p["active"]],
         "describe": promotions.describe,
+        "deliveries": db.list_deliveries_for_customer(customer_id),
+        "email_log": db.list_email_log(customer_id),
+        "sequence_options": db.list_sequences(),
         "payments": db.list_payments_for_customer(customer_id),
         "events": db.list_events_for_customer(customer_id),
         "trial_ends": trial_ends,
@@ -1032,6 +1054,195 @@ def export_csv():
         writer.writerow([r["id"], r["customer_name"], r["customer_email"], r["status"], r["source"], r["stripe_subscription_id"], r["current_period_end"], r["cancel_at_period_end"], r["amount_cents"], r["created_at"], r["ended_at"], r["notes"]])
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=piperstitch_subscriptions.csv"})
+
+
+# ---------------------------------------------------------------- emails ---
+# Every email the system sends is editable here, and the drip sequences
+# (trial, subscriber, win-back) with their steps. See emails.py.
+
+
+def _emails_redirect(*, message: str = "", error: str = "", anchor: str = "") -> RedirectResponse:
+    q = []
+    if message: q.append("message=" + quote_plus(message))
+    if error: q.append("error=" + quote_plus(error))
+    return RedirectResponse("/admin/emails" + ("?" + "&".join(q) if q else "") + (f"#{anchor}" if anchor else ""), status_code=303)
+
+
+@app.get("/admin/emails", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_emails(request: Request, message: str = "", error: str = ""):
+    emails.seed()
+    sequences = []
+    for seq in db.list_sequences():
+        sequences.append({"row": seq, "steps": db.list_sequence_steps(seq["id"])})
+    return templates.TemplateResponse(request, "emails.html", {
+        "active_nav": "emails",
+        "system_templates": db.list_email_templates(),
+        "sequences": sequences,
+        "stats": {s["key"]: s for s in db.sequence_stats()},
+        "message": message or None, "error": error or None,
+    })
+
+
+@app.get("/admin/emails/system/{key}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_email_edit(request: Request, key: str, message: str = "", error: str = ""):
+    row = db.get_email_template(key)
+    if row is None:
+        return _emails_redirect(error="That email doesn't exist.")
+    sample = {"id": 0, "name": "Jane Example", "email": "jane@example.com", "marketing_opt_out": 0}
+    extra = {"code": "123456", "code_minutes": config.ACTIVATION_CODE_TTL_MINUTES, "device": "", "link_line": "", "sign_in_url": "", "url": f"{config.PUBLIC_BASE_URL}/account/open?token=example",
+             "link_minutes": config.ACCOUNT_LINK_TTL_MINUTES, "grace_days": config.ENTITLEMENT_GRACE_DAYS, "ends_on": "2026-12-31", "until": "2026-12-31", "note": "",
+             "sender_name": "Jane Example", "sender_email": "jane@example.com", "filename": "logo.dst", "note_block": ""}
+    subject, body, html = emails.render_template(row, emails.variables(sample, **extra))
+    return templates.TemplateResponse(request, "email_edit.html", {
+        "active_nav": "emails", "kind": "system", "row": row, "preview_subject": subject, "preview_body": body, "preview_html": html,
+        "back": "/admin/emails", "message": message or None, "error": error or None,
+    })
+
+
+@app.post("/admin/emails/system/{key}", dependencies=[Depends(auth.require_admin)])
+def admin_email_save(key: str, subject: str = Form(...), body: str = Form(...), cta_label: str = Form(""), cta_url: str = Form(""), preheader: str = Form(""), action: str = Form("save")):
+    if db.get_email_template(key) is None:
+        return _emails_redirect(error="That email doesn't exist.")
+    if action == "reset":
+        db.reset_email_template(key); emails.seed()
+        return RedirectResponse(f"/admin/emails/system/{key}?message=" + quote_plus("Reset to the default text."), status_code=303)
+    if not subject.strip() or not body.strip():
+        return RedirectResponse(f"/admin/emails/system/{key}?error=" + quote_plus("Subject and body are required."), status_code=303)
+    db.update_email_template(key, subject=subject.strip(), body=body.replace("\r\n", "\n"), cta_label=cta_label.strip(), cta_url=cta_url.strip(), preheader=preheader.strip())
+    return RedirectResponse(f"/admin/emails/system/{key}?message=" + quote_plus("Saved. Every future send uses this text."), status_code=303)
+
+
+@app.post("/admin/emails/system/{key}/test", dependencies=[Depends(auth.require_admin)])
+def admin_email_test(key: str, to_email: str = Form(...)):
+    row = db.get_email_template(key)
+    if row is None:
+        return _emails_redirect(error="That email doesn't exist.")
+    sample = {"id": 0, "name": "Jane Example", "email": to_email, "marketing_opt_out": 0}
+    extra = {"code": "123456", "code_minutes": config.ACTIVATION_CODE_TTL_MINUTES, "device": "", "link_line": "", "url": f"{config.PUBLIC_BASE_URL}/account", "link_minutes": config.ACCOUNT_LINK_TTL_MINUTES,
+             "grace_days": config.ENTITLEMENT_GRACE_DAYS, "ends_on": "2026-12-31", "until": "2026-12-31", "note": "", "sender_name": "Jane Example", "sender_email": to_email, "filename": "logo.dst", "note_block": ""}
+    try:
+        emails.send_system(key, to_email=to_email, vars=emails.variables(sample, **extra))
+    except email_sender.EmailSendError as e:
+        return RedirectResponse(f"/admin/emails/system/{key}?error=" + quote_plus(f"Test not sent: {e}"), status_code=303)
+    return RedirectResponse(f"/admin/emails/system/{key}?message=" + quote_plus(f"Test sent to {to_email}."), status_code=303)
+
+
+@app.post("/admin/emails/sequences/{sequence_id}/toggle", dependencies=[Depends(auth.require_admin)])
+def admin_sequence_toggle(sequence_id: int):
+    seq = db.get_sequence_by_id(sequence_id)
+    if seq is None:
+        return _emails_redirect(error="That sequence doesn't exist.")
+    db.set_sequence_active(sequence_id, not seq["active"])
+    return _emails_redirect(message=f"{seq['name']} {'paused — nothing more will be sent until it is resumed' if seq['active'] else 'resumed'}.", anchor=f"seq-{seq['key']}")
+
+
+@app.post("/admin/emails/sequences/{sequence_id}/steps", dependencies=[Depends(auth.require_admin)])
+def admin_step_add(sequence_id: int, delay_days: str = Form(...), name: str = Form(...), subject: str = Form(...), body: str = Form(...), cta_label: str = Form(""), cta_url: str = Form("")):
+    seq = db.get_sequence_by_id(sequence_id)
+    if seq is None:
+        return _emails_redirect(error="That sequence doesn't exist.")
+    if not delay_days.strip().isdigit() or not name.strip() or not subject.strip() or not body.strip():
+        return _emails_redirect(error="A step needs a day number, a name, a subject and a body.", anchor=f"seq-{seq['key']}")
+    step_id = db.add_sequence_step(sequence_id=sequence_id, delay_days=int(delay_days), name=name, subject=subject.strip(), body=body.replace("\r\n", "\n"), cta_label=cta_label.strip(), cta_url=cta_url.strip())
+    return RedirectResponse(f"/admin/emails/steps/{step_id}?message=" + quote_plus("Step added. Customers already in the sequence keep their existing schedule; new enrolments include it."), status_code=303)
+
+
+@app.get("/admin/emails/steps/{step_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_step_edit(request: Request, step_id: int, message: str = "", error: str = ""):
+    step = db.get_sequence_step(step_id)
+    if step is None:
+        return _emails_redirect(error="That step doesn't exist.")
+    seq = db.get_sequence_by_id(step["sequence_id"])
+    sample = {"id": 0, "name": "Jane Example", "email": "jane@example.com", "marketing_opt_out": 0}
+    subject, body, html = emails.render_template(step, emails.variables(sample, trial_ends="2026-12-31"), marketing=True)
+    return templates.TemplateResponse(request, "email_edit.html", {
+        "active_nav": "emails", "kind": "step", "row": step, "sequence": seq, "preview_subject": subject, "preview_body": body, "preview_html": html,
+        "back": f"/admin/emails#seq-{seq['key']}", "message": message or None, "error": error or None,
+    })
+
+
+@app.post("/admin/emails/steps/{step_id}", dependencies=[Depends(auth.require_admin)])
+def admin_step_save(step_id: int, delay_days: str = Form(...), name: str = Form(...), subject: str = Form(...), body: str = Form(...), cta_label: str = Form(""), cta_url: str = Form(""), active: str = Form(""), action: str = Form("save")):
+    step = db.get_sequence_step(step_id)
+    if step is None:
+        return _emails_redirect(error="That step doesn't exist.")
+    seq = db.get_sequence_by_id(step["sequence_id"])
+    if action == "delete":
+        db.delete_sequence_step(step_id)
+        return _emails_redirect(message=f"Step “{step['name']}” deleted (its unsent emails were cancelled).", anchor=f"seq-{seq['key']}")
+    if not delay_days.strip().isdigit() or not name.strip() or not subject.strip() or not body.strip():
+        return RedirectResponse(f"/admin/emails/steps/{step_id}?error=" + quote_plus("A step needs a day number, a name, a subject and a body."), status_code=303)
+    db.update_sequence_step(step_id, delay_days=int(delay_days), name=name, subject=subject.strip(), body=body.replace("\r\n", "\n"), cta_label=cta_label.strip(), cta_url=cta_url.strip(), active=bool(active))
+    return RedirectResponse(f"/admin/emails/steps/{step_id}?message=" + quote_plus("Saved. Unsent emails use the new text."), status_code=303)
+
+
+@app.post("/admin/emails/steps/{step_id}/test", dependencies=[Depends(auth.require_admin)])
+def admin_step_test(step_id: int, to_email: str = Form(...)):
+    step = db.get_sequence_step(step_id)
+    if step is None:
+        return _emails_redirect(error="That step doesn't exist.")
+    sample = {"id": 0, "name": "Jane Example", "email": to_email, "marketing_opt_out": 0}
+    subject, body, html = emails.render_template(step, emails.variables(sample, trial_ends="2026-12-31"), marketing=True)
+    try:
+        email_sender._send_smtp(email_sender._compose(to_email=to_email, subject=subject, body=body, html_body=html))
+    except email_sender.EmailSendError as e:
+        return RedirectResponse(f"/admin/emails/steps/{step_id}?error=" + quote_plus(f"Test not sent: {e}"), status_code=303)
+    return RedirectResponse(f"/admin/emails/steps/{step_id}?message=" + quote_plus(f"Test sent to {to_email}."), status_code=303)
+
+
+@app.post("/admin/emails/run-now", dependencies=[Depends(auth.require_admin)])
+def admin_emails_run_now():
+    result = emails.run_scheduled_work()
+    return _emails_redirect(message=f"Ran the scheduler: {result['sent']} email(s) sent, {result['winback']} win-back(s) started.")
+
+
+# per-customer sequence controls (on the customer page)
+
+@app.post("/admin/customers/{customer_id}/sequences/enroll", dependencies=[Depends(auth.require_admin)])
+def admin_customer_enroll(customer_id: int, sequence_key: str = Form(...)):
+    if db.get_customer(customer_id) is None:
+        return RedirectResponse("/admin/subscribers", status_code=303)
+    n = emails.enroll(customer_id, sequence_key, force=True)
+    return _customer_redirect(customer_id, message=f"Enrolled: {n} email(s) scheduled from today." if n else "Nothing scheduled — that sequence has no active steps.")
+
+
+@app.post("/admin/customers/{customer_id}/sequences/{sequence_key}/stop", dependencies=[Depends(auth.require_admin)])
+def admin_customer_stop_sequence(customer_id: int, sequence_key: str):
+    n = emails.skip_pending(customer_id, sequence_key, "stopped by admin")
+    return _customer_redirect(customer_id, message=f"Stopped: {n} unsent email(s) cancelled.")
+
+
+@app.post("/admin/deliveries/{delivery_id}/send", dependencies=[Depends(auth.require_admin)])
+def admin_delivery_send(delivery_id: int):
+    d = db.get_delivery(delivery_id)
+    if d is None:
+        return RedirectResponse("/admin/subscribers", status_code=303)
+    customer = db.get_customer(d["customer_id"])
+    if customer and customer["marketing_opt_out"]:
+        return _customer_redirect(d["customer_id"], error="They've unsubscribed from tips, so sequence emails can't be sent to them.")
+    ok = emails.send_delivery(delivery_id, by="admin")
+    d2 = db.get_delivery(delivery_id)
+    return _customer_redirect(d["customer_id"], message=f"Sent “{d['step_name']}”." if ok else "", error="" if ok else f"Not sent: {d2['note'] if d2 else 'unknown error'}")
+
+
+@app.post("/admin/customers/{customer_id}/marketing", dependencies=[Depends(auth.require_admin)])
+def admin_customer_marketing(customer_id: int, opt_out: str = Form("")):
+    if db.get_customer(customer_id) is None:
+        return RedirectResponse("/admin/subscribers", status_code=303)
+    db.set_marketing_opt_out(customer_id, bool(opt_out))
+    return _customer_redirect(customer_id, message="Unsubscribed from tip emails." if opt_out else "Re-subscribed to tip emails.")
+
+
+# public unsubscribe (link in every sequence email)
+
+@app.get("/unsubscribe", response_class=HTMLResponse)
+def unsubscribe(request: Request, c: int = 0, t: str = ""):
+    customer = db.get_customer(c) if c else None
+    ok = customer is not None and hmac.compare_digest(t, emails.unsubscribe_token(c))
+    if ok:
+        db.set_marketing_opt_out(c, True)
+        db.add_event(customer_id=c, subscription_id=None, kind="unsubscribed", detail="Unsubscribed from tip emails via the link.")
+    return templates.TemplateResponse(request, "unsubscribe.html", {"ok": ok})
 
 
 # ----------------------------------------------------------- promotions ---

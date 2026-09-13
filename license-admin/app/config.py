@@ -188,3 +188,8 @@ def require_for_serving() -> list[str]:
     if not SMTP_HOST and not POSTMARK_API_TOKEN and not EMAIL_OUTBOX_DIR:
         missing.append("SMTP_HOST (or POSTMARK_API_TOKEN)")
     return missing
+
+# The in-process scheduler (sequence emails, win-back, recurring expenses).
+# Off in tests; on in production.
+SCHEDULER_ENABLED = _bool("SCHEDULER_ENABLED", "true")
+SCHEDULER_INTERVAL_SECONDS = _int("SCHEDULER_INTERVAL_SECONDS", 300)

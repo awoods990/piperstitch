@@ -7,7 +7,7 @@ def test_branding_renders_lists_codes_and_cta():
     assert "<script" not in html
 
 
-def test_every_email_is_multipart_with_text_first(fake_smtp):
+def test_every_email_is_multipart_with_text_first(isolated_db, fake_smtp):
     email_sender.send_welcome_email(to_email="a@b.co", customer_name="A")
     email_sender.send_activation_code_email(to_email="a@b.co", code="123456", device_name="Mac")
     email_sender.send_account_link_email(to_email="a@b.co", url="https://x/account/open?token=abc")
@@ -25,7 +25,7 @@ def test_every_email_is_multipart_with_text_first(fake_smtp):
     assert "https://x/account/open?token=abc" in fake_smtp.sent[2].get_body(preferencelist=("plain",)).get_content()
 
 
-def test_activation_code_email_carries_a_sign_in_link_only_when_given_one(fake_smtp):
+def test_activation_code_email_carries_a_sign_in_link_only_when_given_one(isolated_db, fake_smtp):
     """The Mac app's own activation emails (device_name a real Mac name,
     no sign_in_url) must never get a web sign-in link -- clicking one
     wouldn't activate the Mac at all, just sign into the web app."""
@@ -42,13 +42,13 @@ def test_activation_code_email_carries_a_sign_in_link_only_when_given_one(fake_s
     assert "https://app.x/?email=a%40b.co&amp;code=222222" in html and "Sign in instantly" in html
 
 
-def test_reply_to_header(fake_smtp, monkeypatch):
+def test_reply_to_header(isolated_db, fake_smtp, monkeypatch):
     monkeypatch.setattr(config, "REPLY_TO_EMAIL", "help@piperstitch.com")
     email_sender.send_welcome_email(to_email="a@b.co", customer_name="A")
     assert fake_smtp.sent[0]["Reply-To"] == "help@piperstitch.com"
 
 
-def test_postmark_route_when_configured(monkeypatch, fake_smtp):
+def test_postmark_route_when_configured(isolated_db, monkeypatch, fake_smtp):
     import httpx
 
     from types import SimpleNamespace

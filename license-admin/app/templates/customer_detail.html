@@ -77,6 +77,41 @@
         <p class="muted">No subscription yet.</p>
         {% endfor %}
 
+        <h3>Emails</h3>
+        <div class="muted small" style="margin-bottom:6px">
+          {% if customer.marketing_opt_out %}<span class="pill ended">unsubscribed from tips</span>{% else %}<span class="pill active">tips on</span>{% endif %}
+          <form method="post" action="/admin/customers/{{ customer.id }}/marketing" style="display:inline"><input type="hidden" name="opt_out" value="{{ '' if customer.marketing_opt_out else '1' }}"><button class="small secondary" type="submit">{{ 'Re-subscribe' if customer.marketing_opt_out else 'Unsubscribe them' }}</button></form>
+          &middot; last active {{ customer.last_active_at|short_dt if customer.last_active_at else 'unknown' }}
+        </div>
+        <table>
+          <tr><th>Sequence · step</th><th>Scheduled</th><th>Sent</th><th></th></tr>
+          {% for d in deliveries %}
+          <tr>
+            <td>{{ d.sequence_name }} &middot; day {{ d.delay_days }}: {{ d.step_name }}{% if not d.step_active %} <span class="muted small">(step off)</span>{% endif %}<br><span class="muted small">{{ d.subject }}</span></td>
+            <td class="muted">{{ d.scheduled_for|short_dt }}</td>
+            <td>{% if d.status == 'sent' %}<span class="pill active">sent</span> <span class="muted small">{{ d.sent_at|short_dt }}{% if d.sent_by == 'admin' %} by admin{% endif %}</span>{% elif d.status == 'scheduled' %}<span class="pill trialing">scheduled</span>{% elif d.status == 'failed' %}<span class="pill past_due">failed</span> <span class="muted small">{{ d.note }}</span>{% else %}<span class="pill ended">skipped</span> <span class="muted small">{{ d.note }}</span>{% endif %}</td>
+            <td>{% if d.status in ('scheduled', 'failed') %}<form method="post" action="/admin/deliveries/{{ d.id }}/send"><button class="small secondary" type="submit">Send now</button></form>{% elif d.status == 'sent' %}<form method="post" action="/admin/deliveries/{{ d.id }}/send" onsubmit="return confirm('Send this email again?');"><button class="small secondary" type="submit">Resend</button></form>{% endif %}</td>
+          </tr>
+          {% else %}<tr><td colspan="4" class="muted">Not in any email sequence.</td></tr>{% endfor %}
+        </table>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap">
+          <form method="post" action="/admin/customers/{{ customer.id }}/sequences/enroll" style="display:flex; gap:6px; align-items:center">
+            <select name="sequence_key">{% for q in sequence_options %}<option value="{{ q.key }}">{{ q.name }}</option>{% endfor %}</select>
+            <button class="small secondary" type="submit">Enroll from today</button>
+          </form>
+          {% for q in sequence_options %}{% if deliveries|selectattr('sequence_key', 'equalto', q.key)|selectattr('status', 'equalto', 'scheduled')|list %}
+          <form method="post" action="/admin/customers/{{ customer.id }}/sequences/{{ q.key }}/stop"><button class="small secondary" type="submit">Stop {{ q.name }}</button></form>
+          {% endif %}{% endfor %}
+        </div>
+        {% if email_log %}
+        <details style="margin-top:8px"><summary class="muted small" style="cursor:pointer">All emails sent to them ({{ email_log|length }})</summary>
+          <table style="margin-top:6px">
+            <tr><th>When</th><th>Email</th><th>Status</th></tr>
+            {% for e in email_log %}<tr><td class="muted">{{ e.sent_at|short_dt }}</td><td>{{ e.subject }}<br><span class="muted small">{{ e.kind }}</span></td><td>{% if e.status == 'sent' %}<span class="pill active">sent</span>{% else %}<span class="pill past_due">failed</span> <span class="muted small">{{ e.error }}</span>{% endif %}</td></tr>{% endfor %}
+          </table>
+        </details>
+        {% endif %}
+
         <h3>Promotions</h3>
         {% for r in redemptions %}
         <div class="muted small" style="margin-bottom:6px">

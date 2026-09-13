@@ -67,7 +67,10 @@ def test_keypair(monkeypatch):
 def isolated_db(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setattr(config, "DATABASE_PATH", str(db_path))
+    monkeypatch.setattr(config, "SCHEDULER_ENABLED", False)
     db.init_db()
+    from app import emails
+    emails.seed()
     return db_path
 
 

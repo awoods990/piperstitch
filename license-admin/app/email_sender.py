@@ -92,134 +92,74 @@ def _price() -> str:
     return f"${config.MONTHLY_PRICE_CENTS / 100:.0f}" if config.MONTHLY_PRICE_CENTS % 100 == 0 else f"${config.MONTHLY_PRICE_CENTS / 100:.2f}"
 
 
+def _emails():
+    from . import emails  # late import: emails.py uses _compose/_send_smtp from here
+    return emails
+
+
+def _customer_id(to_email: str):
+    from . import db
+    row = db.get_customer_by_email(to_email)
+    return row["id"] if row else None
+
+
 def send_welcome_email(*, to_email: str, customer_name: str) -> None:
     """After a subscription starts. There is nothing to paste: the app
     signs in with the same email address, and the code arrives by email."""
-    body = f"""Hi {customer_name or 'there'},
-
-Welcome to PiperStitch — your subscription is active.
-
-There's no license key to enter. Open PiperStitch in your browser at {config.WEB_APP_URL} and sign in with this email address ({to_email}). We'll send a six-digit code to confirm it's you, and that's it — everything is unlocked.
-
-Use it from any computer: your saved projects follow your account.
-
-Your plan is {_price()} a month and renews automatically. Update your card, see invoices, or cancel any time from your account page — cancelling keeps PiperStitch working until the end of the period you've paid for.
-
-If anything doesn't work, just reply to this email."""
-    html = email_branding.render(
-        body_text=body,
-        cta_label="Open PiperStitch",
-        cta_url=config.WEB_APP_URL,
-        preheader="Your subscription is active — sign in with this email.",
-    )
-    _send_smtp(_compose(to_email=to_email, subject="Welcome to PiperStitch — you're all set", body=body, html_body=html))
+    e = _emails()
+    e.send_system("welcome", to_email=to_email, customer_id=_customer_id(to_email), vars=e.variables({"name": customer_name, "email": to_email, "id": _customer_id(to_email) or 0}))
 
 
 def send_activation_code_email(*, to_email: str, code: str, device_name: str, sign_in_url: Optional[str] = None) -> None:
-    """`sign_in_url` (web sign-in only, never the Mac app's activation
-    code -- see its own doc comment) carries the code right in the link,
-    so clicking it on any device signs that device in without retyping
-    the code. It's a convenience alongside the code, not a replacement
-    for it: someone reading the email on their phone while signing in on
-    a desktop still needs to type the code by hand."""
+    """`sign_in_url` (web sign-in only) carries the code right in the
+    link, so clicking it on the device signs it in without retyping."""
+    e = _emails()
     link_line = f"\n\nOr open this link on the device you're signing in on and skip typing it: {sign_in_url}" if sign_in_url else ""
-    body = f"""Your PiperStitch sign-in code:
-
-{code}
-
-Enter it in PiperStitch{(' on ' + device_name) if device_name and device_name != 'the web' else ''} to finish signing in. The code expires in {config.ACTIVATION_CODE_TTL_MINUTES} minutes and only works once.{link_line}
-
-If you didn't just try to sign in to PiperStitch, you can ignore this email — nothing happens without the code."""
-    html = email_branding.render(
-        body_text=body, preheader=f"{code} is your PiperStitch sign-in code.",
-        footer_note="Sent because someone entered this address in PiperStitch's sign-in screen.",
-        cta_label="Sign in instantly" if sign_in_url else "", cta_url=sign_in_url or "",
-    )
-    _send_smtp(_compose(to_email=to_email, subject=f"{code} is your PiperStitch sign-in code", body=body, html_body=html))
+    device = (" on " + device_name) if device_name and device_name != "the web" else ""
+    vars = e.variables(None, code=code, code_minutes=config.ACTIVATION_CODE_TTL_MINUTES, device=device, link_line=link_line, sign_in_url=sign_in_url or "")
+    from . import db
+    row = db.get_email_template("sign_in_code")
+    if row is None:
+        e.seed(); row = db.get_email_template("sign_in_code")
+    subject, body, _ = e.render_template(row, vars)
+    html = email_branding.render(body_text=body, preheader=e.fill(row["preheader"], vars), footer_note="Sent because someone entered this address in PiperStitch's sign-in screen.",
+                                 cta_label="Sign in instantly" if sign_in_url else "", cta_url=sign_in_url or "")
+    _send_smtp(_compose(to_email=to_email, subject=subject, body=body, html_body=html))
 
 
 def send_account_link_email(*, to_email: str, url: str) -> None:
-    body = f"""Here's your link to manage your PiperStitch subscription:
-
-{url}
-
-From there you can update your card, download invoices, or cancel. The link expires in {config.ACCOUNT_LINK_TTL_MINUTES} minutes and only works once.
-
-If you didn't request this, you can ignore it."""
-    html = email_branding.render(body_text=body.replace(url, "").replace("\n\n\n", "\n\n"), cta_label="Manage my subscription", cta_url=url, preheader="Your one-time link to manage your PiperStitch subscription.")
-    _send_smtp(_compose(to_email=to_email, subject="Manage your PiperStitch subscription", body=body, html_body=html))
+    e = _emails()
+    e.send_system("account_link", to_email=to_email, customer_id=_customer_id(to_email), vars=e.variables(None, url=url, link_minutes=config.ACCOUNT_LINK_TTL_MINUTES))
 
 
 def send_payment_failed_email(*, to_email: str, customer_name: str, account_url: str) -> None:
-    body = f"""Hi {customer_name or 'there'},
-
-We couldn't renew your PiperStitch subscription — the card on file was declined.
-
-Nothing has been switched off yet. Stripe will retry the charge over the next few days, and PiperStitch keeps working for {config.ENTITLEMENT_GRACE_DAYS} days past your renewal date. To keep using it beyond that, update your card from your account page (link below), and the retry will go through.
-
-If you meant to cancel, there's nothing you need to do — the subscription will end on its own.
-
-Questions? Just reply."""
-    html = email_branding.render(body_text=body, cta_label="Update my card", cta_url=account_url, preheader="Your renewal didn't go through — update your card to keep PiperStitch.")
-    _send_smtp(_compose(to_email=to_email, subject="Action needed: your PiperStitch renewal didn't go through", body=body, html_body=html))
+    e = _emails()
+    cid = _customer_id(to_email)
+    e.send_system("payment_failed", to_email=to_email, customer_id=cid, vars=e.variables({"name": customer_name, "email": to_email, "id": cid or 0}, account_url=account_url, grace_days=config.ENTITLEMENT_GRACE_DAYS))
 
 
 def send_cancellation_scheduled_email(*, to_email: str, customer_name: str, ends_on: str, account_url: str) -> None:
-    body = f"""Hi {customer_name or 'there'},
-
-Your PiperStitch subscription is set to end on {ends_on}. You won't be charged again.
-
-PiperStitch keeps working until then, and any embroidery files you've already downloaded are yours to keep — they're ordinary files on your computer.
-
-Changed your mind? You can resume the subscription from your account page any time before {ends_on} and nothing is interrupted.
-
-Thanks for stitching with us."""
-    html = email_branding.render(body_text=body, cta_label="Resume my subscription", cta_url=account_url, preheader=f"Your subscription ends on {ends_on}.")
-    _send_smtp(_compose(to_email=to_email, subject="Your PiperStitch subscription is scheduled to end", body=body, html_body=html))
+    e = _emails()
+    cid = _customer_id(to_email)
+    e.send_system("cancellation_scheduled", to_email=to_email, customer_id=cid, vars=e.variables({"name": customer_name, "email": to_email, "id": cid or 0}, ends_on=ends_on, account_url=account_url))
 
 
 def send_comp_email(*, to_email: str, customer_name: str, until: str, note: str = "") -> None:
-    body = f"""Hi {customer_name or 'there'},
-
-We've given you complimentary access to PiperStitch through {until} — nothing to pay.
-
-Open PiperStitch at {config.WEB_APP_URL} and sign in with this email address ({to_email}). A six-digit code will arrive by email to confirm it's you.
-{(chr(10) + note + chr(10)) if note else ''}
-If anything doesn't work, just reply to this email."""
-    html = email_branding.render(body_text=body, cta_label="Open PiperStitch", cta_url=config.WEB_APP_URL, preheader=f"Complimentary PiperStitch access through {until}.")
-    _send_smtp(_compose(to_email=to_email, subject="Your complimentary PiperStitch access", body=body, html_body=html))
+    e = _emails()
+    cid = _customer_id(to_email)
+    e.send_system("comp_granted", to_email=to_email, customer_id=cid, vars=e.variables({"name": customer_name, "email": to_email, "id": cid or 0}, until=until, note=(chr(10) + note + chr(10)) if note else ""))
 
 
 def send_feedback_received_email(*, to_email: str, customer_name: str) -> None:
-    """Sent immediately when someone uses "Send feedback" in the web
-    editor -- before anyone on our side has actually looked at it, so
-    this promises review, not a fix."""
-    body = f"""Hi {customer_name or 'there'},
-
-Thanks for sending us that design — we've received the original artwork and the digitized result you sent, and someone on the PiperStitch team will look it over.
-
-This is exactly how we improve the automatic digitizing itself: every submission helps us see where the algorithm is making good calls and where it isn't, so we can make tomorrow's PiperStitch better than today's.
-
-There's nothing else for you to do. If we make a change because of what you sent, we'll follow up.
-
-Thanks again for helping us make PiperStitch better."""
-    html = email_branding.render(body_text=body, preheader="We received your design and will look it over.")
-    _send_smtp(_compose(to_email=to_email, subject="Thanks for the feedback — we're on it", body=body, html_body=html))
+    e = _emails()
+    cid = _customer_id(to_email)
+    e.send_system("feedback_received", to_email=to_email, customer_id=cid, vars=e.variables({"name": customer_name, "email": to_email, "id": cid or 0}))
 
 
 def send_feedback_reviewed_email(*, to_email: str, customer_name: str, account_url: str) -> None:
-    """Admin-triggered from the feedback submission's own page, once
-    someone has actually looked at it (and, ideally, used it to make a
-    real improvement)."""
-    body = f"""Hi {customer_name or 'there'},
-
-We've reviewed the design you sent us and used it to help improve PiperStitch's digitizing.
-
-We'd love for you to try it again — open PiperStitch and give it another run. If anything still looks off, send us that one too; every real design like yours makes the engine a little better.
-
-Thanks for helping us make PiperStitch better."""
-    html = email_branding.render(body_text=body, cta_label="Open PiperStitch", cta_url=account_url, preheader="We used your feedback — come try PiperStitch again.")
-    _send_smtp(_compose(to_email=to_email, subject="We used your feedback — come try PiperStitch again", body=body, html_body=html))
+    e = _emails()
+    cid = _customer_id(to_email)
+    e.send_system("feedback_reviewed", to_email=to_email, customer_id=cid, vars=e.variables({"name": customer_name, "email": to_email, "id": cid or 0}, account_url=account_url, app_url=account_url))
 
 
 def send_plain_email(*, to_email: str, subject: str, body: str, html_body: str = "", reply_to: str = "") -> None:
@@ -232,15 +172,9 @@ def send_file_email(*, to_email: str, sender_name: str, sender_email: str, filen
     """A customer sending an embroidery file to someone from inside the
     app (the web edition's Send button). From us, reply-to the customer,
     the file attached, their note in the body."""
-    design = design_name or filename.rsplit(".", 1)[0]
-    intro = f"{sender_name or sender_email} sent you an embroidery file from PiperStitch: {filename}."
-    body = intro + (f"\n\nTheir note:\n\n{message.strip()}" if message.strip() else "") + f"""
-
-Save the attached file and load it on your embroidery machine the way you normally would. Reply to this email to reach {sender_name or 'the sender'} directly.
-
-PiperStitch turns any image into a machine-ready embroidery file in a browser — {config.WEB_APP_URL}"""
-    html = email_branding.render(body_text=body, cta_label="Try PiperStitch free", cta_url=config.WEB_APP_URL, preheader=f"{design} — sent from PiperStitch",
-                                 footer_note=f"Sent by {sender_email} using PiperStitch. Reply to reach them; we only carried the message.")
-    msg = _compose(to_email=to_email, subject=f"{sender_name or sender_email} sent you an embroidery file: {filename}", body=body, html_body=html, reply_to=sender_email)
-    msg.add_attachment(data, maintype="application", subtype="octet-stream", filename=filename)
-    _send_smtp(msg)
+    e = _emails()
+    note_block = f"\n\nTheir note:\n\n{message.strip()}" if message.strip() else ""
+    vars = e.variables(None, sender_name=sender_name or sender_email, sender_email=sender_email, filename=filename, note_block=note_block)
+    e.send_system("file_sent", to_email=to_email, customer_id=_customer_id(sender_email), vars=vars, reply_to=sender_email,
+                  attachments=[(filename, data, "application/octet-stream")],
+                  footer_note=f"Sent by {sender_email} using PiperStitch. Reply to reach them; we only carried the message.")

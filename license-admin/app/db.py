@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS customers (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_reminder_sent_at TEXT,
+    marketing_opt_out INTEGER NOT NULL DEFAULT 0,
+    last_active_at TEXT,                -- last web sign-in / app use, for "we miss you"
     downloaded_at TEXT                  -- set once the .dmg is actually fetched (get.php)
 );
 
@@ -298,6 +300,75 @@ CREATE TABLE IF NOT EXISTS sent_files (
 );
 CREATE INDEX IF NOT EXISTS idx_sent_files_customer ON sent_files(customer_id, created_at);
 
+CREATE TABLE IF NOT EXISTS email_templates (
+    -- Every email the system sends, editable in the admin. Seeded from
+    -- emails.py's defaults; an edited row is never overwritten by a deploy.
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,                 -- plain text with {placeholders}; HTML is rendered from it
+    cta_label TEXT NOT NULL DEFAULT '',
+    cta_url TEXT NOT NULL DEFAULT '',
+    preheader TEXT NOT NULL DEFAULT '',
+    placeholders TEXT NOT NULL DEFAULT '',   -- comma-separated, for the editor's help text
+    edited INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_sequences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,           -- 'trial' | 'subscriber' | 'winback'
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sequence_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sequence_id INTEGER NOT NULL REFERENCES email_sequences(id),
+    delay_days INTEGER NOT NULL,        -- days after the customer entered the sequence
+    name TEXT NOT NULL,                 -- what the admin sees in lists
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    cta_label TEXT NOT NULL DEFAULT '',
+    cta_url TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sequence_steps_sequence ON sequence_steps(sequence_id, delay_days);
+
+CREATE TABLE IF NOT EXISTS sequence_deliveries (
+    -- One row per customer per step: when it's due, when it went, how.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    sequence_id INTEGER NOT NULL REFERENCES email_sequences(id),
+    step_id INTEGER NOT NULL REFERENCES sequence_steps(id),
+    scheduled_for TEXT NOT NULL,
+    sent_at TEXT,
+    status TEXT NOT NULL DEFAULT 'scheduled',   -- 'scheduled' | 'sent' | 'skipped' | 'failed'
+    sent_by TEXT,                       -- 'auto' | 'admin'
+    note TEXT NOT NULL DEFAULT '',      -- why skipped / the error
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sequence_deliveries_customer ON sequence_deliveries(customer_id);
+CREATE INDEX IF NOT EXISTS idx_sequence_deliveries_due ON sequence_deliveries(status, scheduled_for);
+
+CREATE TABLE IF NOT EXISTS email_log (
+    -- Every email we sent a customer, system or sequence, for their record.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER REFERENCES customers(id),
+    to_email TEXT NOT NULL,
+    kind TEXT NOT NULL,                 -- template key, or sequence:<key>
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL,               -- 'sent' | 'failed'
+    error TEXT NOT NULL DEFAULT '',
+    sent_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_log_customer ON email_log(customer_id, sent_at);
+
 CREATE TABLE IF NOT EXISTS stripe_events (
     id TEXT PRIMARY KEY,                -- Stripe's evt_... id; Stripe retries, we don't double-apply
     type TEXT NOT NULL,
@@ -331,6 +402,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "checkout_sessions", "promotion_id", "INTEGER REFERENCES promotions(id)")
         _add_column_if_missing(conn, "payments", "fee_cents", "INTEGER")            # Stripe's processing fee, when known
         _add_column_if_missing(conn, "payments", "balance_transaction_id", "TEXT")
+        _add_column_if_missing(conn, "customers", "marketing_opt_out", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "customers", "last_active_at", "TEXT")   # last web sign-in / app use, for "we miss you"
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1378,3 +1451,197 @@ def count_sent_files(customer_id: int, *, hours: int = 24) -> int:
     since = (datetime.utcnow() - timedelta(hours=hours)).isoformat(timespec="seconds") + "Z"
     with connection() as conn:
         return conn.execute("SELECT COUNT(*) FROM sent_files WHERE customer_id = ? AND created_at >= ?", (customer_id, since)).fetchone()[0]
+
+
+# --------------------------------------------------------------- emails --
+
+
+def get_email_template(key: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM email_templates WHERE key = ?", (key,)).fetchone()
+
+
+def list_email_templates() -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM email_templates ORDER BY name").fetchall()
+
+
+def seed_email_template(*, key: str, name: str, description: str, subject: str, body: str, cta_label: str, cta_url: str, preheader: str, placeholders: str) -> None:
+    """Insert if missing; refresh name/description/placeholders (metadata)
+    but never the text of a row the admin has edited."""
+    with connection() as conn:
+        row = conn.execute("SELECT edited FROM email_templates WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO email_templates (key, name, description, subject, body, cta_label, cta_url, preheader, placeholders, edited, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                         (key, name, description, subject, body, cta_label, cta_url, preheader, placeholders, _now()))
+        elif not row["edited"]:
+            conn.execute("UPDATE email_templates SET name = ?, description = ?, subject = ?, body = ?, cta_label = ?, cta_url = ?, preheader = ?, placeholders = ? WHERE key = ?",
+                         (name, description, subject, body, cta_label, cta_url, preheader, placeholders, key))
+        else:
+            conn.execute("UPDATE email_templates SET name = ?, description = ?, placeholders = ? WHERE key = ?", (name, description, placeholders, key))
+
+
+def update_email_template(key: str, *, subject: str, body: str, cta_label: str, cta_url: str, preheader: str) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE email_templates SET subject = ?, body = ?, cta_label = ?, cta_url = ?, preheader = ?, edited = 1, updated_at = ? WHERE key = ?", (subject, body, cta_label, cta_url, preheader, _now(), key))
+
+
+def reset_email_template(key: str) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE email_templates SET edited = 0 WHERE key = ?", (key,))
+
+
+def log_email(*, customer_id: Optional[int], to_email: str, kind: str, subject: str, status: str, error: str = "") -> None:
+    with connection() as conn:
+        conn.execute("INSERT INTO email_log (customer_id, to_email, kind, subject, status, error, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (customer_id, to_email, kind, subject, status, error[:500], _now()))
+
+
+def list_email_log(customer_id: int, limit: int = 30) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM email_log WHERE customer_id = ? ORDER BY sent_at DESC, id DESC LIMIT ?", (customer_id, limit)).fetchall()
+
+
+def set_marketing_opt_out(customer_id: int, opted_out: bool) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE customers SET marketing_opt_out = ?, updated_at = ? WHERE id = ?", (1 if opted_out else 0, _now(), customer_id))
+
+
+def touch_customer_activity(customer_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE customers SET last_active_at = ? WHERE id = ?", (_now(), customer_id))
+
+
+# sequences
+
+def get_sequence(key: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM email_sequences WHERE key = ?", (key,)).fetchone()
+
+
+def get_sequence_by_id(sequence_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM email_sequences WHERE id = ?", (sequence_id,)).fetchone()
+
+
+def list_sequences() -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM email_sequences ORDER BY id").fetchall()
+
+
+def seed_sequence(*, key: str, name: str, description: str) -> int:
+    with connection() as conn:
+        row = conn.execute("SELECT id FROM email_sequences WHERE key = ?", (key,)).fetchone()
+        if row:
+            conn.execute("UPDATE email_sequences SET description = ? WHERE id = ?", (description, row["id"]))
+            return row["id"]
+        cur = conn.execute("INSERT INTO email_sequences (key, name, description, created_at) VALUES (?, ?, ?, ?)", (key, name, description, _now()))
+        return cur.lastrowid
+
+
+def set_sequence_active(sequence_id: int, active: bool) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE email_sequences SET active = ? WHERE id = ?", (1 if active else 0, sequence_id))
+
+
+def sequence_has_steps(sequence_id: int) -> bool:
+    with connection() as conn:
+        return conn.execute("SELECT 1 FROM sequence_steps WHERE sequence_id = ? LIMIT 1", (sequence_id,)).fetchone() is not None
+
+
+def add_sequence_step(*, sequence_id: int, delay_days: int, name: str, subject: str, body: str, cta_label: str = "", cta_url: str = "") -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO sequence_steps (sequence_id, delay_days, name, subject, body, cta_label, cta_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                           (sequence_id, delay_days, name.strip(), subject, body, cta_label, cta_url, _now(), _now()))
+        return cur.lastrowid
+
+
+def update_sequence_step(step_id: int, *, delay_days: int, name: str, subject: str, body: str, cta_label: str, cta_url: str, active: bool) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE sequence_steps SET delay_days = ?, name = ?, subject = ?, body = ?, cta_label = ?, cta_url = ?, active = ?, updated_at = ? WHERE id = ?",
+                     (delay_days, name.strip(), subject, body, cta_label, cta_url, 1 if active else 0, _now(), step_id))
+
+
+def delete_sequence_step(step_id: int) -> None:
+    with connection() as conn:
+        conn.execute("DELETE FROM sequence_deliveries WHERE step_id = ? AND status = 'scheduled'", (step_id,))
+        conn.execute("DELETE FROM sequence_steps WHERE id = ?", (step_id,))
+
+
+def get_sequence_step(step_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM sequence_steps WHERE id = ?", (step_id,)).fetchone()
+
+
+def list_sequence_steps(sequence_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT s.*, (SELECT COUNT(*) FROM sequence_deliveries d WHERE d.step_id = s.id AND d.status = 'sent') AS sent_count FROM sequence_steps s WHERE sequence_id = ? ORDER BY delay_days, id", (sequence_id,)).fetchall()
+
+
+def customer_in_sequence(customer_id: int, sequence_id: int) -> bool:
+    with connection() as conn:
+        return conn.execute("SELECT 1 FROM sequence_deliveries WHERE customer_id = ? AND sequence_id = ? LIMIT 1", (customer_id, sequence_id)).fetchone() is not None
+
+
+def schedule_delivery(*, customer_id: int, sequence_id: int, step_id: int, scheduled_for: str) -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO sequence_deliveries (customer_id, sequence_id, step_id, scheduled_for, created_at) VALUES (?, ?, ?, ?, ?)", (customer_id, sequence_id, step_id, scheduled_for, _now()))
+        return cur.lastrowid
+
+
+def get_delivery(delivery_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT d.*, s.name AS step_name, s.subject, s.body, s.cta_label, s.cta_url, s.active AS step_active, q.key AS sequence_key, q.name AS sequence_name, q.active AS sequence_active "
+                            "FROM sequence_deliveries d JOIN sequence_steps s ON s.id = d.step_id JOIN email_sequences q ON q.id = d.sequence_id WHERE d.id = ?", (delivery_id,)).fetchone()
+
+
+def list_due_deliveries(now_iso: str, limit: int = 200) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT d.id FROM sequence_deliveries d JOIN sequence_steps s ON s.id = d.step_id JOIN email_sequences q ON q.id = d.sequence_id "
+                            "WHERE d.status = 'scheduled' AND d.scheduled_for <= ? AND s.active = 1 AND q.active = 1 ORDER BY d.scheduled_for LIMIT ?", (now_iso, limit)).fetchall()
+
+
+def list_deliveries_for_customer(customer_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT d.*, s.name AS step_name, s.subject, s.delay_days, s.active AS step_active, q.key AS sequence_key, q.name AS sequence_name "
+                            "FROM sequence_deliveries d JOIN sequence_steps s ON s.id = d.step_id JOIN email_sequences q ON q.id = d.sequence_id WHERE d.customer_id = ? ORDER BY d.scheduled_for", (customer_id,)).fetchall()
+
+
+def mark_delivery(delivery_id: int, *, status: str, sent_by: Optional[str] = None, note: str = "") -> None:
+    with connection() as conn:
+        conn.execute("UPDATE sequence_deliveries SET status = ?, sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END, sent_by = COALESCE(?, sent_by), note = ? WHERE id = ?",
+                     (status, status, _now(), sent_by, note[:500], delivery_id))
+
+
+def skip_scheduled_deliveries(customer_id: int, sequence_id: int, note: str) -> int:
+    with connection() as conn:
+        return conn.execute("UPDATE sequence_deliveries SET status = 'skipped', note = ? WHERE customer_id = ? AND sequence_id = ? AND status = 'scheduled'", (note, customer_id, sequence_id)).rowcount
+
+
+def last_delivery_sent_at(customer_id: int, sequence_id: int) -> Optional[str]:
+    with connection() as conn:
+        row = conn.execute("SELECT MAX(sent_at) FROM sequence_deliveries WHERE customer_id = ? AND sequence_id = ? AND status = 'sent'", (customer_id, sequence_id)).fetchone()
+        return row[0] if row else None
+
+
+def inactive_subscribers(*, inactive_since_iso: str) -> list[sqlite3.Row]:
+    """Entitled Stripe subscribers whose last activity (web session, Mac
+    device, or sign-in) is before the cutoff -- or unknown but older
+    than their subscription."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT c.* FROM customers c WHERE c.marketing_opt_out = 0 AND EXISTS ("
+            "  SELECT 1 FROM subscriptions s WHERE s.customer_id = c.id AND s.source = 'stripe' AND s.status IN ('active','past_due')) "
+            "AND COALESCE(c.last_active_at, (SELECT MAX(last_seen_at) FROM web_sessions w WHERE w.customer_id = c.id), (SELECT MAX(last_seen_at) FROM devices d WHERE d.customer_id = c.id), c.created_at) < ?",
+            (inactive_since_iso,),
+        ).fetchall()
+
+
+def sequence_stats() -> list[dict]:
+    with connection() as conn:
+        rows = conn.execute("SELECT q.id, q.key, q.name, q.active, "
+                            "(SELECT COUNT(DISTINCT customer_id) FROM sequence_deliveries d WHERE d.sequence_id = q.id) AS enrolled, "
+                            "(SELECT COUNT(*) FROM sequence_deliveries d WHERE d.sequence_id = q.id AND d.status = 'sent') AS sent, "
+                            "(SELECT COUNT(*) FROM sequence_deliveries d WHERE d.sequence_id = q.id AND d.status = 'scheduled') AS scheduled, "
+                            "(SELECT COUNT(*) FROM sequence_steps s WHERE s.sequence_id = q.id AND s.active = 1) AS steps "
+                            "FROM email_sequences q ORDER BY q.id").fetchall()
+        return [dict(r) for r in rows]

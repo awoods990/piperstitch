@@ -4,6 +4,37 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: editable emails, the trial and subscriber email series, and "we're missing you"
+
+- **Every system email is a template in the database** (`email_templates`,
+  seeded from `app/emails.py`, never overwritten once edited): welcome,
+  sign-in code, account link, payment failed, cancellation scheduled,
+  comp granted, feedback received/reviewed, file sent. Admin → **Emails**
+  lists them; each has an editor with subject, body, button, preview
+  line, a live preview for a sample customer, "Reset to default", and
+  "Send a test". Placeholders like `{first_name}`, `{app_url}`, `{price}`.
+- **Sequences** (`email_sequences`, `sequence_steps`, `sequence_deliveries`):
+  the **Free trial series** (7 emails over 14 days: welcome, readiness
+  report, fabric/size, lettering, merge/paint/erase, thread library by
+  manufacturer, two days left, last day — stops the moment they
+  subscribe), the **Subscriber series** ("Welcome to the PiperStitch
+  family" the day after subscribing, then one tip every two weeks:
+  density, placement presets, fill patterns, merge colours, appliqué,
+  send/save, what next), and **We're missing you** (a subscriber with no
+  activity for 21 days gets one email; not again for 60 days). Steps are
+  editable, can be paused, deleted, or added; sequences can be paused.
+- **Tracking on every customer's page**: each step with scheduled /
+  sent / skipped / failed and a **Send now** (or Resend) button, "Enroll
+  from today" and "Stop", an unsubscribe toggle, and a log of every
+  email ever sent to them. Enrolment and each send appear on their
+  timeline.
+- **Scheduler**: License Admin runs the due emails, the win-back check
+  and recurring-expense booking every 5 minutes in-process (`SCHEDULER_*`
+  settings); "Run scheduler now" on the Emails page.
+- **Unsubscribe**: every sequence email carries a signed unsubscribe
+  link (`/unsubscribe`); transactional emails are unaffected. 5 new
+  tests; 99 pass.
+
 ## Changed: $24/month; the web app shows your name and can send files
 
 - **Price is $24 a month** across the site, docs and License Admin's

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribed — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    {% if ok %}
+    <h1>You're unsubscribed.</h1>
+    <p>We won't send you tips or check-in emails. Sign-in codes, receipts and billing notices still come through, because the app needs them.</p>
+    <p class="muted small">Changed your mind? Reply to any email from us and we'll switch them back on.</p>
+    {% else %}
+    <h1>That link isn't valid.</h1>
+    <p>It may have been copied incompletely. Reply to any PiperStitch email and say "unsubscribe" and we'll take care of it.</p>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}
