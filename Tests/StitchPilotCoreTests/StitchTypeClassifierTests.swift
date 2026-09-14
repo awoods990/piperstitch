@@ -150,21 +150,31 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: column, parameters: params) == .tripleRun)
     }
 
-    /// `SatinColumnGenerator` only ever looks at `shape.subPaths.first` and
-    /// has no way to represent a hole at all -- unlike `TatamiFillGenerator`
-    /// (even-odd across every sub-path), a hole silently gets filled in
-    /// solid, and satin's rail-fitting (built for a simple, roughly-
-    /// elongated column) can produce a genuinely wrong shape for a boundary
-    /// shaped like a ring instead of a column. A shape at satin-column
-    /// width but *with a hole* (a letterform counter: O, P, R, A, D, B,
-    /// Q...) must route to tatami fill instead, regardless of width. Found
-    /// against real small lettering that read as different letters
-    /// entirely once rendered, not just "rough" ones -- see CHANGELOG.md.
-    @Test func columnWidthShapeWithAHoleBecomesTatamiFillNotSatin() {
+    /// A shape with exactly one hole (a single letterform counter: O, P, R,
+    /// A, D, Q...) classifies as satin, as a genuine closed-loop ring
+    /// column around the hole (`SatinColumnGenerator.computeRingRails`) --
+    /// the same ring support `classifyLetteringRun`/`classifyGlyphInRun`
+    /// already trust for Add-Lettering text. See `classify`'s own doc
+    /// comment.
+    @Test func singleHoledShapeClassifiesAsSatinRingColumn() {
         let outer = SubPath(points: [Point2D(0, 0), Point2D(30, 0), Point2D(30, 8), Point2D(0, 8)], closed: true)
         let hole = SubPath(points: [Point2D(10, 2), Point2D(20, 2), Point2D(20, 6), Point2D(10, 6)], closed: true)
         let letterformWithCounter = VectorShape(subPaths: [outer, hole])
-        #expect(StitchTypeClassifier.classify(shape: letterformWithCounter, parameters: defaultParams) == .tatamiFill)
+        #expect(StitchTypeClassifier.classify(shape: letterformWithCounter, parameters: defaultParams) == .satin)
+    }
+
+    /// A shape with *more than one* hole (two separate counters: B, 8) has
+    /// no single-column representation -- `SatinColumnGenerator`'s ring
+    /// support only ever traces one hole against the outer boundary -- so
+    /// it must route to tatami fill regardless of width. Found against
+    /// real small lettering that read as different letters entirely once
+    /// rendered, not just "rough" ones -- see CHANGELOG.md.
+    @Test func columnWidthShapeWithTwoHolesBecomesTatamiFillNotSatin() {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(30, 0), Point2D(30, 8), Point2D(0, 8)], closed: true)
+        let holeA = SubPath(points: [Point2D(4, 2), Point2D(12, 2), Point2D(12, 6), Point2D(4, 6)], closed: true)
+        let holeB = SubPath(points: [Point2D(18, 2), Point2D(26, 2), Point2D(26, 6), Point2D(18, 6)], closed: true)
+        let letterformWithTwoCounters = VectorShape(subPaths: [outer, holeA, holeB])
+        #expect(StitchTypeClassifier.classify(shape: letterformWithTwoCounters, parameters: defaultParams) == .tatamiFill)
     }
 
     // MARK: - classifyLetteringRun / classifyGlyphInRun
@@ -415,25 +425,31 @@ struct StitchTypeClassifierTests {
         ], closed: true)])
     }
 
-    /// A square with its own punched-out hole -- reliably classifies
+    /// A square with two punched-out holes -- reliably classifies
     /// `.tatamiFill` regardless of width under the current (satin-by-
-    /// default) rules, since a hole is a hard structural limit
-    /// `SatinColumnGenerator` can't represent at all, unlike a solid
-    /// square's mere width (no longer a rejection reason on its own -- see
-    /// `StitchTypeClassifier.classify`'s doc comment). Used wherever a
-    /// fixture specifically needs to classify tatami via the real
-    /// classifier, not just be assigned that type directly.
-    private func solidSquareWithHole(sizeMM: Double, at origin: Point2D = .zero) -> VectorShape {
+    /// default) rules: `SatinColumnGenerator`'s ring support only ever
+    /// traces *one* hole against the outer boundary (see `classify`'s own
+    /// doc comment), so two holes is a hard structural limit it can't
+    /// represent at all, unlike a solid square's mere width (no longer a
+    /// rejection reason on its own) or a single hole (a genuine ring
+    /// column). Used wherever a fixture specifically needs to classify
+    /// tatami via the real classifier, not just be assigned that type
+    /// directly.
+    private func solidSquareWithTwoHoles(sizeMM: Double, at origin: Point2D = .zero) -> VectorShape {
         let outer = SubPath(points: [
             Point2D(origin.x, origin.y), Point2D(origin.x + sizeMM, origin.y),
             Point2D(origin.x + sizeMM, origin.y + sizeMM), Point2D(origin.x, origin.y + sizeMM),
         ], closed: true)
-        let holeInset = sizeMM * 0.25
-        let hole = SubPath(points: [
-            Point2D(origin.x + holeInset, origin.y + holeInset), Point2D(origin.x + sizeMM - holeInset, origin.y + holeInset),
-            Point2D(origin.x + sizeMM - holeInset, origin.y + sizeMM - holeInset), Point2D(origin.x + holeInset, origin.y + sizeMM - holeInset),
+        let holeSize = sizeMM * 0.2
+        let holeA = SubPath(points: [
+            Point2D(origin.x + sizeMM * 0.15, origin.y + sizeMM * 0.4), Point2D(origin.x + sizeMM * 0.15 + holeSize, origin.y + sizeMM * 0.4),
+            Point2D(origin.x + sizeMM * 0.15 + holeSize, origin.y + sizeMM * 0.4 + holeSize), Point2D(origin.x + sizeMM * 0.15, origin.y + sizeMM * 0.4 + holeSize),
         ], closed: true)
-        return VectorShape(subPaths: [outer, hole])
+        let holeB = SubPath(points: [
+            Point2D(origin.x + sizeMM * 0.65, origin.y + sizeMM * 0.4), Point2D(origin.x + sizeMM * 0.65 + holeSize, origin.y + sizeMM * 0.4),
+            Point2D(origin.x + sizeMM * 0.65 + holeSize, origin.y + sizeMM * 0.4 + holeSize), Point2D(origin.x + sizeMM * 0.65, origin.y + sizeMM * 0.4 + holeSize),
+        ], closed: true)
+        return VectorShape(subPaths: [outer, holeA, holeB])
     }
 
     /// The main case this exists for: an outlier that independently
@@ -448,7 +464,7 @@ struct StitchTypeClassifierTests {
 
         var objects = [EmbroideryObject(name: "Outlier", shape: outlier, stitchType: .runningStitch, threadColor: .generic(color))]
         for i in 0..<3 {
-            let square = solidSquareWithHole(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
+            let square = solidSquareWithTwoHoles(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
             let type = StitchTypeClassifier.classify(shape: square, parameters: defaultParams)
             objects.append(EmbroideryObject(name: "Sibling\(i)", shape: square, stitchType: type, threadColor: .generic(color)))
         }

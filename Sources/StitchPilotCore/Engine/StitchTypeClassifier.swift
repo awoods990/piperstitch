@@ -24,8 +24,27 @@ import Foundation
 ///   getting the single-pass outline that a real digitizer would never
 ///   ship (found directly against a real customer logo whose tagline came
 ///   back "not even readable").
-/// - has one or more holes: tatami fill, regardless of width -- see below.
-/// - otherwise: satin, as long as `SatinColumnGenerator.
+/// - has more than one hole (two or more separate counters -- B, 8): tatami
+///   fill, regardless of width -- see below.
+/// - has exactly one hole (a single letterform counter -- O, P, R, A, D,
+///   Q...): satin, as a genuine closed-loop ring column around the hole
+///   (`SatinColumnGenerator.computeRails`/`computeRingRails`), not a solid
+///   disc -- the same ring support `classifyLetteringRun`/
+///   `classifyGlyphInRun` already trust for Add-Lettering text, extended
+///   here to raster-imported shapes too (an earlier version forced every
+///   hole-bearing shape to tatami fill regardless of hole count, which
+///   meant a raster-imported single-hole letter like "A" or "R" sewed as a
+///   visibly rougher fill texture than the exact same glyph typed through
+///   Add Lettering, despite the engine having real ring-column support the
+///   whole time). `canRepresentAsSingleSatinColumn` can't validate this --
+///   it only checks a single, holeless boundary (see its own guard) -- so
+///   this is trusted the same way `classifyLetteringRun` trusts it, with
+///   `DigitizePipeline`'s existing `catch SatinGenerationError
+///   .shapeNotSuitable` as the safety net if a genuinely irregular hole
+///   (an off-center or oddly-shaped counter `computeRingRails`'s radial
+///   sweep can't trace consistently) can't actually rail as a ring at
+///   generation time.
+/// - otherwise (no hole): satin, as long as `SatinColumnGenerator.
 ///   canRepresentAsSingleSatinColumn` confirms the outline actually
 ///   rail-fits as one real column (see that guard's own comment) --
 ///   *regardless of width or how uniform that width is*. This classifier
@@ -46,15 +65,17 @@ import Foundation
 ///   logo stroke downgraded to fill entirely because one section, or its
 ///   overall average, happened to cross a fixed width line), never better.
 ///
-/// A shape with holes always routes to tatami fill, never satin: unlike
-/// `TatamiFillGenerator` (even-odd across every sub-path), `Satin
-/// ColumnGenerator` only ever looks at the outer boundary
-/// (`shape.subPaths.first`) and has no way to represent a hole at all — a
-/// letterform counter (the enclosed hole inside O, P, R, A, D, B, Q...)
-/// would get silently filled in solid, and satin's rail-fitting (which
-/// assumes a simple, roughly-elongated column shape) can produce genuine
-/// nonsense for a boundary shaped like a ring rather than a column. An
-/// earlier version of this classifier didn't check for holes at all — real
+/// A shape with *more than one* hole always routes to tatami fill, never
+/// satin: `SatinColumnGenerator.computeRails` ring support
+/// (`computeRingRails`) only ever traces one hole against the outer
+/// boundary, so a two-counter glyph (B, 8) has no single-column
+/// representation -- `TatamiFillGenerator`'s even-odd fill across every
+/// sub-path is the one stitch type actually guaranteed to represent it
+/// correctly. A shape with *exactly one* hole is a genuine ring, not this
+/// problem -- see `classify`'s own doc comment above. An earlier version of
+/// this classifier didn't check hole count at all and let satin's
+/// single-boundary rail-fitting run on a multi-hole shape, silently filling
+/// every counter in solid rather than representing them -- real
 /// small-lettering artwork with counter-bearing glyphs classified as satin
 /// came out structurally wrong (not just visually rough), found by
 /// rendering a real logo's tagline text and finding it illegible in a way
@@ -72,7 +93,8 @@ public enum StitchTypeClassifier {
         let averageWidth = area / length
 
         if averageWidth < parameters.minSatinWidthMM { return .tripleRun }
-        if shape.subPaths.count > 1 { return .tatamiFill }
+        if shape.subPaths.count > 2 { return .tatamiFill }
+        if shape.subPaths.count == 2 { return .satin }
 
         // A shape's *average* width along one global axis is silent about
         // whether it's actually one straight-ish column at all -- an "L"

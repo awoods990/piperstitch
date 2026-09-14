@@ -290,6 +290,63 @@ own decision, not a claim about what a genuinely wide blob's *rendered*
 stitches end up looking like — see those tests' own doc comments). Full
 suite (319 tests) passes.
 
+## Phase 2 (continued) — a single hole is satin, not an automatic hard limit (implemented)
+
+The entry directly above still described "no holes" as one of `classify`'s
+hard structural limits alongside genuine branching — stale the moment it
+was written: `SatinColumnGenerator.computeRails` already special-cases a
+shape with exactly one hole (`shape.subPaths.count == 2`) and routes it to
+`computeRingRails`, a real closed-loop ring column traced radially around
+the hole, not the open-column/end-cap logic used for a holeless outline.
+`classifyLetteringRun`/`classifyGlyphInRun` (Add-Lettering text) already
+trusted this — a typed "A" or "R" sewed as a proper satin ring — but
+`classify` (raster import) never did, forcing *every* hole, one or many,
+straight to tatami fill regardless. A raster-imported logo's own "A"/"R"
+therefore sewed visibly rougher than the exact same glyph typed through
+Add Lettering, despite the engine having the ring support the whole time —
+found by tracing through why Amerus's single-hole letters kept landing in
+fill even once satin became the default above.
+
+`classify` now only forces tatami fill for *more than one* hole
+(`subPaths.count > 2` — two separate counters, as in B or 8), which really
+is a hard limit: `computeRingRails` only ever traces one hole against the
+outer boundary, same as `classifyLetteringRun`'s existing two-hole cutoff.
+A single hole (`subPaths.count == 2`) returns `.satin` directly, without
+calling `canRepresentAsSingleSatinColumn` — that guard only ever validates
+a single, holeless boundary (`guard shape.subPaths.count == 1 else {
+return false }`), so it can't confirm or deny a ring at all;
+`classifyLetteringRun` already trusts single-hole glyphs the same way,
+falling back to tatami only through `DigitizePipeline`'s existing `catch
+SatinGenerationError.shapeNotSuitable` if a genuinely irregular hole (an
+off-center or oddly-shaped counter `computeRingRails`'s radial sweep can't
+trace consistently) can't actually rail as a ring at generation time —
+this is the same fallback pattern already shipped for every other satin
+structural failure, not a new safety net. `harmonizeSameColorFillConsistency`
+needed no change: it already treated `subPaths.count > 2` (not `> 1`) as
+the "structurally fill-only" cutoff, so it was already prepared to let a
+single-hole sibling stay in a satin group once `classify` itself stopped
+forcing it to fill first.
+
+Verified against real files (`DigitizeCLI`, with a temporary debug print
+of pre-harmonization classification, removed before committing): Amerus's
+single-hole navy letters (subPaths=2) now classify `.satin` directly out
+of `classify`, confirming the fix at the per-shape level. Their word-level
+result stays `.tatamiFill` after harmonization — correctly, since other
+navy siblings in the same word have `subPaths=3` (a genuine two-hole
+letter or raster-tracing artifact) and are structurally fill-only, pulling
+the whole group to fill for consistency exactly as the entry above and
+the user's own stated policy ("complete all letters in a sequence using
+the same fill") intend; that pull-down is unrelated to hole count being
+one vs. many and was already correct before this fix. LIBBi's main word
+similarly stays fill (it contains a genuine two-hole "B"). Two new
+regression tests replace the old blanket-hole test:
+`singleHoledShapeClassifiesAsSatinRingColumn` and
+`columnWidthShapeWithTwoHolesBecomesTatamiFillNotSatin`; the outlier-
+reconciliation fixture (`solidSquareWithHole` →
+`solidSquareWithTwoHoles`) was updated to use a genuinely two-hole square
+so it still exercises the tatami-consensus path it was written for. Full
+suite (320 tests) passes; server package builds clean.
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster
