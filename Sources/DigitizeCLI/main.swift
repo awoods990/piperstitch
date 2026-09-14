@@ -176,6 +176,7 @@ do {
         objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))
     }
+    objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
     objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
     checkpoint("Built \(objects.count) objects")
 

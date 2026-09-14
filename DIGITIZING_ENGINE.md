@@ -644,6 +644,37 @@ thinRasterTracedGlyphFlattensAsTripleDensityNotASingleSparsePass` pins the
 fix end-to-end (roughly triple the flattened stitch count of a single
 pass), not just the classifier's own return value.
 
+## Phase 3 (continued) — harmonized satin/fill choice across a same-color raster-imported run (implemented)
+
+`StitchTypeClassifier` gained `harmonizeSameColorFillConsistency`, called
+right before `reconcileRunningStitchOutliers` in every place that builds a
+raster-imported document (`AppState.regenerateFromStoredGeometry`,
+`StitchPilotServer.Engine.build`, `DigitizeCLI`). Raster import classifies
+every detected shape independently — unlike Add Lettering, which already
+shares one stitch type across a whole run via `classifyLetteringRun`/
+`classifyGlyphInRun` — so two letters of the same word could land on
+different, individually-defensible stitch types: a multi-hole letter like
+"B" is forced to tatami fill (this engine's satin rings only cover a single
+hole), while a neighboring hole-free "L" or "I" classifies satin on its own
+narrow, uniform-width merits. Each choice is correct in isolation, but the
+two textures sewn side by side in one word reads as a mistake. Found
+directly against a real customer wordmark ("LIBBi") whose "B"s sewed as
+visibly different fill texture next to their satin neighbors, and whose
+tagline line below it mixed the same way.
+
+The new pass applies `classifyLetteringRun`'s real rule — not a majority
+vote — to same-color-grouped raster shapes already classified `.satin`/
+`.tatamiFill`: if any sibling genuinely can't be a single satin column
+(more than one hole, or a branching outline
+`SatinColumnGenerator.canRepresentAsSingleSatinColumn` rejects), the whole
+group sews as tatami fill together; otherwise the group's widest simple
+(no-hole) member decides satin-vs-fill for everyone. It deliberately
+leaves `.runningStitch`/`.tripleRun` siblings alone — that's
+`reconcileRunningStitchOutliers`'s own, more careful territory (real
+hairline accents included) — and runs first, so outlier reconciliation
+then corrects toward an already-consistent baseline instead of a
+still-mixed one.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, corner handling, and contour fill.

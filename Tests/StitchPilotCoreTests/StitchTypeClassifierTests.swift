@@ -263,6 +263,97 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classifyGlyphInRun(shape: oShape, runStitchType: .tripleRun) == .tripleRun)
     }
 
+    // MARK: - harmonizeSameColorFillConsistency
+
+    /// The actual regression this exists for: a real customer wordmark
+    /// ("LIBBi") whose "B"s -- forced to tatami fill by their two counters,
+    /// a structural limit this engine's satin rings can't represent -- sewed
+    /// as visibly different fill texture next to their satin "L"/"I"
+    /// neighbors of the exact same color. Raster import classifies every
+    /// shape independently with no notion "these are letters of one word,"
+    /// unlike Add Lettering's `classifyLetteringRun`. This pins that a
+    /// same-color "L", "I", and "B" -- "B" alone classifying `.tatamiFill`,
+    /// the others independently classifying `.satin` -- all end up
+    /// `.tatamiFill` together once harmonized, matching
+    /// `classifyLetteringRun`'s real rule (any structurally fill-only
+    /// member pulls the whole group to fill) rather than a majority vote.
+    @Test func multiHoleSiblingPullsWholeSameColorGroupToTatami() {
+        let color = RGBColor(hex: 0x0A1F44)
+        let lShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(4, 0), Point2D(4, 20), Point2D(0, 20),
+        ], closed: true)])
+        let iShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(3, 0), Point2D(3, 20), Point2D(0, 20),
+        ], closed: true)])
+        // "B": an outer boundary with two separate counters (subPaths.count
+        // == 3), exactly like `multiHoledGlyphFallsBackToTatamiEvenInASatinRun`'s
+        // fixture above.
+        let bOuter = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
+        let bUpperHole = SubPath(points: [Point2D(2, 11), Point2D(8, 11), Point2D(8, 18), Point2D(2, 18)], closed: true)
+        let bLowerHole = SubPath(points: [Point2D(2, 2), Point2D(8, 2), Point2D(8, 9), Point2D(2, 9)], closed: true)
+        let bShape = VectorShape(subPaths: [bOuter, bUpperHole, bLowerHole])
+
+        var objects = [lShape, iShape, bShape].enumerated().map { index, shape in
+            EmbroideryObject(name: "Letter\(index)", shape: shape,
+                              stitchType: StitchTypeClassifier.classify(shape: shape, parameters: defaultParams),
+                              threadColor: .generic(color))
+        }
+        // Confirm the baseline mismatch this test guards against actually
+        // reproduces before harmonizing.
+        #expect(objects[0].stitchType == .satin)
+        #expect(objects[1].stitchType == .satin)
+        #expect(objects[2].stitchType == .tatamiFill)
+
+        objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
+        #expect(objects.allSatisfy { $0.stitchType == .tatamiFill },
+                "every same-color sibling must share one stitch type once a structurally fill-only member is in the group")
+    }
+
+    /// Without any structural blocker, the group's widest *simple* member
+    /// decides satin-vs-fill for everyone -- mirroring
+    /// `classifyLetteringRun` exactly, not re-deriving a looser rule. Two
+    /// narrow columns that already agree stay satin; harmonizing a
+    /// same-color group that's already consistent must be a no-op.
+    @Test func alreadyConsistentSameColorGroupIsUnaffected() {
+        let color = RGBColor(hex: 0x0A1F44)
+        let lShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(4, 0), Point2D(4, 20), Point2D(0, 20),
+        ], closed: true)])
+        let iShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(3, 0), Point2D(3, 20), Point2D(0, 20),
+        ], closed: true)])
+        var objects = [lShape, iShape].enumerated().map { index, shape in
+            EmbroideryObject(name: "Letter\(index)", shape: shape,
+                              stitchType: StitchTypeClassifier.classify(shape: shape, parameters: defaultParams),
+                              threadColor: .generic(color))
+        }
+        #expect(objects.allSatisfy { $0.stitchType == .satin })
+
+        let harmonized = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
+        #expect(harmonized.map(\.stitchType) == objects.map(\.stitchType))
+    }
+
+    /// A genuinely tiny/hairline same-color sibling that classified
+    /// `.runningStitch`/`.tripleRun` on its own merits is
+    /// `reconcileRunningStitchOutliers`'s own territory (which deliberately
+    /// leaves a real hairline accent alone) -- this pass must not touch it,
+    /// only siblings already `.satin`/`.tatamiFill`.
+    @Test func runningOrTripleRunSiblingsAreLeftForTheOtherReconciliationPass() {
+        let color = RGBColor(hex: 0x0A1F44)
+        let bOuter = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
+        let bUpperHole = SubPath(points: [Point2D(2, 11), Point2D(8, 11), Point2D(8, 18), Point2D(2, 18)], closed: true)
+        let bLowerHole = SubPath(points: [Point2D(2, 2), Point2D(8, 2), Point2D(8, 9), Point2D(2, 9)], closed: true)
+        let bShape = VectorShape(subPaths: [bOuter, bUpperHole, bLowerHole])
+        let hairline = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(1, 0.2)], closed: false)])
+
+        let objects = [
+            EmbroideryObject(name: "B", shape: bShape, stitchType: .tatamiFill, threadColor: .generic(color)),
+            EmbroideryObject(name: "Hairline", shape: hairline, stitchType: .runningStitch, threadColor: .generic(color)),
+        ]
+        let harmonized = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
+        #expect(harmonized[1].stitchType == .runningStitch)
+    }
+
     @Test func degenerateShapeDefaultsToRunningStitch() {
         let line = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(10, 0)], closed: false)])
         #expect(StitchTypeClassifier.classify(shape: line, parameters: defaultParams) == .runningStitch)

@@ -1297,10 +1297,13 @@ final class AppState: ObservableObject {
         }
         // Each shape above was classified purely on its own geometry, with
         // no notion that several of them are letters of the same word --
-        // this pass corrects a same-color outlier (e.g. a branching "T" or
-        // "H" whose own outline confused the width heuristics) that landed
-        // on running/triple-run stitch back to whatever its bulkier
-        // siblings actually sew as. See its own doc comment.
+        // harmonize same-color satin/fill disagreements first (e.g. a
+        // multi-hole "B" forcing fill next to a satin "L"), then correct a
+        // same-color outlier (e.g. a branching "T" or "H" whose own
+        // outline confused the width heuristics) that landed on
+        // running/triple-run stitch back to whatever its bulkier siblings
+        // actually sew as. See each pass's own doc comment.
+        objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
         objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
         document = StitchDocument(name: lastName, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: objects)
     }

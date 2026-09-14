@@ -208,6 +208,88 @@ public enum StitchTypeClassifier {
         return .tatamiFill
     }
 
+    /// Raster import classifies every detected shape independently (unlike
+    /// Add Lettering, which already shares one stitch type across a whole
+    /// run -- see `classifyLetteringRun`/`classifyGlyphInRun` above), so
+    /// two letters of the same word can land on different, individually
+    /// defensible stitch types: a "B"'s two counters force it to tatami
+    /// fill (this engine's satin ring support only covers a single hole),
+    /// while a neighboring "L" or "I" has no hole at all and classifies
+    /// satin on its own narrow, uniform-width merits. Each choice is
+    /// correct in isolation, but the two textures sewn side by side in one
+    /// word reads as a mistake, not a style choice -- found directly
+    /// against a real customer wordmark ("LIBBi") whose "B"s sewed as
+    /// visibly different fill texture next to their satin neighbors, and
+    /// whose tagline line below it mixed the same way.
+    ///
+    /// Applies `classifyLetteringRun`'s real rule to shapes raster import
+    /// already classified, rather than re-deriving a separate, looser one:
+    /// if ANY same-color sibling genuinely can't be a single satin column
+    /// (more than one hole, or a branching outline
+    /// `SatinColumnGenerator.canRepresentAsSingleSatinColumn` rejects),
+    /// the WHOLE group sews as tatami fill together, since fill is the one
+    /// stitch type actually guaranteed to represent every member the same
+    /// way; otherwise the group's widest simple (no-hole) member decides
+    /// satin-vs-fill for everyone, mirroring `classifyLetteringRun` exactly.
+    ///
+    /// Only reconsiders siblings already `.satin` or `.tatamiFill` --
+    /// a `.runningStitch`/`.tripleRun` sibling is `reconcileRunningStitch
+    /// Outliers`'s own, more careful territory (it only corrects a
+    /// genuinely bulky outlier, deliberately leaving a real hairline
+    /// accent alone), so this runs *before* that pass: harmonizing the
+    /// bulkier siblings first gives the outlier reconciliation a more
+    /// reliable, already-consistent consensus to correct outliers toward.
+    public static func harmonizeSameColorFillConsistency(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
+        var groupsByColor: [RGBColor: [Int]] = [:]
+        for (index, object) in objects.enumerated() {
+            groupsByColor[object.threadColor.rgb, default: []].append(index)
+        }
+
+        var result = objects
+        for indices in groupsByColor.values {
+            let candidates = indices.filter { objects[$0].stitchType == .satin || objects[$0].stitchType == .tatamiFill }
+            guard candidates.count > 1 else { continue }
+
+            var anyStructurallyFillOnly = false
+            var widestSimpleWidth = 0.0
+            let maxSatinWidthMM = objects[candidates[0]].parameters.maxSatinWidthMM
+            for index in candidates {
+                let shape = objects[index].shape
+                let parameters = objects[index].parameters
+                if shape.subPaths.count > 2 { anyStructurallyFillOnly = true; continue }
+                guard shape.subPaths.count == 1, let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
+                guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else {
+                    anyStructurallyFillOnly = true
+                    continue
+                }
+                let area = abs(PolygonGeometry.signedArea(outer.points))
+                let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
+                let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
+                let length = hi - lo
+                guard length > 0, area > 0 else { continue }
+                widestSimpleWidth = max(widestSimpleWidth, area / length)
+            }
+
+            let groupType: StitchType
+            if anyStructurallyFillOnly {
+                groupType = .tatamiFill
+            } else if widestSimpleWidth > 0 {
+                groupType = widestSimpleWidth <= maxSatinWidthMM ? .satin : .tatamiFill
+            } else {
+                groupType = .satin
+            }
+
+            for index in candidates {
+                // A member that itself has more than one hole can never be
+                // satin regardless of the group's decision -- the same
+                // structural exception `classifyGlyphInRun` makes.
+                let finalType: StitchType = (groupType == .satin && result[index].shape.subPaths.count > 2) ? .tatamiFill : groupType
+                result[index].stitchType = finalType
+            }
+        }
+        return result
+    }
+
     /// A shape below this size in either dimension is small enough that
     /// `.runningStitch`/`.tripleRun` is plausibly the right call on its own
     /// merits (a genuine hairline accent, a tiny dot) -- `reconcileRunning
