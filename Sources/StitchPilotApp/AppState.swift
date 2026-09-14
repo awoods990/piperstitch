@@ -1284,8 +1284,16 @@ final class AppState: ObservableObject {
             let fitted = shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: lastCombinedBounds)
             let detectedRGB = (i < lastFillColors.count ? lastFillColors[i] : nil) ?? StitchPilotCore.RGBColor(hex: 0x000000)
             let threadColor: StitchPilotCore.ThreadColor
-            if matchToThreadLibrary, let matched = ThreadLibrary.nearestMatch(to: detectedRGB, in: effectivePalette) {
-                threadColor = matched
+            // `bestMatch`, not the strict `nearestMatch`: automatic
+            // color-matching during import has no "the user deliberately
+            // restricted to exactly this palette" intent to respect the
+            // way a hand-picked "My Thread Inventory" match would --
+            // widening to the generic palette when the account's own
+            // (possibly sparse) library has nothing close is strictly
+            // better than confidently assigning a poor match with no
+            // signal anywhere that it was poor.
+            if matchToThreadLibrary, let matched = ThreadLibrary.bestMatch(to: detectedRGB, in: effectivePalette) {
+                threadColor = matched.color
             } else {
                 threadColor = .generic(detectedRGB, name: "Imported Color \(i + 1)")
             }

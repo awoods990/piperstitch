@@ -201,6 +201,41 @@ nearest thread match by default (a "Match to thread library" toggle turns
 this off to keep exact artwork colors instead), and the object list shows
 each object's matched thread name.
 
+## Phase 2 (continued) — thread match confidence and poor-match fallback (implemented)
+
+`nearestMatch` always confidently returned the closest available palette
+entry, no matter how far off it actually was — no quality signal, and no
+way for a sparse or narrowly-curated custom/manufacturer thread library
+(a user's own "My Thread Inventory," or one manufacturer's catalog with
+only a few colors actually added) to do anything but silently hand back
+whatever's nearest *within itself*, even a strikingly wrong-looking color
+for something the palette simply has nothing close to. This is the
+engine's best explanation for a real customer report: a logo's navy came
+back as teal in the digitized preview, while the exact same file matched
+correctly against the engine's own built-in generic palette — consistent
+with an account thread library that had nothing near navy in it.
+
+`ThreadLibrary` gained `MatchQuality` (excellent/good/acceptable/poor, by
+Delta-E band) and `bestMatch`, which returns a `ThreadMatch` carrying the
+match's Delta-E and quality alongside the color. When the caller's own
+palette scores `poor` (Delta-E > 20), `bestMatch` also checks the generic
+palette and returns whichever is genuinely closer, flagging `isFallback`
+when that happens — never inventing a match closer than what's actually
+available in either palette, only widening the search once the caller's
+own answer is bad enough that a different one is more useful.
+
+`nearestMatch` itself deliberately keeps its original strict behavior —
+searching *exactly* the palette it's given and nothing else, even for a
+poor result. A deliberately-curated "My Thread Inventory" needs this: the
+point of restricting to an inventory is matching against what the user
+actually owns, and silently suggesting a thread they don't have, just
+because it looks closer on paper, would defeat that. `bestMatch` is the
+opt-in sibling for callers with no such "deliberately restricted" intent
+to respect — wired into both platforms' automatic import color-matching
+(`AppState.regenerateFromStoredGeometry`, `StitchPilotServer.Engine.build`),
+where the goal is genuinely "find the best available color," not "respect
+an intentional restriction."
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster
