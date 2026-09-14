@@ -52,6 +52,8 @@ public enum QualityAnalyzer {
         checkHoopFit(plan, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM, into: &issues)
         checkEmptyDesign(plan, into: &issues)
         checkFabricSuitability(document, into: &issues)
+        checkFragmentation(document, into: &issues)
+        checkSameColorStitchTypeConsistency(document, into: &issues)
 
         let score = max(0, min(100, 100 - issues.reduce(0) { $0 + $1.scorePenalty }))
         return EmbroideryReadinessReport(score: score, issues: issues)
@@ -217,6 +219,83 @@ public enum QualityAnalyzer {
             // server build (see server/) can't rely on.
             message: "Fine detail (as narrow as \(String(format: "%.1f", narrowest.widthMM))mm) on \(narrowest.fabric.shortName) fabric often doesn't sew cleanly -- the pile or stretch can swallow or distort thin satin/fill in a way this preview can't show. Consider a bolder design, a larger size, or a stabilizer topping.",
             scorePenalty: 8
+        ))
+    }
+
+    /// Below this size in *both* dimensions, an object reads as
+    /// fragmentation noise rather than an intended design element at
+    /// typical embroidery scale -- a genuine tiny accent (a single dot, a
+    /// fine serif) is rare and usually still clears this in at least one
+    /// dimension.
+    private static let fragmentSizeThresholdMM = 2.0
+    /// Only worth flagging once fragmentation is a real pattern, not the
+    /// one or two genuinely tiny accents ordinary artwork can have --
+    /// both an absolute floor and a share-of-the-design floor, so a huge
+    /// design with a handful of small accents doesn't trip this, and
+    /// neither does a tiny two-object design where one happens to be small.
+    private static let minimumFragmentCount = 6
+    private static let minimumFragmentFraction = 0.15
+
+    /// Would have caught, automatically, every one of a real string of
+    /// import-quality regressions before their root cause was ever found:
+    /// anti-aliased boundaries in detail-heavy or curved artwork
+    /// fragmenting into dozens of stray sub-2mm objects (confirmed
+    /// directly against the PiperStitch bird mark, the Amerus logo, and
+    /// the LIBBi wordmark -- see `ImageImporter`'s own fix for the root
+    /// cause). A design with this defect could previously still score
+    /// 100/100 "Ready to Sew," since nothing checked object *count* against
+    /// object *size* -- only total stitch/trim counts, which a swarm of
+    /// tiny objects doesn't obviously blow past on its own. This is a
+    /// safety net, not a substitute for fixing root causes: it exists so a
+    /// *different*, not-yet-discovered fragmentation source still surfaces
+    /// as a visible readiness warning instead of silently shipping.
+    private static func checkFragmentation(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
+        guard let document, !document.objects.isEmpty else { return }
+        let fragments = document.objects.filter { object in
+            let box = object.shape.boundingBox
+            return box.width < fragmentSizeThresholdMM && box.height < fragmentSizeThresholdMM
+        }
+        guard fragments.count >= minimumFragmentCount,
+              Double(fragments.count) / Double(document.objects.count) >= minimumFragmentFraction else { return }
+        issues.append(QualityIssue(
+            severity: .warning,
+            message: "\(fragments.count) of \(document.objects.count) objects are smaller than \(String(format: "%.0f", fragmentSizeThresholdMM))mm in both directions -- likely import fragmentation (anti-aliasing noise or overly fine detail) rather than intended design elements. Consider re-importing at a lower color count, or merging the small pieces.",
+            scorePenalty: min(15, fragments.count / 2)
+        ))
+    }
+
+    /// The other half of the same real regression this round of work fixed
+    /// at the source (see `StitchTypeClassifier.
+    /// harmonizeSameColorFillConsistency`): letters of one word, the same
+    /// thread color, independently landing on different stitch types --
+    /// confirmed directly against a real customer wordmark ("LIBBi") whose
+    /// multi-hole "B"s sewed as visibly different fill texture next to
+    /// their satin neighbors. `harmonizeSameColorFillConsistency` already
+    /// prevents this for a freshly-imported document, but this check is a
+    /// safety net for the cases that pass wouldn't catch: a user manually
+    /// overriding one object's stitch type afterward in the editor (which
+    /// harmonization never gets a chance to re-run against), or any future
+    /// code path that builds a `StitchDocument` without going through
+    /// raster import at all.
+    private static func checkSameColorStitchTypeConsistency(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
+        guard let document else { return }
+        var groupsByColor: [RGBColor: [EmbroideryObject]] = [:]
+        for object in document.objects where object.stitchType == .satin || object.stitchType == .tatamiFill {
+            groupsByColor[object.threadColor.rgb, default: []].append(object)
+        }
+
+        var inconsistentGroupCount = 0
+        var inconsistentObjectCount = 0
+        for group in groupsByColor.values where group.count > 1 {
+            guard Set(group.map(\.stitchType)).count > 1 else { continue }
+            inconsistentGroupCount += 1
+            inconsistentObjectCount += group.count
+        }
+        guard inconsistentGroupCount > 0 else { return }
+        issues.append(QualityIssue(
+            severity: .warning,
+            message: "\(inconsistentObjectCount) objects across \(inconsistentGroupCount) same-color group(s) mix satin and fill stitching -- usually reads as an inconsistent texture within one word or shape rather than a deliberate style choice.",
+            scorePenalty: min(10, inconsistentGroupCount * 3)
         ))
     }
 }

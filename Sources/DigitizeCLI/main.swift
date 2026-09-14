@@ -189,7 +189,7 @@ do {
                                    physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
     let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
     checkpoint("Flattened plan: \(plan.stitchCount) stitches, \(colors.count) colors")
-    let report = QualityAnalyzer.analyze(plan)
+    let report = QualityAnalyzer.analyze(plan, document: document)
     checkpoint("Quality analysis done")
 
     print("=== \(inputURL.lastPathComponent) ===")
