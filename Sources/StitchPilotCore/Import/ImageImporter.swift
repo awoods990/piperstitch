@@ -504,10 +504,27 @@ public enum ImageImporter {
     /// instead of a visibly separate patch (see CHANGELOG.md).
     ///
     /// Conservative on purpose: only merges a fragment genuinely smaller
-    /// than (not just any overlap with) the main shape, and only when its
-    /// entire extent sits inside the main shape's own bounding box -- two
+    /// than (not just any overlap with) its parent, and only when its
+    /// entire extent sits inside that parent's own bounding box -- two
     /// separate, comparably-sized shapes that happen to share a color (a
     /// legitimate multi-part design) are left untouched.
+    ///
+    /// Merges into each fragment's own *nearest* qualifying same-color
+    /// shape (the smallest one that still contains it), not into whichever
+    /// same-color shape happens to be globally largest -- an earlier
+    /// version only ever considered the single biggest shape per color,
+    /// which misses a color that legitimately forms two or more separate
+    /// background "islands" in different parts of the image (found
+    /// directly against the PiperStitch bird mark: the cream body and the
+    /// cream neck are each their own large, real region, broken apart by
+    /// the rust head-stripe and navy beak running between them -- neither
+    /// one's bounding box contains the other, so the old single-largest-
+    /// target version merged neither, leaving both to contribute their own
+    /// stray same-color fragments). A fragment whose own qualifying parent
+    /// is itself later found to be someone else's fragment (an overlay
+    /// sitting on an overlay) gets its own redirect resolved transitively,
+    /// so a fragment always ends up merged into its color's true top-level
+    /// shape regardless of how many layers deep that goes.
     private static func mergeColorIslandsIntoLargestSameColorShape(_ shapes: inout [VectorShape], fillColors: inout [RGBColor?]) {
         var indicesByColor: [RGBColor: [Int]] = [:]
         for (i, color) in fillColors.enumerated() {
@@ -517,18 +534,49 @@ public enum ImageImporter {
 
         func boxArea(_ box: BoundingBox) -> Double { box.width * box.height }
 
-        var indicesToRemove = Set<Int>()
+        var redirectTo: [Int: Int] = [:]
         for indices in indicesByColor.values where indices.count > 1 {
-            guard let mainIndex = indices.max(by: { boxArea(shapes[$0].boundingBox) < boxArea(shapes[$1].boundingBox) }) else { continue }
-            let mainBox = shapes[mainIndex].boundingBox
-            let mainArea = boxArea(mainBox)
-            guard mainArea > 0 else { continue }
-            for i in indices where i != mainIndex {
-                let box = shapes[i].boundingBox
-                guard boxArea(box) < mainArea * 0.5, mainBox.contains(box) else { continue }
-                shapes[mainIndex].subPaths.append(contentsOf: shapes[i].subPaths)
-                indicesToRemove.insert(i)
+            let boxes = Dictionary(uniqueKeysWithValues: indices.map { ($0, shapes[$0].boundingBox) })
+            let areas = boxes.mapValues(boxArea)
+            // Smallest first: a fragment always looks for its parent among
+            // the *original* shapes, so processing order doesn't change
+            // what qualifies -- it only affects nothing here except making
+            // the loop's own intent (smallest things are the fragments)
+            // explicit.
+            for i in indices.sorted(by: { (areas[$0] ?? 0, $0) < (areas[$1] ?? 0, $1) }) {
+                guard let box = boxes[i], let area = areas[i] else { continue }
+                var bestParent: Int?
+                var bestParentArea = Double.infinity
+                for j in indices where j != i {
+                    guard let parentBox = boxes[j], let parentArea = areas[j],
+                          area < parentArea * 0.5, parentBox.contains(box) else { continue }
+                    if parentArea < bestParentArea { bestParentArea = parentArea; bestParent = j }
+                }
+                if let bestParent { redirectTo[i] = bestParent }
             }
+        }
+        guard !redirectTo.isEmpty else { return }
+
+        func root(of i: Int) -> Int {
+            var current = i
+            var seen = Set<Int>()
+            while let next = redirectTo[current], seen.insert(current).inserted {
+                current = next
+            }
+            return current
+        }
+
+        var indicesToRemove = Set<Int>()
+        // Sorted, not raw dictionary iteration order -- Dictionary's own
+        // order isn't guaranteed, and the exact order fragments' subpaths
+        // get appended to a shared target would otherwise be nondeterministic
+        // (spec §54: stitch generation must stay deterministic given the
+        // same input).
+        for fragment in redirectTo.keys.sorted() {
+            let target = root(of: fragment)
+            guard target != fragment else { continue }
+            shapes[target].subPaths.append(contentsOf: shapes[fragment].subPaths)
+            indicesToRemove.insert(fragment)
         }
         guard !indicesToRemove.isEmpty else { return }
 

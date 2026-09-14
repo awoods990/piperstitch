@@ -428,6 +428,51 @@ struct ImageImportTests {
                 "detected color \(detected) should be close to true gold, not premultiplied-darkened")
     }
 
+    /// The generalization `mergeColorIslandsIntoLargestSameColorShape`
+    /// needed once it stopped only ever considering the single globally-
+    /// largest same-color shape as a merge target: a color that
+    /// legitimately forms *two* separate large background regions (not one
+    /// main region plus stray fragments) each gets its own overlay-created
+    /// island, and each island must merge into its own *nearby* region --
+    /// not fail to merge because it isn't contained in whichever region
+    /// happened to be biggest. Confirmed directly against the PiperStitch
+    /// bird mark: the cream body and the cream neck are each a real,
+    /// separate background region (split apart by the rust head-stripe and
+    /// navy beak running between them), and the old single-target version
+    /// left one of the two un-merged, contributing its own stray fragment.
+    @Test func eachOfTwoSeparateSameColorBackgroundRegionsMergesItsOwnLocalIsland() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 300
+        let context = CGContext(data: nil, width: size, height: 150, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let navy = deviceColor(0.05, 0.1, 0.4, in: colorSpace)
+        let red = deviceColor(0.85, 0.1, 0.1, in: colorSpace)
+
+        // Two separate navy regions, far enough apart that neither's
+        // bounding box contains the other.
+        context.setFillColor(navy)
+        context.fill(CGRect(x: 10, y: 10, width: 120, height: 120))
+        context.fill(CGRect(x: 170, y: 10, width: 120, height: 120))
+
+        // Each region gets its own red ring with a navy counter showing
+        // the *local* background back through -- the same construction as
+        // `colorIslandInsideARingsCounterMergesAndStaysSolid`, just twice,
+        // once per region.
+        for offsetX in [0, 160] {
+            context.setFillColor(red)
+            context.fillEllipse(in: CGRect(x: 40 + offsetX, y: 40, width: 60, height: 60))
+            context.setFillColor(navy)
+            context.fillEllipse(in: CGRect(x: 60 + offsetX, y: 60, width: 20, height: 20))
+        }
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!), maxColors: 8)
+        // 2 navy regions (each with its own local island merged in) + 2 red
+        // rings = 4. Without the fix: whichever navy region isn't chosen as
+        // the single "largest" target leaves its island stray, giving 5.
+        #expect(result.shapes.count == 4,
+                "each navy region should absorb its own nearby island; got \(result.shapes.count) shapes")
+    }
+
     /// The actual regression the ambiguity-gated boundary smoothing exists
     /// for: an anti-aliased curved edge against a flat, fully opaque
     /// background (routine for a logo exported or screenshotted on white --

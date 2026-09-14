@@ -801,6 +801,44 @@ synthetic regression test
 a filled circle against a flat background) that needs no real file. Full
 suite (306 tests) passes.
 
+## Phase 3 (continued) — color-island merging generalized to multiple same-color regions (implemented)
+
+`mergeColorIslandsIntoLargestSameColorShape` only ever considered the
+single globally-largest same-color shape as a merge target for a smaller
+same-color fragment (an overlay's own punched-through counter, showing the
+background color back through it — see the Phase 2 entry on this function
+above). That misses a color that legitimately forms *two or more* separate
+background regions rather than one main region plus stray fragments:
+neither region's bounding box contains the other, so a fragment sitting
+inside the region that *isn't* the single global largest never qualified
+for merging. Found directly against the real PiperStitch bird mark: the
+cream body and the cream neck are each a genuine, separate background
+region, split apart by the rust head-stripe and navy beak running between
+them. The old version merged whichever region's own fragments happened to
+land inside the single largest region and left the other region's
+fragments stray — object count dropped from 74 to 54 (a 27% reduction)
+once fixed, and the fragmentation-warning count from `QualityAnalyzer`
+dropped from 28 to 16, moving the design's readiness score from 81 to
+87/100.
+
+Reworked as a small transitive-redirect resolver rather than a single
+largest-shape pick: each same-color shape (smallest first) looks for its
+own *nearest* qualifying parent — the smallest same-color shape that both
+contains its bounding box and is at least twice its area — among every
+other shape of that color, not just whichever is globally biggest. A
+shape whose own qualifying parent is itself later found to be someone
+else's fragment (an overlay sitting on an overlay) has that redirect
+resolved transitively, so a fragment always ends up merged into its
+color's true top-level shape regardless of how many layers deep that
+goes. Processes fragments in a fixed sorted order (not raw dictionary
+iteration, which Swift doesn't guarantee) so which fragment's subpaths
+get appended first to a shared target stays deterministic (spec §54).
+
+New regression test
+(`ImageImportTests.eachOfTwoSeparateSameColorBackgroundRegionsMergesItsOwnLocalIsland`)
+constructs exactly this two-separate-regions scenario synthetically. Full
+suite (318 tests) passes.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, corner handling, and contour fill.
