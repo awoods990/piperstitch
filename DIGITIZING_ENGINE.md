@@ -331,7 +331,22 @@ The max-length split is a quality concern distinct from a machine format's
 hard per-record coordinate-range limit (e.g. DST's ±12.1mm, handled
 separately at export time in `DSTFormat`) — it exists so an overly long
 stitch never reaches export looking like a plausible design choice instead
-of the defect it is.
+of a defect.
+
+**Fixed later — the exactly-two-point gap.** `mergeTinyStitches`'s own
+guard required *more* than 2 points before doing anything, which silently
+skipped the minimum-length check entirely for the smallest possible run:
+exactly two points, however close together. A genuinely tiny or
+near-degenerate object (a near-zero-width satin crossing at a small
+fragment's tapered tip, say — common on any curved or detail-heavy import)
+can produce a run exactly this small, and it sailed straight past the
+filter into the exported file. Found via `QualityAnalyzer`'s own
+under-0.15mm-stitch check against the real PiperStitch bird mark, whose
+readiness score went from 66 to 81/100 once this closed — that check's own
+doc comment already correctly described this as "a real defect, not a
+style choice," and now the filter it depends on actually can't miss it.
+Two points closer than `minStitchLengthMM` collapse to the single true
+endpoint, same as a longer run's own trailing too-close points already do.
 
 ## Phase 3 — Tie-in/tie-off (implemented)
 

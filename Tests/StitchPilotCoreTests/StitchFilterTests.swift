@@ -11,6 +11,33 @@ struct StitchFilterTests {
         #expect(filtered.last == Point2D(10, 0))
     }
 
+    /// The exact case `mergeTinyStitches`'s old `count > 2` guard silently
+    /// skipped: the smallest possible run, exactly two points, close
+    /// enough together to be a sub-minimum stitch. A genuinely tiny/
+    /// near-degenerate fragment object (common once fragmentation is
+    /// common at all -- confirmed directly against the PiperStitch bird
+    /// mark, whose readiness report flagged under-0.15mm stitches this
+    /// filter is supposed to make impossible) can easily produce a run
+    /// this small. Must collapse to the single true endpoint, the same
+    /// outcome a longer run's own too-close trailing points already
+    /// collapse to -- not sail through unfiltered just because there
+    /// happen to be only two points.
+    @Test func mergesATwoPointRunThatsPathologicallyClose() {
+        let points = [Point2D(0, 0), Point2D(0.01, 0)]
+        let filtered = StitchFilter.mergeTinyStitches(points, minLengthMM: 0.4)
+        #expect(filtered.count == 1)
+        #expect(filtered == [Point2D(0.01, 0)])
+    }
+
+    /// The mirror case: a genuine two-point stitch that's already a real,
+    /// intentional length must be left alone -- this isn't "always
+    /// collapse two-point runs," only "still apply the same minimum-length
+    /// rule to them."
+    @Test func leavesATwoPointRunOfARealLengthUntouched() {
+        let points = [Point2D(0, 0), Point2D(3, 0)]
+        #expect(StitchFilter.mergeTinyStitches(points, minLengthMM: 0.4) == points)
+    }
+
     @Test func splitsLongStitches() {
         let points = [Point2D(0, 0), Point2D(50, 0)]
         let split = StitchFilter.splitLongStitches(points, maxLengthMM: 12)

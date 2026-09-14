@@ -18,8 +18,24 @@ public enum StitchFilter {
     /// than a near-duplicate of it — snapping the last kept point onto the
     /// real endpoint instead of appending a second, tiny-distance point
     /// beside it.
+    ///
+    /// The guard below used to require more than 2 points, which silently
+    /// skipped this check entirely for the smallest possible run -- exactly
+    /// two points -- even when those two points were pathologically close
+    /// together (a near-zero-width satin crossing at a tiny fragment's
+    /// tapered tip, say). A genuinely tiny object (well within reach once
+    /// fragmentation is common, as it is on any detail-heavy or curved
+    /// import) can easily generate such a run, and it sailed straight past
+    /// this filter into the exported file -- confirmed directly against
+    /// the PiperStitch bird mark, whose readiness report flagged
+    /// under-0.15mm stitches that `QualityAnalyzer`'s own doc comment
+    /// already correctly describes as "a real defect, not a style choice":
+    /// this filter is supposed to make that impossible. Two points closer
+    /// than `minLengthMM` now collapse to the single true endpoint, the
+    /// same outcome a longer run's own trailing run of too-close points
+    /// already collapses to.
     static func mergeTinyStitches(_ points: [Point2D], minLengthMM: Double) -> [Point2D] {
-        guard points.count > 2, minLengthMM > 0 else { return points }
+        guard points.count > 1, minLengthMM > 0 else { return points }
         var out: [Point2D] = [points[0]]
         for p in points.dropFirst() {
             if let last = out.last, last.distance(to: p) < minLengthMM {
