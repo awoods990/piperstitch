@@ -5,13 +5,11 @@ import Foundation
 /// represents each object" — rather than requiring the caller to choose
 /// `stitchType` by hand for every imported object.
 ///
-/// The heuristic: estimate the shape's average width as `area / length`
-/// along its principal (elongation) axis — the same measurement a person
-/// eyeballing a shape uses ("that's a thin stroke" vs. "that's a big
-/// blob") — and bucket by width, roughly matching standard digitizing
-/// practice (very thin line <~1.5mm: triple-run; narrow shape ~1.5-8mm:
-/// satin; medium ~8-12mm: satin or tatami depending on the shape; wide
-/// >~12mm: tatami):
+/// The heuristic: satin is the *default* whenever a shape can structurally
+/// be one (spec §12 read together with commercial digitizing practice —
+/// satin is the higher-quality, more defined stitch wherever it's actually
+/// sewable; fill is the fallback for what genuinely can't be satin, not an
+/// equally-weighted alternative). Concretely:
 /// - narrower than `parameters.minSatinWidthMM` (default 1.5mm): too thin
 ///   even for satin, sews as a `.tripleRun` outline instead of a single
 ///   `.runningStitch` pass (spec §19 "small object management" — a
@@ -27,16 +25,26 @@ import Foundation
 ///   ship (found directly against a real customer logo whose tagline came
 ///   back "not even readable").
 /// - has one or more holes: tatami fill, regardless of width -- see below.
-/// - up to `satinUniformWidthThresholdMM` (8mm): satin outright.
-/// - up to `parameters.maxSatinWidthMM` (default 12mm): satin only if the
-///   shape's width is fairly *uniform* along its length (a real column,
-///   which still lays down fine as satin even toward the wider end of the
-///   practical range); a shape whose width varies a lot from one end to
-///   the other — its average landing in this medium band doesn't mean
-///   every part of it is medium-width — goes to tatami instead, since a
-///   real column is what satin actually sews well, not just "something
-///   whose average width happens to fit."
-/// - wider than that: tatami fill.
+/// - otherwise: satin, as long as `SatinColumnGenerator.
+///   canRepresentAsSingleSatinColumn` confirms the outline actually
+///   rail-fits as one real column (see that guard's own comment) --
+///   *regardless of width or how uniform that width is*. This classifier
+///   used to reject a shape outright to tatami fill once its average width
+///   passed `maxSatinWidthMM`, or (in an 8-12mm band) once its width
+///   varied "too much" along its length -- a whole-shape approximation of
+///   a decision `SatinColumnGenerator.generatePartial` already makes for
+///   real, per crossing: it classifies every individual crossing along the
+///   column as satin, too-narrow (a triple-run centerline), or too-wide (a
+///   local tatami-fill sub-region built from that run's own rail points),
+///   so a column that's narrow at one end and genuinely too wide at the
+///   other already sews satin where it fits and fill only where it
+///   doesn't -- see that function's own doc comment. Rejecting the whole
+///   shape here first, before generation ever gets a chance to make that
+///   finer-grained call, second-guesses a decision the generator is
+///   already equipped to make correctly -- it can only make the shape
+///   *look worse* than trusting it (an otherwise-satin-eligible letter or
+///   logo stroke downgraded to fill entirely because one section, or its
+///   overall average, happened to cross a fixed width line), never better.
 ///
 /// A shape with holes always routes to tatami fill, never satin: unlike
 /// `TatamiFillGenerator` (even-odd across every sub-path), `Satin
@@ -51,26 +59,7 @@ import Foundation
 /// came out structurally wrong (not just visually rough), found by
 /// rendering a real logo's tagline text and finding it illegible in a way
 /// no amount of "just make satin denser" would fix (see CHANGELOG.md).
-/// Note this only catches a shape whose *average* width is too thin; a
-/// shape whose average is fine but that narrows below the minimum in one
-/// section (e.g. a tapering stroke) still classifies as `.satin` here and
-/// is instead caught per-section by `SatinColumnGenerator.generatePartial`.
 public enum StitchTypeClassifier {
-    /// Below this width, a shape stays satin regardless of how uniform it
-    /// is — commercial digitizing guidance treats ~1.5-8mm as squarely
-    /// satin's territory. Above it (up to `maxSatinWidthMM`), satin is
-    /// still viable but only for a shape that's actually a uniform column,
-    /// not just "average width happens to land under 12mm."
-    private static let satinUniformWidthThresholdMM = 8.0
-    /// How much a shape's width may vary along its length (as a fraction
-    /// of its widest point) and still count as "uniform enough" for satin
-    /// in the 8-12mm band — generous enough for a letter stroke's natural
-    /// taper at serifs/joins, tight enough to route a genuinely blob-shaped
-    /// region (whose average width just happens to fall in this band) to
-    /// tatami instead.
-    private static let uniformWidthToleranceFraction = 0.35
-    private static let widthProfileSamples = 12
-
     public static func classify(shape: VectorShape, parameters: StitchGenerationParameters) -> StitchType {
         guard let outer = shape.subPaths.first, outer.points.count >= 3 else { return .runningStitch }
 
@@ -84,17 +73,16 @@ public enum StitchTypeClassifier {
 
         if averageWidth < parameters.minSatinWidthMM { return .tripleRun }
         if shape.subPaths.count > 1 { return .tatamiFill }
-        guard averageWidth <= parameters.maxSatinWidthMM else { return .tatamiFill }
 
         // A shape's *average* width along one global axis is silent about
         // whether it's actually one straight-ish column at all -- an "L"
         // (a vertical stroke and a horizontal stroke meeting at a right
         // angle, exactly the branching case `canRepresentAsSingleSatinColumn`
-        // exists to catch) can average out to a perfectly narrow, "uniform"
-        // width by this measurement alone despite having no single pair of
-        // rails a real satin column could follow. Found directly against a
-        // real raster-imported logo: the L's own bent corner produced a
-        // long diagonal stitch cutting straight across its open notch --
+        // exists to catch) can average out to a perfectly narrow width by
+        // this measurement alone despite having no single pair of rails a
+        // real satin column could follow. Found directly against a real
+        // raster-imported logo: the L's own bent corner produced a long
+        // diagonal stitch cutting straight across its open notch --
         // `SatinColumnGenerator` silently railing the shape's boundary in
         // an order that doesn't correspond to a real column, not merely a
         // texture/density issue. `classifyLetteringRun` already gates its
@@ -103,12 +91,7 @@ public enum StitchTypeClassifier {
         // didn't, because raster import never goes through the lettering
         // path at all.
         guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else { return .tatamiFill }
-
-        guard averageWidth > satinUniformWidthThresholdMM else { return .satin }
-
-        let widths = widthProfile(outer.points, axis: axis, mean: mean, lo: lo, hi: hi, samples: widthProfileSamples)
-        guard let maxWidth = widths.max(), let minWidth = widths.min(), maxWidth > 0 else { return .satin }
-        return (maxWidth - minWidth) / maxWidth <= uniformWidthToleranceFraction ? .satin : .tatamiFill
+        return .satin
     }
 
     /// Below this letter height, commercial digitizing guidance treats
@@ -161,29 +144,28 @@ public enum StitchTypeClassifier {
     /// become clean multi-segment satin, matching commercial digitizing
     /// software) remains a substantially larger, separate undertaking.
     ///
-    /// Otherwise gates satin-vs-fill for the whole run on its widest
-    /// *simple* (no-hole) glyph -- the shape that would actually be first
-    /// to fail a satin column's practical width limit.
+    /// Otherwise satin for the whole run: once every glyph clears the
+    /// structural checks above, width is no longer a reason to reject satin
+    /// outright -- `SatinColumnGenerator.generatePartial` (which every
+    /// `.satin` object, lettering included, actually renders through; see
+    /// `DigitizePipeline`) already makes the width call for real, per
+    /// crossing, converting only the genuinely-too-wide *sections* of a
+    /// bold letter to a local fill sub-region rather than the whole glyph.
+    /// An earlier version measured each glyph's own average width and
+    /// downgraded the entire run to fill the moment the widest simple
+    /// glyph's average crossed `maxSatinWidthMM` -- a coarser, whole-glyph
+    /// approximation of a decision the generator already makes correctly
+    /// at the crossing level; see `classify`'s own doc comment for the
+    /// identical reasoning applied to raster-imported shapes.
     public static func classifyLetteringRun(shapes: [VectorShape], parameters: StitchGenerationParameters, capHeightMM: Double) -> StitchType {
         guard capHeightMM >= minimumSatinCapHeightMM else { return .tripleRun }
 
-        var widestSimpleGlyphAverageWidth = 0.0
         for shape in shapes {
             if shape.subPaths.count > 2 { return .tatamiFill }
-            guard shape.subPaths.count == 1, let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
+            guard shape.subPaths.count == 1, shape.subPaths.first!.points.count >= 3 else { continue }
             guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else { return .tatamiFill }
-            let area = abs(PolygonGeometry.signedArea(outer.points))
-            let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
-            let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
-            let length = hi - lo
-            guard length > 0, area > 0 else { continue }
-            widestSimpleGlyphAverageWidth = max(widestSimpleGlyphAverageWidth, area / length)
         }
-        // No measurable simple glyph at all (e.g. a run that's entirely
-        // holed letters, or entirely spaces) -- satin is the sensible
-        // default; every glyph already passed the checks above.
-        guard widestSimpleGlyphAverageWidth > 0 else { return .satin }
-        return widestSimpleGlyphAverageWidth <= parameters.maxSatinWidthMM ? .satin : .tatamiFill
+        return .satin
     }
 
     /// Applies the whole run's shared `runStitchType` (from
@@ -379,41 +361,5 @@ public enum StitchTypeClassifier {
             }
         }
         return result
-    }
-
-    /// Samples the shape's local width at several points along its
-    /// principal axis by casting a perpendicular ray through the outer
-    /// boundary — a coarse, classification-only measurement (not the
-    /// compensated per-crossing widths `SatinColumnGenerator` computes for
-    /// actual rail placement) used only to tell "a fairly uniform column"
-    /// from "an irregular shape whose average width doesn't represent it."
-    private static func widthProfile(_ points: [Point2D], axis: Point2D, mean: Point2D, lo: Double, hi: Double, samples: Int) -> [Double] {
-        let perpendicular = Point2D(-axis.y, axis.x)
-        guard hi > lo, samples > 0 else { return [] }
-
-        var widths: [Double] = []
-        for i in 0..<samples {
-            let t = (Double(i) + 0.5) / Double(samples)
-            let alongAxis = lo + (hi - lo) * t
-
-            var crossings: [Double] = []
-            var j = points.count - 1
-            for k in 0..<points.count {
-                let a = points[j], b = points[k]
-                let pa = (a.x - mean.x) * axis.x + (a.y - mean.y) * axis.y
-                let pb = (b.x - mean.x) * axis.x + (b.y - mean.y) * axis.y
-                if (pa > alongAxis) != (pb > alongAxis), pb != pa {
-                    let segT = (alongAxis - pa) / (pb - pa)
-                    let ix = a.x + (b.x - a.x) * segT
-                    let iy = a.y + (b.y - a.y) * segT
-                    crossings.append((ix - mean.x) * perpendicular.x + (iy - mean.y) * perpendicular.y)
-                }
-                j = k
-            }
-            guard crossings.count >= 2 else { continue }
-            crossings.sort()
-            widths.append(crossings.last! - crossings.first!)
-        }
-        return widths
     }
 }

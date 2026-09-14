@@ -107,23 +107,35 @@ struct StitchTypeClassifierTests {
 
     /// A trapezoid tapering from 2mm to 18mm wide averages out to the same
     /// 10mm as the uniform column above (matching `area / length` exactly),
-    /// but its actual width varies enormously along its length -- this is
-    /// the "depends on the shape" case the medium band is supposed to catch
-    /// and route to tatami instead, since satin doesn't sew a real 18mm-
-    /// wide region well just because the *average* looked medium.
-    @Test func wildlyTaperingShapeInTheMediumBandBecomesTatami() {
+    /// with its actual width varying enormously along its length -- exactly
+    /// the case satin is the *default* for now: width (uniform or not) is
+    /// no longer a classification-time reason to reject satin outright, on
+    /// the strength that `SatinColumnGenerator.generatePartial` already
+    /// makes the real per-crossing call downstream, sewing genuinely narrow
+    /// sections as satin and genuinely wide ones as a local fill
+    /// sub-region -- see `classify`'s own doc comment.
+    @Test func wildlyTaperingShapeInTheMediumBandStillClassifiesSatin() {
         let taperingBlob = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, -1), Point2D(40, -9), Point2D(40, 9), Point2D(0, 1),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: taperingBlob, parameters: defaultParams) == .tatamiFill)
+        #expect(StitchTypeClassifier.classify(shape: taperingBlob, parameters: defaultParams) == .satin)
     }
 
-    @Test func wideBlobBecomesTatamiFill() {
-        // 40mm x 40mm square -- far too wide for satin.
+    /// Even a wide, roughly square blob still classifies `.satin` here --
+    /// width is never a classification-time rejection reason on its own,
+    /// only the structural `canRepresentAsSingleSatinColumn` check (a
+    /// convex square rail-fits without twisting, so it passes). In
+    /// practice `generatePartial` then classifies nearly every crossing of
+    /// a genuinely blob-shaped region `.fill` (40mm comfortably exceeds
+    /// `maxSatinWidthMM`), so the *rendered* stitches end up visually
+    /// equivalent to plain tatami fill regardless of this classification --
+    /// this test pins the classifier's own decision, not the final
+    /// generated geometry (see `SatinColumnGeneratorTests` for that).
+    @Test func wideBlobStillClassifiesSatinButGeneratesAsEffectivelyFill() {
         let blob = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(40, 0), Point2D(40, 40), Point2D(0, 40),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: blob, parameters: defaultParams) == .tatamiFill)
+        #expect(StitchTypeClassifier.classify(shape: blob, parameters: defaultParams) == .satin)
     }
 
     @Test func customMinSatinWidthIsRespected() {
@@ -211,10 +223,16 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classifyGlyphInRun(shape: tShape, runStitchType: runType) == .satin)
     }
 
-    /// A run whose widest simple glyph is over `maxSatinWidthMM` (a bold
-    /// block-lettering run) decides fill for the whole run, matching
-    /// commercial guidance that wide block letters use fill, not satin.
-    @Test func runWithAWideGlyphBecomesTatamiFillForTheWholeRun() {
+    /// A run with a bold block letter well over `maxSatinWidthMM` still
+    /// decides satin for the whole run -- satin is the default whenever
+    /// every glyph structurally rail-fits, regardless of width;
+    /// `SatinColumnGenerator.generatePartial` converts the block letter's
+    /// own too-wide interior to a local fill sub-region at render time
+    /// (see `classify`'s and `classifyLetteringRun`'s own doc comments),
+    /// so nothing about this decision forces the wide letter to render as
+    /// a hollow or broken shape -- it just isn't rejected to fill
+    /// wholesale purely for being wide.
+    @Test func runWithAWideGlyphStillClassifiesSatinForTheWholeRun() {
         let narrowLetter = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(4, 0), Point2D(4, 20), Point2D(0, 20),
         ], closed: true)])
@@ -222,7 +240,7 @@ struct StitchTypeClassifierTests {
             Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20),
         ], closed: true)])
         let runType = StitchTypeClassifier.classifyLetteringRun(shapes: [narrowLetter, wideBlockLetter], parameters: defaultParams, capHeightMM: 20)
-        #expect(runType == .tatamiFill)
+        #expect(runType == .satin)
     }
 
     /// A holed glyph (a letterform counter -- O, P, R...) can never be a
@@ -397,6 +415,27 @@ struct StitchTypeClassifierTests {
         ], closed: true)])
     }
 
+    /// A square with its own punched-out hole -- reliably classifies
+    /// `.tatamiFill` regardless of width under the current (satin-by-
+    /// default) rules, since a hole is a hard structural limit
+    /// `SatinColumnGenerator` can't represent at all, unlike a solid
+    /// square's mere width (no longer a rejection reason on its own -- see
+    /// `StitchTypeClassifier.classify`'s doc comment). Used wherever a
+    /// fixture specifically needs to classify tatami via the real
+    /// classifier, not just be assigned that type directly.
+    private func solidSquareWithHole(sizeMM: Double, at origin: Point2D = .zero) -> VectorShape {
+        let outer = SubPath(points: [
+            Point2D(origin.x, origin.y), Point2D(origin.x + sizeMM, origin.y),
+            Point2D(origin.x + sizeMM, origin.y + sizeMM), Point2D(origin.x, origin.y + sizeMM),
+        ], closed: true)
+        let holeInset = sizeMM * 0.25
+        let hole = SubPath(points: [
+            Point2D(origin.x + holeInset, origin.y + holeInset), Point2D(origin.x + sizeMM - holeInset, origin.y + holeInset),
+            Point2D(origin.x + sizeMM - holeInset, origin.y + sizeMM - holeInset), Point2D(origin.x + holeInset, origin.y + sizeMM - holeInset),
+        ], closed: true)
+        return VectorShape(subPaths: [outer, hole])
+    }
+
     /// The main case this exists for: an outlier that independently
     /// classifies as `.runningStitch` despite real bulk, grouped by color
     /// with enough same-color siblings that already agree on one bulkier
@@ -409,7 +448,7 @@ struct StitchTypeClassifierTests {
 
         var objects = [EmbroideryObject(name: "Outlier", shape: outlier, stitchType: .runningStitch, threadColor: .generic(color))]
         for i in 0..<3 {
-            let square = solidSquare(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
+            let square = solidSquareWithHole(sizeMM: 20, at: Point2D(Double(i) * 25, 0))
             let type = StitchTypeClassifier.classify(shape: square, parameters: defaultParams)
             objects.append(EmbroideryObject(name: "Sibling\(i)", shape: square, stitchType: type, threadColor: .generic(color)))
         }

@@ -236,6 +236,60 @@ to respect — wired into both platforms' automatic import color-matching
 where the goal is genuinely "find the best available color," not "respect
 an intentional restriction."
 
+## Phase 2 (continued) — satin is the default, not one option among several (implemented)
+
+`StitchTypeClassifier.classify` and `classifyLetteringRun` used to reject a
+shape to tatami fill outright once its average width crossed
+`maxSatinWidthMM` (12mm default), or — in an 8-12mm band — once its width
+varied "too much" along its length. Both were whole-shape approximations
+of a decision `SatinColumnGenerator.generatePartial` already makes for
+real, per crossing (see the Phase 3 entry on width-aware satin splitting):
+it classifies every individual crossing along a column as satin,
+too-narrow (a triple-run centerline), or too-wide (a local tatami-fill
+sub-region built from that run's own rail points), so a column that's
+narrow at one end and genuinely too wide at the other already sews satin
+where it fits and fill only where it doesn't. Rejecting the whole shape at
+classification time, before generation ever got a chance to make that
+finer-grained call, could only make a shape look worse than trusting the
+generator — an otherwise satin-eligible letter or logo stroke downgraded
+to fill entirely because one section, or its overall average, happened to
+cross a fixed width line.
+
+Both functions now default to satin whenever a shape clears the real,
+structural limits — no holes (multi-sub-path), and
+`canRepresentAsSingleSatinColumn` confirms the outline actually rail-fits
+as one column (rejects genuine branching or a path that would escape its
+own boundary) — regardless of width or width uniformity. `classify`'s and
+`classifyLetteringRun`'s only remaining reasons to route to tatami fill
+are these hard structural ones, or (per the harmonization pass below)
+a same-color sibling that has them.
+
+This composes directly with `harmonizeSameColorFillConsistency` (a same-
+color group with any structurally fill-only member sews as fill
+together): a word containing a multi-hole letter like "B" still correctly
+sews its whole group as fill, since satin genuinely isn't practical for
+every member — satin winning by default doesn't override a case where the
+whole group genuinely can't support it, which is exactly the stated
+policy ("most fills should be satin by default; only fall back where
+satin isn't practical") applied consistently at both the single-shape and
+same-color-group levels.
+
+Verified against real files (`DigitizeCLI`): the muted visible change on
+the two real test files this round otherwise worked with (Amerus, LIBBi)
+is itself confirmation the composition above works as intended -- both
+have same-color letter groups containing at least one hole-bearing
+letter, so harmonization correctly keeps them fill for word-level
+consistency regardless of the new default; a same-color group with no
+such member (a swoosh element in Amerus) does pick up satin under the new
+default where it previously wouldn't have. Tests updated across the
+board: `wideBlobBecomesTatamiFill` and
+`wildlyTaperingShapeInTheMediumBandBecomesTatami` are now
+`wideBlobStillClassifiesSatinButGeneratesAsEffectivelyFill` and
+`wildlyTaperingShapeInTheMediumBandStillClassifiesSatin` (the classifier's
+own decision, not a claim about what a genuinely wide blob's *rendered*
+stitches end up looking like — see those tests' own doc comments). Full
+suite (319 tests) passes.
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster
