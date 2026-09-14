@@ -635,10 +635,13 @@ running stitch instead, when it's provably safe to do so:
 `HiddenTravelRouter` checks whether the straight path from the previous
 object's exit to the next object's entry lies entirely inside the *next*
 object's own shape. Since that object is sewn immediately afterward, its
-own stitching (fill scanlines, satin crossings) is guaranteed to cover
-that exact area moments later — no assumption about any other, later
-object is needed, which is what makes this case safe to implement without
-first building general future-coverage reasoning.
+own stitching is guaranteed to cover that exact area moments later — no
+assumption about any other, later object is needed, which is what makes
+this case safe to implement without first building general
+future-coverage reasoning. (A later round restricted "its own stitching"
+to satin specifically — see the entry below — this section's original
+wording said "fill scanlines, satin crossings," which stopped being
+accurate once that restriction landed.)
 
 - Coverage is checked at several points sampled strictly *between* the
   two endpoints, not at the endpoints themselves: the endpoints are fixed
@@ -669,10 +672,44 @@ first building general future-coverage reasoning.
   the containment feature's existing intent. Recorded here because it's
   worth knowing this behavior exists, not because it needed fixing.
 
-Deliberately scoped to the immediate-next-object case only; the general
-version (any later object, potentially a different color if opaque
-enough) is real, unscoped design work — now the top item in
-`EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements."
+Originally scoped to the immediate-next-object case only; generalized in a
+later round (below) to any later object.
+
+## Phase 3 (continued) — hidden travel routing generalized beyond the immediate-next object (implemented)
+
+`HiddenTravelRouter.bridgeSameColorGaps` checked only the object
+immediately following a same-color gap for coverage. Generalized to check
+every object still to come in the sew order (bounded by
+`maxLookaheadObjects`, mirroring `ObjectSequencer.maxObjectsForTwoOpt`'s
+own reasoning) — the immediate-next object is still checked first, so it
+keeps winning whenever it applies, but a later object now also qualifies
+if its own eventual stitching covers the identical straight path,
+regardless of its color. The physical reasoning was never actually
+specific to "the very next thing sewn": once anything dense enough
+stitches on top of a spot, whatever was buried underneath is hidden,
+independent of which object that turns out to be or what color it sews
+in. `nextObjectCanHideATravelPath`'s satin-only requirement (tatami
+fill's own row gaps can't reliably hide a buried stitch — see that
+function's doc comment) still gates every candidate exactly as before;
+this only widens *which objects get checked*, not what still counts as
+"opaque enough." New regression test
+(`HiddenTravelRouterTests.bridgesGapWhenImmediateNextCantHideButALaterObjectCan`)
+confirms a later, differently-colored satin object can justify bridging a
+gap the immediate next (tatami) object alone couldn't.
+
+**Honest measured impact:** zero change in trim count on either of the two
+real files this was tested against (the PiperStitch bird mark, the Amerus
+logo) — both are dominated by wide tatami-fill regions, and neither
+happens to have a satin object positioned to cover their long same-color
+gaps. The fix is real and correctly generalizes the mechanism (confirmed
+by the new test), but the dominant remaining trim cost on tatami-heavy
+designs needs a genuinely different, harder capability: reasoning about
+whether a travel path can hide *within* a tatami fill's own row structure
+(safe if it runs roughly parallel to a row, unsafe cutting across the row
+gaps) rather than requiring satin. That's real, unscoped, higher-risk
+design work — a mistake there produces a visible defect on real fabric,
+not just a code-quality issue — recorded as the next item to scope
+carefully rather than attempted opportunistically here.
 
 ## Phase 3 (continued) — triple-run instead of a single pass for too-thin raster shapes (implemented)
 

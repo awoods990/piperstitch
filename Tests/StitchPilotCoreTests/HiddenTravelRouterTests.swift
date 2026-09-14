@@ -87,6 +87,42 @@ struct HiddenTravelRouterTests {
     /// `bridgesGapWhenCoveredBySatin` (and this file's own previous
     /// version, before this fix) used for satin -- only the covering
     /// object's own stitch type differs.
+    /// The actual generalization this round of work adds: the immediate
+    /// next object (B, tatami fill -- can't safely hide a travel stitch on
+    /// its own, see `doesNotBridgeGapEvenWhenCoveredByTatamiFill`) can't
+    /// justify bridging by itself, but a *later* object (C, satin, a
+    /// different color, sewn right after B) whose own eventual stitching
+    /// covers the identical straight path can. Confirms the search doesn't
+    /// stop at the first candidate the way the single-hop version did --
+    /// EMBROIDERY_ALGORITHM_REFERENCE.md's "recommended next improvements"
+    /// #1, and DIGITIZING_ENGINE.md's own record of implementing it.
+    @Test func bridgesGapWhenImmediateNextCantHideButALaterObjectCan() {
+        let b = makeFillObject(name: "b")
+        let bEntry = b.runs[0].first!
+        let aExit = Point2D(bEntry.x + 20, bEntry.y)
+        let a = makeLineObject(name: "a", from: Point2D(aExit.x - 10, aExit.y), to: aExit)
+
+        // C: a satin strip, a different color from A/B, positioned to
+        // fully cover the same straight path from A's exit to B's entry
+        // that B's own tatami fill can't safely hide -- sewn right after B.
+        var cParams = StitchGenerationParameters()
+        cParams.pullCompensationMM = 0
+        cParams.pushCompensationMM = 0
+        let minX = min(aExit.x, bEntry.x) - 5
+        let maxX = max(aExit.x, bEntry.x) + 5
+        let cShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(minX, aExit.y - 5), Point2D(maxX, aExit.y - 5),
+            Point2D(maxX, aExit.y + 5), Point2D(minX, aExit.y + 5),
+        ], closed: true)])
+        let cObject = EmbroideryObject(name: "c", shape: cShape, stitchType: .satin, threadColor: .generic(RGBColor(hex: 0xFF00FF)), parameters: cParams)
+        let cRuns = try! SatinColumnGenerator.generatePartial(for: cShape, parameters: cParams)
+
+        let bridged = HiddenTravelRouter.bridgeSameColorGaps([a, b, (cObject, [cRuns])], thresholdMM: 5.0)
+
+        #expect(bridged[1].runs[0].count > b.runs[0].count,
+                "B's own lead-in should gain bridge points even though B itself can't hide them, since C (sewn later) covers the same path")
+    }
+
     @Test func doesNotBridgeGapEvenWhenCoveredByTatamiFill() {
         let b = makeFillObject(name: "b")
         let bEntry = b.runs[0].first!

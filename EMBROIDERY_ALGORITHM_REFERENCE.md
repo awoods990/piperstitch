@@ -440,19 +440,40 @@ come from.
   simplified, and there's no small-text-specific underlay or sequencing
   (letters are still just individually-classified objects, ordered by
   the same general-purpose scheduler as anything else).
-- `HiddenTravelRouter` only bridges into the *immediate next* object,
-  not any later one — a same-color gap between two objects with a third,
-  larger background object covering the path but scheduled even later
-  (or a different-color object opaque enough to hide it) isn't caught.
-  The general case needs reasoning about arbitrary future coverage,
-  which is real, unscoped design work (see priority list below).
+- ~~`HiddenTravelRouter` only bridges into the *immediate next* object,
+  not any later one~~ — **done**: it now checks every object still to
+  come in the sew order (bounded, mirroring `ObjectSequencer.
+  maxObjectsForTwoOpt`'s own reasoning), regardless of color, for
+  coverage. See `DIGITIZING_ENGINE.md`'s corresponding entry for the
+  honest measured result: zero trim-count change on the two real
+  tatami-dominated files this was tested against, since the gating
+  requirement (`nextObjectCanHideATravelPath`, satin only) is unchanged
+  and neither file has a satin object positioned to cover their long
+  gaps. The remaining, genuinely higher-value and higher-risk work for
+  designs like those is row-aware tatami-fill coverage (below), not
+  more lookahead.
+- Tatami fill can never hide a buried travel stitch in this engine,
+  regardless of how much lookahead `HiddenTravelRouter` has — even
+  though a path running roughly *parallel* to the fill's own rows
+  would, in principle, actually stay hidden the same way a hand
+  digitizer routes travel along a fill's grain; only a path cutting
+  *across* the row gaps is genuinely unsafe. The current all-or-nothing
+  satin-only gate is deliberately conservative because getting this
+  wrong produces a visible defect on real fabric, not just a
+  code-quality issue — real, unscoped design work, now the top
+  remaining item for reducing trim count on any wide-fill-dominated
+  design (confirmed the dominant cost on a detail-heavy real file, the
+  PiperStitch bird mark: ~260 trims against only 5 color changes).
 
 ## Recommended next improvements, in priority order
 
-1. Generalize `HiddenTravelRouter` beyond the immediate-next-object case:
-   reasoning about arbitrary later objects (potentially a different
-   color, if opaque enough) covering a travel path, not just whichever
-   object happens to be scheduled right after it.
+1. Row-aware tatami-fill coverage for `HiddenTravelRouter`: let a travel
+   path hide within a fill's own rows when it runs close enough to
+   parallel with them, instead of excluding tatami fill as a coverer
+   outright. Needs careful geometric scoping (checking alignment with
+   the fill's own rotated scanline angle, not just polygon containment)
+   and real verification before shipping, given the visible-defect risk
+   of getting it wrong.
 2. Contour fill, once a real polygon-offset primitive exists.
 3. A real graph-based router for satin objects specifically, the way
    `auto_satin.py` does — restructuring a satin column into a
