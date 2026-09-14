@@ -9,12 +9,23 @@ import Foundation
 /// along its principal (elongation) axis — the same measurement a person
 /// eyeballing a shape uses ("that's a thin stroke" vs. "that's a big
 /// blob") — and bucket by width, roughly matching standard digitizing
-/// practice (very thin line <~1.5mm: running; narrow shape ~1.5-8mm: satin;
-/// medium ~8-12mm: satin or tatami depending on the shape; wide >~12mm:
-/// tatami):
+/// practice (very thin line <~1.5mm: triple-run; narrow shape ~1.5-8mm:
+/// satin; medium ~8-12mm: satin or tatami depending on the shape; wide
+/// >~12mm: tatami):
 /// - narrower than `parameters.minSatinWidthMM` (default 1.5mm): too thin
-///   even for satin, sews as a running-stitch outline instead (spec §19
-///   "small object management" — a hairline stroke).
+///   even for satin, sews as a `.tripleRun` outline instead of a single
+///   `.runningStitch` pass (spec §19 "small object management" — a
+///   hairline stroke). A single pass around a thin closed shape's own
+///   boundary is a hollow, faint outline -- fine for a genuinely open line,
+///   but for a small raster-traced glyph or fine illustration detail
+///   (identical geometry: a thin closed shape) it reads as sparse scribble
+///   rather than a legible mark. `classifyLetteringRun` already reached
+///   this same conclusion for text typed through Add Lettering (see its
+///   own doc comment) -- raster import never went through that path, so a
+///   logo's own small tagline text, imported as ordinary artwork, kept
+///   getting the single-pass outline that a real digitizer would never
+///   ship (found directly against a real customer logo whose tagline came
+///   back "not even readable").
 /// - has one or more holes: tatami fill, regardless of width -- see below.
 /// - up to `satinUniformWidthThresholdMM` (8mm): satin outright.
 /// - up to `parameters.maxSatinWidthMM` (default 12mm): satin only if the
@@ -71,7 +82,7 @@ public enum StitchTypeClassifier {
         guard length > 0, area > 0 else { return .runningStitch }
         let averageWidth = area / length
 
-        if averageWidth < parameters.minSatinWidthMM { return .runningStitch }
+        if averageWidth < parameters.minSatinWidthMM { return .tripleRun }
         if shape.subPaths.count > 1 { return .tatamiFill }
         guard averageWidth <= parameters.maxSatinWidthMM else { return .tatamiFill }
 

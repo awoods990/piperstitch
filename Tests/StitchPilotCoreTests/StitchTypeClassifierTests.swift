@@ -4,12 +4,16 @@ import Testing
 struct StitchTypeClassifierTests {
     let defaultParams = StitchGenerationParameters() // maxSatinWidthMM = 12.0
 
-    @Test func thinStrokeBecomesRunningStitch() {
+    @Test func thinStrokeBecomesTripleRun() {
         // 20mm long, 0.5mm wide -- a hairline, too narrow even for satin.
+        // Triple-run, not a single running-stitch pass: one pass around a
+        // thin closed shape's boundary is a faint, hollow outline -- see
+        // this file's own doc comment on why that reads as sparse scribble
+        // rather than a legible hairline mark.
         let hairline = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(20, 0), Point2D(20, 0.5), Point2D(0, 0.5),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: hairline, parameters: defaultParams) == .runningStitch)
+        #expect(StitchTypeClassifier.classify(shape: hairline, parameters: defaultParams) == .tripleRun)
     }
 
     @Test func mediumColumnBecomesSatin() {
@@ -49,11 +53,45 @@ struct StitchTypeClassifierTests {
     /// 1.2mm is below the current 1.5mm minimum satin width but was above
     /// the old 1.0mm default -- guards the raised default itself, not just
     /// the classifier logic around it.
-    @Test func widthJustBelowTheRaisedMinimumBecomesRunningStitch() {
+    @Test func widthJustBelowTheRaisedMinimumBecomesTripleRun() {
         let almostThinEnough = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(20, 0), Point2D(20, 1.2), Point2D(0, 1.2),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: almostThinEnough, parameters: defaultParams) == .runningStitch)
+        #expect(StitchTypeClassifier.classify(shape: almostThinEnough, parameters: defaultParams) == .tripleRun)
+    }
+
+    /// The actual regression this fix exists for: a real customer logo's
+    /// small tagline text ("PERSONAL AI" / "ALWAYS READY.") -- ordinary
+    /// raster artwork, not typed through Add Lettering -- classified every
+    /// letter `.runningStitch` (each glyph's own average width was below
+    /// `minSatinWidthMM` at the size it was imported at) and sewed as a
+    /// single hollow pass around each letter's outline, reported back as
+    /// "very sparse... the last line of letters is not even readable."
+    /// Guards that the fix (triple-run, not a single running pass, for
+    /// anything this thin) actually produces roughly triple the stitch
+    /// density end-to-end through `DigitizePipeline` -- not just a
+    /// different enum case nothing downstream treats any differently.
+    @Test func thinRasterTracedGlyphFlattensAsTripleDensityNotASingleSparsePass() throws {
+        // A small letter-stroke-shaped rectangle, well under
+        // minSatinWidthMM -- representative of one glyph of small tagline
+        // text traced from raster artwork (never goes through
+        // classifyLetteringRun, which is Add-Lettering-only).
+        let glyph = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(0.6, 0), Point2D(0.6, 6), Point2D(0, 6),
+        ], closed: true)])
+        let type = StitchTypeClassifier.classify(shape: glyph, parameters: defaultParams)
+        #expect(type == .tripleRun)
+
+        let color = RGBColor(hex: 0x000000)
+        let tripleRunPlan = try DigitizePipeline.flatten(StitchDocument(
+            name: "Tagline", physicalWidthMM: 10, physicalHeightMM: 10,
+            objects: [EmbroideryObject(name: "Glyph", shape: glyph, stitchType: type, threadColor: .generic(color))]))
+        let singlePassPlan = try DigitizePipeline.flatten(StitchDocument(
+            name: "Tagline", physicalWidthMM: 10, physicalHeightMM: 10,
+            objects: [EmbroideryObject(name: "Glyph", shape: glyph, stitchType: .runningStitch, threadColor: .generic(color))]))
+
+        #expect(tripleRunPlan.stitchCount >= singlePassPlan.stitchCount * 2,
+                "triple-run must sew noticeably denser than a single running-stitch pass, or the fix regresses to the sparse/illegible outline this test exists to catch")
     }
 
     /// A uniform 10mm-wide column sits in the "medium, shape-dependent"
@@ -97,7 +135,7 @@ struct StitchTypeClassifierTests {
         let column = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: column, parameters: params) == .runningStitch)
+        #expect(StitchTypeClassifier.classify(shape: column, parameters: params) == .tripleRun)
     }
 
     /// `SatinColumnGenerator` only ever looks at `shape.subPaths.first` and

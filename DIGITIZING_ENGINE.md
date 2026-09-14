@@ -624,6 +624,26 @@ version (any later object, potentially a different color if opaque
 enough) is real, unscoped design work — now the top item in
 `EMBROIDERY_ALGORITHM_REFERENCE.md`'s "recommended next improvements."
 
+## Phase 3 (continued) — triple-run instead of a single pass for too-thin raster shapes (implemented)
+
+`StitchTypeClassifier.classify`'s too-thin-for-satin bucket (narrower than
+`minSatinWidthMM`) now returns `.tripleRun` instead of plain
+`.runningStitch` — matching what `classifyLetteringRun` already decided for
+the identical case in text typed through Add Lettering (see that function's
+own doc comment: "stays legible at any size since it traces the
+letterform's outline"). Raster import never goes through the lettering
+path at all, so a logo's own small tagline text or any other thin detail,
+imported as ordinary artwork rather than typed, kept getting a single
+running-stitch pass around its own outline — a hollow, faint trace that's
+fine for a genuinely open hairline but reads as sparse, near-illegible
+scribble on a small closed glyph shape. Found directly against a real
+customer logo whose tagline text came back reported as "very sparse... the
+last line of letters is not even readable" — `DigitizeCLI` against the same
+file reproduced it exactly, and `StitchTypeClassifierTests.
+thinRasterTracedGlyphFlattensAsTripleDensityNotASingleSparsePass` pins the
+fix end-to-end (roughly triple the flattened stitch count of a single
+pass), not just the classifier's own return value.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, corner handling, and contour fill.
