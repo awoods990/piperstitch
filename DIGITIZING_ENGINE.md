@@ -675,6 +675,82 @@ hairline accents included) — and runs first, so outlier reconciliation
 then corrects toward an already-consistent baseline instead of a
 still-mixed one.
 
+## Phase 3 (continued) — anti-aliased boundaries no longer fragment into stray objects (implemented)
+
+`ImageImporter` previously handled anti-aliasing well at the foreground/
+background edge (`unpremultiply`, `excludeDominantOpaqueBackground`) and
+between two *quantized clusters* (`ColorQuantizer.mergeAntiAliasingClusters`)
+-- but nothing handled the identical problem at two other layers: a ramp
+between two **foreground** colors meeting directly (no background pixel
+between them), and a ramp cluster that k-means centers a *dedicated*
+cluster on when there are enough ramp pixels to seed one (routine for a
+curved letter edge against a flat, fully opaque background -- most
+real-world logo exports and screenshots). Confirmed independently against
+three real customer files: the PiperStitch bird mark (scratch noise across
+the wing/chest), the Amerus logo (a "Light Gray"/"Dark Red" swarm ringing
+the tagline, 228 objects for a 3-color logo), and the LIBBi wordmark (a
+"Silver" fringe outlining every big letter).
+
+Fixed in two complementary layers, both in `ImageImporter`:
+
+1. **Per-pixel ambiguity.** Each foreground pixel's nearest and
+   second-nearest cluster distance (Delta-E) are both tracked; a pixel
+   whose two closest options are nearly equidistant is "ambiguous" --
+   plausibly a blend pixel rather than confidently one real color.
+   `backgroundColor` (now returned by `computeForegroundMask` for the flat,
+   uniform-corner case) is included as a candidate "second nearest" too, so
+   the foreground/background ramp gets the same treatment as a
+   foreground/foreground one.
+2. **Cluster-level suspects.** `backgroundRampClusterIndices` runs the same
+   "sits almost exactly on the line between two reference colors" geometric
+   test `mergeAntiAliasingClusters` already uses for two foreground
+   clusters, but with the background color as one endpoint -- something
+   `ColorQuantizer` itself can never do, since background pixels are
+   excluded before it ever sees the pixel list. Every member pixel of a
+   flagged cluster is treated as ambiguous regardless of how tightly it
+   fits that cluster's own (ramp-centered) centroid, which is what makes
+   layer 1 effective even when k-means gave the ramp its own dedicated,
+   individually-confident-looking cluster.
+
+Ambiguous pixels are then resolved by `smoothAmbiguousBoundaryLabels`, a
+despeckle-style neighbor vote -- gated on ambiguity, not applied blindly,
+which is the fix a first attempt at this got wrong: a blanket "reassign
+toward the neighborhood majority" pass can't distinguish a genuine thin
+ring or outline (solid, confidently one color, just narrow) from an
+anti-aliasing ramp (also thin, but colorimetrically uncertain), and erased
+real ring/counter-hole topology along with the noise
+(`ImageImportTests.colorIslandInsideARingsCounterMergesAndStaysSolid`
+caught this in review). Two more refinements followed from testing against
+the real files above:
+
+- **Multi-round propagation.** A single pass only resolves an ambiguous
+  pixel touching an already-confident neighbor within one hop -- adequate
+  for a 1px ramp, but a real ramp is routinely 2-3px wide. Resolved pixels
+  count as confident for the next round (tracked separately from the
+  original ambiguity, which never changes), so a wide ramp resolves from
+  both edges inward over a bounded number of rounds (4) -- still fully
+  deterministic, since each round reads one fixed snapshot and the round
+  count is a fixed bound, not "until convergence."
+- **Plurality, not majority.** An ordinary straight edge splits a ramp
+  pixel's 8 neighbors close to evenly between the two confident sides,
+  so requiring an outright majority (5 of 8) almost never fired for the
+  single most common case -- confirmed directly: an early version cleared
+  only small corner/speck clusters and left an entire straight-edge ring
+  untouched. A strict plurality (the winning label beats the runner-up,
+  with a small evidence floor) resolves the ordinary case while a genuine
+  three-way color junction -- no single dominant neighbor, a real tie --
+  is still correctly left alone.
+
+Verified against all three real files (Amerus: 228 -> 162 objects, 10 -> 6
+colors; LIBBi: 45 -> 27 objects, three "Silver" fringe objects reduced to
+six residual small ones; bird mark: essentially unchanged, correctly --
+its busy texture turned out to be genuine fine illustration detail, not
+anti-aliasing, so the ambiguity gate correctly leaves it alone) plus a new
+synthetic regression test
+(`ImageImportTests.antiAliasedCurveAgainstFlatBackgroundDoesNotFragmentIntoStraySlivers`,
+a filled circle against a flat background) that needs no real file. Full
+suite (306 tests) passes.
+
 ## Phase 3 — planned next
 
 Object overlap/inset-outset, corner handling, and contour fill.

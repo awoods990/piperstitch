@@ -427,4 +427,35 @@ struct ImageImportTests {
         #expect(RGBColor.deltaE(detected, RGBColor(hex: 0xD4AF37)) < 15,
                 "detected color \(detected) should be close to true gold, not premultiplied-darkened")
     }
+
+    /// The actual regression the ambiguity-gated boundary smoothing exists
+    /// for: an anti-aliased curved edge against a flat, fully opaque
+    /// background (routine for a logo exported or screenshotted on white --
+    /// unlike the transparency case above, there's no alpha channel to read
+    /// the true blend from). Confirmed against three real customer files
+    /// (the PiperStitch bird mark, the Amerus logo, the LIBBi wordmark)
+    /// whose curved letter edges came back as a swarm of "Light Gray"/
+    /// "Silver" sliver objects fringing every letter -- a filled circle
+    /// (CoreGraphics anti-aliases its own curved boundary automatically)
+    /// reproduces the identical mechanism without needing a real file: the
+    /// disc's own rim must resolve into either the disc or the background,
+    /// never survive as its own separate gray shape(s).
+    @Test func antiAliasedCurveAgainstFlatBackgroundDoesNotFragmentIntoStraySlivers() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let size = 120
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(1, 1, 1, in: colorSpace))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        context.setShouldAntialias(true)
+        context.setFillColor(deviceColor(8.0 / 255, 36.0 / 255, 66.0 / 255, in: colorSpace)) // navy
+        context.fillEllipse(in: CGRect(x: 10, y: 10, width: 100, height: 100))
+
+        let result = try ImageImporter.importShapes(from: encodePNG(context.makeImage()!), maxColors: 8)
+
+        #expect(result.shapes.count == 1,
+                "the disc's own anti-aliased rim must resolve into the disc or the background, not survive as \(result.shapes.count) separate shapes")
+        let colors = Set(result.fillColors.compactMap { $0 })
+        #expect(colors.count == 1, "must not detect a spurious extra color from the ramp: found \(colors)")
+    }
 }

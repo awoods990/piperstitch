@@ -52,6 +52,15 @@ public enum ImageImporter {
     private static let minComponentAreaPixels = 8
     /// Douglas-Peucker epsilon, in source pixels.
     private static let simplifyEpsilonPixels: Double = 1.5
+    /// A pixel whose nearest cluster is not at least this much closer
+    /// (Delta-E) than its second-nearest counts as "ambiguous" for
+    /// `smoothAmbiguousBoundaryLabels` -- see that function's own doc
+    /// comment. 0.6 means the runner-up must be within 67% of the winner's
+    /// distance; a genuinely flat-color region's pixels are essentially
+    /// exact matches to their own cluster (ratio near 0), while a true
+    /// anti-aliasing blend pixel sits close to equidistant between the two
+    /// colors it's between (ratio approaching 1).
+    private static let ambiguousLabelRatio = 0.6
 
     #if canImport(ImageIO)
     public static func importShapes(from data: Data, maxColors: Int = ColorQuantizationPreset.normalEmbroidery.defaultMaxColors) throws -> ImageImportResult {
@@ -78,7 +87,7 @@ public enum ImageImporter {
     /// way, every result downstream of this line is computed identically.
     public static func importShapes(rgba pixels: [UInt8], width: Int, height: Int, maxColors: Int = ColorQuantizationPreset.normalEmbroidery.defaultMaxColors) throws -> ImageImportResult {
         guard width > 1, height > 1, pixels.count == width * height * 4 else { throw ImageImportError.cannotDecode }
-        let foregroundMask = try computeForegroundMask(pixels: pixels, width: width, height: height)
+        let (foregroundMask, backgroundColor) = try computeForegroundMask(pixels: pixels, width: width, height: height)
 
         var foregroundColors: [RGBColor] = []
         foregroundColors.reserveCapacity(width * height)
@@ -89,27 +98,66 @@ public enum ImageImporter {
 
         let clusters = ColorQuantizer.quantize(pixels: foregroundColors, maxColors: maxColors)
         guard !clusters.isEmpty else { throw ImageImportError.noForegroundFound }
+        let backgroundRampIndices = backgroundRampClusterIndices(clusters, backgroundColor: backgroundColor)
 
         // Memoized nearest-cluster lookup: real artwork repeats exact RGB
         // values constantly (flat-color logos especially), so caching by
         // exact color avoids re-running LAB conversion + Delta-E per pixel.
-        var nearestClusterCache: [RGBColor: Int] = [:]
-        func nearestCluster(_ color: RGBColor) -> Int {
+        // Tracks the *second*-nearest distance alongside the winner --
+        // `smoothAmbiguousBoundaryLabels` below needs it to tell "this pixel
+        // confidently belongs to its cluster" from "this pixel is roughly
+        // equidistant between two clusters," which a single nearest-index
+        // lookup can't distinguish.
+        var nearestClusterCache: [RGBColor: (index: Int, bestDist: Double, secondDist: Double)] = [:]
+        func nearestClusters(_ color: RGBColor) -> (index: Int, bestDist: Double, secondDist: Double) {
             if let cached = nearestClusterCache[color] { return cached }
-            var bestIndex = 0, bestDist = Double.infinity
+            var bestIndex = 0, bestDist = Double.infinity, secondDist = Double.infinity
             for (i, cluster) in clusters.enumerated() {
                 let d = RGBColor.deltaE(color, cluster.rgb)
-                if d < bestDist { bestDist = d; bestIndex = i }
+                if d < bestDist {
+                    secondDist = bestDist
+                    bestDist = d
+                    bestIndex = i
+                } else if d < secondDist {
+                    secondDist = d
+                }
             }
-            nearestClusterCache[color] = bestIndex
-            return bestIndex
+            let result = (bestIndex, bestDist, secondDist)
+            nearestClusterCache[color] = result
+            return result
         }
 
         var labels = [Int](repeating: -1, count: width * height)
+        var isAmbiguous = [Bool](repeating: false, count: width * height)
         for i in 0..<(width * height) where foregroundMask[i] {
             let color = RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2])
-            labels[i] = nearestCluster(color)
+            let (index, bestDist, secondDist) = nearestClusters(color)
+            labels[i] = index
+            // The same ambiguity test, but also considering the background
+            // reference color (when one exists) as a candidate "second
+            // nearest" -- a pixel on the anti-aliasing ramp between a
+            // design color and the page background is exactly as ambiguous
+            // as one between two design colors, and needs the same
+            // treatment (see `smoothAmbiguousBoundaryLabels`'s doc comment).
+            // Confirmed against two real logos on flat backgrounds (Amerus,
+            // LIBBi) whose ramp pixels formed their own spurious "Light
+            // Gray"/"Silver" clusters, fringing every letter.
+            let distToBackground = backgroundColor.map { RGBColor.deltaE(color, $0) } ?? .infinity
+            let effectiveSecondDist = min(secondDist, distToBackground)
+            let ratioAmbiguous = effectiveSecondDist.isFinite && effectiveSecondDist > 0 && bestDist / effectiveSecondDist > ambiguousLabelRatio
+            // A pixel confidently matching its own cluster is still
+            // ambiguous if that whole *cluster* is itself a suspected
+            // background ramp (`backgroundRampClusterIndices`) -- k-means
+            // can center a cluster exactly on a ramp's own colors when
+            // there are enough ramp pixels to seed one, which makes every
+            // member pixel a tight, "confident" match to it despite the
+            // cluster itself being spurious. Confirmed necessary against
+            // real files: without this, the ratio test alone missed ramp
+            // pixels precisely because they fit their own tailored cluster
+            // too well.
+            isAmbiguous[i] = ratioAmbiguous || backgroundRampIndices.contains(index)
         }
+        labels = smoothAmbiguousBoundaryLabels(labels, isAmbiguous: isAmbiguous, foregroundMask: foregroundMask, width: width, height: height)
 
         var shapes: [VectorShape] = []
         var fillColors: [RGBColor?] = []
@@ -164,6 +212,201 @@ public enum ImageImporter {
 
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
         return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height)
+    }
+
+    /// Companion to `ColorQuantizer.mergeAntiAliasingClusters`, which folds
+    /// a blend cluster into whichever of *two foreground* clusters it sits
+    /// between -- but has no notion of the background color as a valid
+    /// endpoint, since background pixels are already excluded before
+    /// `ColorQuantizer` ever sees the pixel list. A cluster that's really
+    /// the anti-aliasing ramp between a design color and a flat background
+    /// (routine for a logo exported or screenshotted on white) survives
+    /// untouched as its own real-looking cluster otherwise -- confirmed
+    /// against two real logos (Amerus, LIBBi) whose ramp pixels formed
+    /// their own "Light Gray"/"Silver" clusters, fringing every letter.
+    /// Uses the identical "sits almost exactly on the line between two
+    /// reference colors" geometric test `mergeAntiAliasingClusters` already
+    /// uses for two foreground clusters, just with the background color as
+    /// one of the two references and the candidate required to be smaller
+    /// than the other (real) cluster it's being tested against.
+    ///
+    /// Deliberately doesn't merge or drop these clusters outright the way
+    /// `mergeAntiAliasingClusters` does -- a ramp cluster's member pixels
+    /// span a real range from near-background to near-the-true-color, so a
+    /// single per-cluster verdict can't be right for all of them at once.
+    /// Flagging the cluster here just marks its pixels as inherently
+    /// untrustworthy so `importShapes` treats every one of them as
+    /// ambiguous regardless of how tightly they fit this cluster's own
+    /// centroid (see the ambiguity computation there), leaving the actual
+    /// per-pixel decision -- background or a specific neighboring color --
+    /// to `smoothAmbiguousBoundaryLabels`'s neighbor vote.
+    private static func backgroundRampClusterIndices(_ clusters: [ColorCluster], backgroundColor: RGBColor?) -> Set<Int> {
+        guard let backgroundColor, clusters.count > 1 else { return [] }
+        let bgLab = backgroundColor.lab
+        var suspects = Set<Int>()
+        for (c, candidate) in clusters.enumerated() {
+            let lab = candidate.rgb.lab
+            for (d, other) in clusters.enumerated() where d != c && candidate.pixelCount < other.pixelCount {
+                let otherLab = other.rgb.lab
+                let dAB = sqrt(labDistanceSquared(bgLab, otherLab))
+                guard dAB > 1 else { continue }
+                let dA = sqrt(labDistanceSquared(lab, bgLab)), dB = sqrt(labDistanceSquared(lab, otherLab))
+                let relSlack = ((dA + dB) - dAB) / dAB
+                if relSlack <= 0.15 {
+                    suspects.insert(c)
+                    break
+                }
+            }
+        }
+        return suspects
+    }
+
+    private static func labDistanceSquared(_ a: LABColor, _ b: LABColor) -> Double {
+        let dl = a.l - b.l, da = a.a - b.a, db = a.b - b.b
+        return dl * dl + da * da + db * db
+    }
+
+    /// `excludeDominantOpaqueBackground` and `ColorQuantizer.
+    /// mergeAntiAliasingClusters` already solve anti-aliasing where a color
+    /// meets the *background* -- but nothing handled the identical problem
+    /// one level in, where two *foreground* colors meet directly with no
+    /// background pixel between them (a rust stroke against its own cream
+    /// fill, navy against red). Each blend pixel along that boundary gets
+    /// assigned to whichever of the two true clusters it happens to be
+    /// nearest, pixel by pixel -- and because the blend varies smoothly,
+    /// that nearest-cluster choice can flip from one pixel to the next
+    /// along the curve (8-bit rounding noise decides ties near the true
+    /// midpoint), turning one smooth boundary into a jagged interleaving of
+    /// the two labels. Every place the "wrong" label's pixels lose contact
+    /// with their own color's main body traces as its own tiny separate
+    /// object -- confirmed independently against three real customer
+    /// files: the PiperStitch bird mark (scratch-like noise across the
+    /// wing and chest), the Amerus logo (a swarm of "Light Gray"/"Dark
+    /// Red" slivers ringing the tagline), and the LIBBi wordmark (a
+    /// "Silver" fringe outlining every big letter). The same mechanism also
+    /// catches the foreground/*background* version of this problem when a
+    /// pixel's own cluster is flagged by `backgroundRampClusterIndices`
+    /// above (see the ambiguity computation in `importShapes`).
+    ///
+    /// Fixed the same way a despeckle filter works, but gated on
+    /// *ambiguity* rather than applied blindly: only a pixel whose nearest
+    /// and second-nearest cluster are close to equidistant (`isAmbiguous`,
+    /// computed from the same Delta-E lookup that decided its label) is
+    /// eligible to be reassigned, and only toward a label held by a clear
+    /// majority of its *confident* (non-ambiguous) neighbors. This is the
+    /// fix a first attempt at this got wrong: a blanket "reassign toward
+    /// whatever the neighborhood majority is" pass can't tell a genuine
+    /// thin ring or outline (solid, confidently one color, just narrow)
+    /// from an anti-aliasing ramp (also thin, but colorimetrically
+    /// ambiguous) -- it erased real ring topology along with the noise
+    /// (`ImageImportTests.colorIslandInsideARingsCounterMergesAndStaysSolid`
+    /// caught this in review). Gating on ambiguity fixes that: a solid
+    /// ring's pixels are confident matches to their own cluster (their
+    /// nearest cluster is far closer than any runner-up) regardless of how
+    /// thin the ring is, so they're never touched; only pixels that are
+    /// *themselves* colorimetrically uncertain are ever reconsidered.
+    ///
+    /// Reads every neighbor from the original (pre-smoothing) label
+    /// snapshot, never from pixels this same pass has already rewritten,
+    /// so the result can't depend on iteration order (spec §54
+    /// determinism) -- a single non-iterated pass, like the codebase's
+    /// other despeckle-style cleanups.
+    ///
+    /// Sentinel used only within this pass's neighbor tally to mean "this
+    /// neighbor is confidently background," alongside real (>= 0) cluster
+    /// indices for confidently-foreground neighbors. A pixel reassigned to
+    /// this sentinel gets `labels[i] = -1` in the result -- the same value
+    /// every genuinely non-foreground pixel already carries, so the
+    /// per-cluster masking loop right after this pass excludes it for free
+    /// without needing to also touch `foregroundMask` itself.
+    private static let backgroundLabelSentinel = -1
+
+    /// A single pass only resolves ambiguous pixels touching an *already*
+    /// confident neighbor within one hop -- adequate for a 1px ramp, but a
+    /// real anti-aliasing ramp is routinely 2-3px wide (confirmed directly
+    /// against the LIBBi file: a one-pass version left a genuine residue of
+    /// "Silver" objects, the ramp pixels sitting in the ramp's own middle,
+    /// more than one hop from either confident side). Resolved pixels count
+    /// as confident for the *next* round (`resolved`, tracked separately
+    /// from the original `isAmbiguous`, which never changes), so a wide
+    /// ramp resolves from both edges inward over a few rounds -- still
+    /// fully deterministic: each round reads a fixed snapshot and only
+    /// writes to a fresh copy, so results never depend on scan order within
+    /// a round, and the round count itself is a fixed bound, not
+    /// "until convergence" with a data-dependent iteration count.
+    private static let maxAmbiguousSmoothingRounds = 4
+
+    private static func smoothAmbiguousBoundaryLabels(_ labels: [Int], isAmbiguous: [Bool], foregroundMask: [Bool], width: Int, height: Int) -> [Int] {
+        var current = labels
+        var resolved = isAmbiguous.map { !$0 }
+
+        for _ in 0..<maxAmbiguousSmoothingRounds {
+            var next = current
+            var nextResolved = resolved
+            var anyChange = false
+
+            for y in 0..<height {
+                for x in 0..<width {
+                    let i = y * width + x
+                    guard foregroundMask[i], isAmbiguous[i], !resolved[i] else { continue }
+
+                    var confidentNeighborCounts: [Int: Int] = [:]
+                    for dy in -1...1 {
+                        for dx in -1...1 {
+                            guard dx != 0 || dy != 0 else { continue }
+                            let nx = x + dx, ny = y + dy
+                            guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                            let ni = ny * width + nx
+                            // A background neighbor is trivially confident
+                            // (it was never part of the ambiguous-foreground
+                            // computation at all) -- counts toward "this
+                            // ramp pixel is closer to background than to
+                            // any real design color" exactly like a
+                            // confident foreground neighbor counts toward a
+                            // specific cluster. A neighbor *resolved* in an
+                            // earlier round counts as confident here too,
+                            // which is what lets resolution propagate
+                            // inward through a multi-pixel ramp.
+                            if !foregroundMask[ni] {
+                                confidentNeighborCounts[backgroundLabelSentinel, default: 0] += 1
+                            } else if resolved[ni] {
+                                confidentNeighborCounts[current[ni], default: 0] += 1
+                            }
+                        }
+                    }
+
+                    // A *plurality* winner, not an absolute majority of all
+                    // 8 neighbors: a ramp pixel on an ordinary straight
+                    // edge naturally has its 8 neighbors split close to
+                    // evenly between the two confident sides (background on
+                    // one side, the design color on the other) -- requiring
+                    // an outright majority (>=5 of 8) almost never fires for
+                    // exactly this, the single most common case, and only
+                    // resolved pixels near a corner where one side happened
+                    // to dominate (confirmed directly: an earlier >=5
+                    // version left LIBBi's entire straight-edge ring
+                    // unresolved while still clearing tiny corner/speck
+                    // clusters). A strict plurality (`bestCount >
+                    // secondBestCount`) with a small evidence floor
+                    // resolves the ordinary straight-edge case while still
+                    // correctly leaving a genuine three-way junction (no
+                    // single dominant neighbor, a real tie) unresolved.
+                    let sortedCounts = confidentNeighborCounts.values.sorted(by: >)
+                    guard let bestLabel = confidentNeighborCounts.max(by: { $0.value < $1.value })?.key else { continue }
+                    let bestCount = sortedCounts[0]
+                    let secondBestCount = sortedCounts.count > 1 ? sortedCounts[1] : 0
+                    guard bestCount >= 2, bestCount > secondBestCount else { continue }
+                    next[i] = bestLabel
+                    nextResolved[i] = true
+                    anyChange = true
+                }
+            }
+
+            current = next
+            resolved = nextResolved
+            guard anyChange else { break }
+        }
+        return current
     }
 
     /// A hole traced above reads, at the pixel level, identically whether
@@ -398,7 +641,14 @@ public enum ImageImporter {
 
     // MARK: - Background detection (spec §7: transparent / uniform background detection)
 
-    private static func computeForegroundMask(pixels: [UInt8], width: Int, height: Int) throws -> [Bool] {
+    /// The mask, plus the single reference background color when one
+    /// genuinely exists (a uniform-corner flat background) -- `nil` for the
+    /// transparency and Otsu-fallback paths, where "the background" isn't
+    /// one representative RGB value. `importShapes` uses this to extend
+    /// `smoothAmbiguousBoundaryLabels`'s ambiguity test to the foreground/
+    /// background boundary too, not just boundaries between two foreground
+    /// colors -- see that function's own doc comment.
+    private static func computeForegroundMask(pixels: [UInt8], width: Int, height: Int) throws -> (mask: [Bool], backgroundColor: RGBColor?) {
         func pixel(_ x: Int, _ y: Int) -> (r: Double, g: Double, b: Double, a: Double) {
             let i = (y * width + x) * 4
             return (Double(pixels[i]), Double(pixels[i + 1]), Double(pixels[i + 2]), Double(pixels[i + 3]))
@@ -424,7 +674,7 @@ public enum ImageImporter {
             // a real customer logo that came back as ~300 stray gray
             // slivers around otherwise-correct navy letters).
             excludeDominantOpaqueBackground(&mask, pixels: pixels, width: width, height: height)
-            return mask
+            return (mask, nil)
         }
 
         let cornersAgree = corners.allSatisfy { c in
@@ -441,7 +691,8 @@ public enum ImageImporter {
                     mask[y * width + x] = dist > colorDistanceThreshold
                 }
             }
-            return mask
+            let backgroundColor = RGBColor(r: UInt8(max(0, min(255, bg.r))), g: UInt8(max(0, min(255, bg.g))), b: UInt8(max(0, min(255, bg.b))))
+            return (mask, backgroundColor)
         }
 
         // Fallback: Otsu threshold on luminance; assume the minority class is foreground.
@@ -460,7 +711,7 @@ public enum ImageImporter {
         for i in 0..<(width * height) {
             mask[i] = darkIsMinority ? (luminances[i] < threshold) : (luminances[i] >= threshold)
         }
-        return mask
+        return (mask, nil)
     }
 
     /// Finds the single most common exact RGB among currently-foreground
