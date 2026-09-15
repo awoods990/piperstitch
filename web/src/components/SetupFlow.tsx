@@ -19,6 +19,8 @@ export interface SetupAnswers {
   fabric: FabricType;
   colorPreset: ColorPresetId;
   threadWeight: ThreadWeight;
+  /** Sew a laydown first to flatten the nap (offered for terry). */
+  laydown?: boolean;
 }
 
 interface Props {
@@ -232,6 +234,11 @@ export default function SetupFlow(props: Props) {
               {(() => { const f = catalog.fabrics.find((x) => x.id === a.fabric); return f ? (
                 <p className="setup-note"><b>Stabilizer for {f.shortName.toLowerCase()}:</b> {f.stabilizer}</p>
               ) : null; })()}
+              {a.fabric === "terry" && (
+                <label className="check setup-check" title="A light, open fill sewn first over the whole design to flatten the pile so the stitching on top doesn't sink into it. You can change its thread colour later in the Laydown panel.">
+                  <input type="checkbox" checked={a.laydown !== false} onChange={(e) => setA({ ...a, laydown: e.target.checked })} /> Flatten the nap first with a laydown stitch (recommended for towels and fleece)
+                </label>
+              )}
             </div>
           )}
 

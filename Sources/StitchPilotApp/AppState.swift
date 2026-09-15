@@ -1243,6 +1243,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// `StitchDocument.laydown` for the Laydown section (C1): nil for
+    /// none. Setting it re-digitizes; the laydown is generated from the
+    /// current objects at flatten time, so it follows every edit.
+    var laydown: LaydownSettings? {
+        get { document?.laydown }
+        set {
+            guard var current = document, current.laydown != newValue else { return }
+            commitImmediateUndoSnapshot()
+            current.laydown = newValue
+            document = current
+            scheduleLiveRegenerate()
+        }
+    }
+
+    /// The laydown to start from: white 40wt from the palette, 2 mm
+    /// margin, two open layers.
+    var defaultLaydown: LaydownSettings {
+        let white = effectivePalette.first { $0.rgb.r > 240 && $0.rgb.g > 240 && $0.rgb.b > 240 }
+            ?? .generic(RGBColor(hex: 0xFFFFFF), name: "White")
+        return LaydownSettings(threadColor: white)
+    }
+
     /// Scales every satin density and fill row spacing so the design
     /// lands near `target` stitches (`StitchBudget`, C5).
     func applyTargetStitchCount(_ target: Int) {

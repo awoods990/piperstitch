@@ -66,6 +66,17 @@ export interface StitchDocument {
   objects: EmbroideryObject[];
   /** Begin and end the file at the design centre (hoop centre) -- on for caps. */
   startAndEndAtCenter?: boolean;
+  /** A light open fill sewn first under the whole design to flatten a napped fabric's pile (towels, fleece). */
+  laydown?: LaydownSettings | null;
+}
+
+export interface LaydownSettings {
+  threadColor: ThreadColor;
+  marginMM: number;
+  spacingMM: number;
+  stitchLengthMM: number;
+  twoLayers: boolean;
+  coverHoles: boolean;
 }
 
 export interface ImportedSource {

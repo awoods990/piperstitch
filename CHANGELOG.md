@@ -4,6 +4,35 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: laydown stitch for napped fabrics (C1); covered travel can dog-leg
+
+- **Laydown** (`LaydownSettings` on the document, `LaydownGenerator`):
+  a light open fill sewn first under the whole design to flatten the
+  pile of a towel or fleece. Footprint = the union of every object's
+  outline grown by a margin (2 mm; `ShapeMerger.dilatedUnion`, a raster
+  dilation), holes and counters covered by default; two layers at 0°
+  and 90°, 3 mm row spacing, 4 mm stitches, no underlay or
+  compensation; its own colour block (a thread that blends with the
+  fabric), sewn first. Connectors inside the footprint are sewn (the
+  stitch filter splits them); only one that would leave it trims.
+  Generated at flatten time, so it follows every edit; older project
+  files load without one.
+- Offered on the setup flow's fabric step for terry ("Flatten the nap
+  first…", on by default there), with a Laydown panel (thread colour,
+  margin, row spacing, two layers, cover holes) in both apps; the
+  readiness report warns (−4) on terry without one. CLI: `FABRIC=terry
+  LAYDOWN=1`.
+- **Covered travel can dog-leg.** When the way round an inset boundary
+  leaves the shape (concave letterforms), underlay and laydown
+  connectors now try a one- or two-waypoint route through the interior
+  instead of trimming (`TatamiFillGenerator.routeViaWaypoints`). The
+  cover fill itself still only travels along the edge — a dog-leg over
+  fill already sewn would show. Cap logo on standard fabric 10 → 7 trims.
+- Known: most remaining trims on a fill with holes come from the fill's
+  own chain order; sequencing chains so connectors travel under
+  not-yet-sewn rows is the next engine item (see the Wilcom review).
+- Tests: `LaydownTests` (4) — 376 pass.
+
 ## Changed: sequencing — details last, caps bottom-up and centre-out (B7)
 
 - **Details last.** Within each colour block, running-stitch outlines

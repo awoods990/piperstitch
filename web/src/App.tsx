@@ -7,9 +7,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type EditResponse, type PendingMerge } from "./api";
 import { decodeImage, isSVGFile, type DecodedImage } from "./decode";
-import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor } from "./types";
+import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings } from "./types";
 import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
+import { defaultLaydown } from "./components/Inspector";
 import Editor from "./components/Editor";
 import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
 import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, OpenProjectsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
@@ -200,6 +201,8 @@ export default function App() {
       let doc = await buildFrom(imp, a);
       // Cap frames register on the centre mark (C4).
       if (a.placement && a.placement !== "custom" && /cap|hat/i.test(a.placement.name)) doc = { ...doc, startAndEndAtCenter: true };
+      // Towels and fleece: a laydown first, unless the customer unticked it (C1).
+      if (a.fabric === "terry" ? a.laydown !== false : !!a.laydown) doc = { ...doc, laydown: defaultLaydown(palette) };
       const densityMM = THREAD_WEIGHT_DENSITY_MM[a.threadWeight];
       if (a.threadWeight !== "standard") {
         doc = { ...doc, objects: doc.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: densityMM } }
@@ -307,6 +310,7 @@ export default function App() {
       : o.stitchType === "tatamiFill" ? { ...o, parameters: { ...o.parameters, fillSpacingMM: clamp(o.parameters.fillSpacingMM * scale) } } : o) },
       { status: `Aiming for about ${target.toLocaleString()} stitches.` });
   };
+  const onLaydown = (laydown: LaydownSettings | null) => { if (!document) return; commit({ ...document, laydown }, { status: laydown ? "A laydown will be sewn first to flatten the nap." : "No laydown." }); };
   const onStartAtCenter = (on: boolean) => { if (!document) return; commit({ ...document, startAndEndAtCenter: on }, { status: on ? "The file will start and end at the hoop centre." : "The file starts at its first stitch." }); };
   const onGlobalFill = (mm: number) => { setGlobalFill(mm); if (!document) return; commit({ ...document, objects: document.objects.map((o) => o.stitchType === "tatamiFill" ? { ...o, parameters: { ...o.parameters, fillSpacingMM: mm } } : o) }); };
 
@@ -443,7 +447,7 @@ export default function App() {
           onTool={setTool} onPrefs={setPrefs} onSelect={onSelect} onTranslate={onTranslate} onScale={onScale} onStroke={onStroke}
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}
-          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
+          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onLaydown={onLaydown} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
           onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} onOpenProjects={onOpenProjectsSheet} />
         {sheets}
       </>

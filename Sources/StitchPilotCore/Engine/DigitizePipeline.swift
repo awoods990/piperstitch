@@ -63,6 +63,10 @@ public enum DigitizePipeline {
     /// `maxJumpWithoutTrimMM` is the inter-object connector threshold (see
     /// `visibleConnectorMM`, its default); intra-object breaks always use
     /// `defaultMaxJumpWithoutTrimMM`.
+    /// How far a laydown connector may run inside its own footprint
+    /// before it is trimmed instead -- see `flattenWithColors`.
+    static let laydownConnectorMM = 80.0
+
     public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = visibleConnectorMM) throws -> StitchPlan {
         try flattenWithColors(document, maxJumpWithoutTrimMM: maxJumpWithoutTrimMM).plan
     }
@@ -83,7 +87,25 @@ public enum DigitizePipeline {
         // gap that wouldn't have been trimmed anyway just adds stitches
         // for no benefit.
         let bridged = HiddenTravelRouter.bridgeSameColorGaps(try sequencedGeneratedObjects(document, maxJumpWithoutTrimMM: defaultMaxJumpWithoutTrimMM), thresholdMM: maxJumpWithoutTrimMM)
-        let generated = bridged.map { (color: $0.object.threadColor, runs: $0.runs) }
+        var generated = bridged.map { (color: $0.object.threadColor, runs: $0.runs) }
+        // A laydown (`LaydownSettings`) sews first, under everything, as
+        // its own colour block. Its layers are joined into as few runs as
+        // the footprint allows: a connector that stays inside the
+        // footprint is simply sewn, however long (the laydown is open and
+        // blends with the fabric by design, and the design covers most of
+        // it anyway; the stitch filter splits it to sewable lengths); only
+        // a connector that would leave the footprint becomes a trim.
+        if let laydown = document.laydown, !generated.isEmpty {
+            let layerRuns = LaydownGenerator.generateRuns(for: document, settings: laydown, breakThresholdMM: laydownConnectorMM)
+            if !layerRuns.isEmpty, let footprint = LaydownGenerator.footprint(for: document, settings: laydown) {
+                var runs: [[Point2D]] = []
+                let polygons = footprint.subPaths.map { $0.points }
+                for run in layerRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: laydownConnectorMM) }
+                let limits = StitchGenerationParameters()
+                runs = runs.map { StitchFilter.apply($0, minLengthMM: limits.minStitchLengthMM, maxLengthMM: limits.maxStitchLengthMM) }.filter { $0.count > 1 }
+                generated.insert((color: laydown.threadColor, runs: runs), at: 0)
+            }
+        }
 
         var colors: [ThreadColor] = []
         for entry in generated where colors.last?.rgb != entry.color.rgb {
@@ -316,7 +338,10 @@ public enum DigitizePipeline {
                 }
                 for run in layerRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM) }
             }
-            for run in fillRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM) }
+            // The cover fill's own runs may travel along the edge (1 mm
+            // in, under the fill's own edge pull) but never dog-leg across
+            // the interior: that travel would lie on fill already sewn.
+            for run in fillRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false) }
             return runs
         case .satin:
             // Spec: "automatically divide or convert excessively wide satin
@@ -415,7 +440,7 @@ public enum DigitizePipeline {
     /// `flattenWithColors`. Mirrors `TatamiFillGenerator.generateRuns`'
     /// own chain-joining rule, applied here across underlay layers and
     /// into the fill.
-    private static func appendJoiningIfCovered(_ run: [Point2D], to runs: inout [[Point2D]], polygons: [[Point2D]], breakThresholdMM: Double) {
+    private static func appendJoiningIfCovered(_ run: [Point2D], to runs: inout [[Point2D]], polygons: [[Point2D]], breakThresholdMM: Double, allowWaypoints: Bool = true) {
         guard !run.isEmpty else { return }
         guard let last = runs.last?.last, let first = run.first else { runs.append(run); return }
         let length = last.distance(to: first)
@@ -430,7 +455,7 @@ public enum DigitizePipeline {
         }
         if length <= breakThresholdMM, inside {
             runs[runs.count - 1].append(contentsOf: run)
-        } else if let route = TatamiFillGenerator.routeAlongBoundary(from: last, to: first, polygons: polygons, insetMM: 1.0),
+        } else if let route = TatamiFillGenerator.routeAlongBoundary(from: last, to: first, polygons: polygons, insetMM: 1.0, allowWaypoints: allowWaypoints),
                   PolygonGeometry.pathLength(route) <= 120 {
             // Travel along the crossed edge instead of a trim -- this
             // join precedes the cover fill, so the travel is covered.

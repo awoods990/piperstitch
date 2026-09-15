@@ -686,6 +686,55 @@ private struct InspectorView: View {
                         .disabled(app.document == nil)
                 }
 
+                PSSection("Laydown (Napped Fabrics)") {
+                    Toggle("Flatten the nap first", isOn: Binding(get: { app.laydown != nil }, set: { app.laydown = $0 ? app.defaultLaydown : nil }))
+                        .help("A light, open fill sewn first over the whole design (plus a margin) to flatten the pile of a towel or fleece so the stitching on top doesn't sink into it. Pick a thread that blends with the fabric -- it shows around the edge.")
+                        .disabled(app.document == nil)
+                    if app.laydown == nil, app.selectedFabricType == .terry {
+                        Text("Recommended for terry and fleece: without it the pile swallows fine stitching.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    if let laydown = app.laydown {
+                        let palette = app.effectivePalette.contains(where: { $0.rgb == laydown.threadColor.rgb }) ? app.effectivePalette : [laydown.threadColor] + app.effectivePalette
+                        Picker("Thread Color", selection: Binding(get: { laydown.threadColor.rgb }, set: { rgb in
+                            if let c = palette.first(where: { $0.rgb == rgb }) { var l = laydown; l.threadColor = c; app.laydown = l }
+                        })) {
+                            ForEach(palette, id: \.rgb) { color in
+                                Label {
+                                    Text(color.name)
+                                } icon: {
+                                    Circle()
+                                        .fill(Color(red: Double(color.rgb.r) / 255, green: Double(color.rgb.g) / 255, blue: Double(color.rgb.b) / 255))
+                                        .frame(width: 10, height: 10)
+                                }
+                                .tag(color.rgb)
+                            }
+                        }
+                        HStack {
+                            Text("Margin").foregroundStyle(PSColor.ink2)
+                            Spacer()
+                            Stepper(value: Binding(get: { laydown.marginMM }, set: { var l = laydown; l.marginMM = max(0, $0); app.laydown = l }), in: 0...6, step: 0.5) {
+                                Text(String(format: "%.1f mm", laydown.marginMM)).monospacedDigit()
+                            }
+                        }
+                        .font(.system(size: 12))
+                        HStack {
+                            Text("Row spacing").foregroundStyle(PSColor.ink2)
+                            Spacer()
+                            Stepper(value: Binding(get: { laydown.spacingMM }, set: { var l = laydown; l.spacingMM = max(1, $0); app.laydown = l }), in: 1...6, step: 0.5) {
+                                Text(String(format: "%.1f mm", laydown.spacingMM)).monospacedDigit()
+                            }
+                        }
+                        .font(.system(size: 12))
+                        Toggle("Two layers (crossed)", isOn: Binding(get: { laydown.twoLayers }, set: { var l = laydown; l.twoLayers = $0; app.laydown = l }))
+                        Toggle("Cover holes and counters too", isOn: Binding(get: { laydown.coverHoles }, set: { var l = laydown; l.coverHoles = $0; app.laydown = l }))
+                        Text("Choose a thread close to the fabric colour; the laydown shows just outside the design.")
+                            .font(.caption)
+                            .foregroundStyle(PSColor.muted)
+                    }
+                }
+
                 PSSection("Color Reduction") {
                     Picker("Preset", selection: $app.colorPreset) {
                         ForEach(ColorQuantizationPreset.allCases, id: \.self) { preset in

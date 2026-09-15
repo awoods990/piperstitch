@@ -185,7 +185,7 @@ public enum TatamiFillGenerator {
         let maxRoutedLengthMM = 120.0
         func routedConnector(from a: Point2D, to b: Point2D) -> [Point2D]? {
             guard routeConnectorsAlongEdges else { return nil }
-            guard let route = routeAlongBoundary(from: a, to: b, polygons: rotatedPolygons, insetMM: 1.0), PolygonGeometry.pathLength(route) <= maxRoutedLengthMM else { return nil }
+            guard let route = routeAlongBoundary(from: a, to: b, polygons: rotatedPolygons, insetMM: 1.0, allowWaypoints: true), PolygonGeometry.pathLength(route) <= maxRoutedLengthMM else { return nil }
             return Array(sampleKeepingVertices(route, stitchLengthMM: max(stitchLength, 1.0)).dropFirst().dropLast())
         }
 
@@ -282,7 +282,11 @@ public enum TatamiFillGenerator {
     /// tried and the shortest route whose every leg stays inside the
     /// shape wins. nil when nothing is crossed (no routing needed) or no
     /// candidate route stays inside.
-    static func routeAlongBoundary(from a: Point2D, to b: Point2D, polygons: [[Point2D]], insetMM: Double) -> [Point2D]? {
+    /// `allowWaypoints`: when no way round the boundary stays inside,
+    /// fall back to a dog-leg through the interior (`routeViaWaypoints`).
+    /// Only for travel that is covered afterwards (underlay, laydown) --
+    /// a dog-leg across a fill already sewn would show.
+    static func routeAlongBoundary(from a: Point2D, to b: Point2D, polygons: [[Point2D]], insetMM: Double, allowWaypoints: Bool = false) -> [Point2D]? {
         var crossed: [Int] = []
         for (index, polygon) in polygons.enumerated() where polygon.count >= 3 {
             let n = polygon.count
@@ -304,6 +308,49 @@ public enum TatamiFillGenerator {
             guard length < bestLength, routeStaysInside(route, polygons: polygons) else { continue }
             best = route
             bestLength = length
+        }
+        if best == nil, allowWaypoints {
+            // The inset boundary of a concave shape (a letterform) can
+            // self-intersect, so the way round it may leave the shape.
+            // Fall back to a dog-leg through one or two inset vertices
+            // that the straight legs can reach without leaving the shape.
+            best = routeViaWaypoints(from: a, to: b, polygons: polygons, insetMM: insetMM)
+        }
+        return best
+    }
+
+    /// A one- or two-waypoint route from `a` to `b` whose straight legs
+    /// all stay inside `polygons`; waypoints are the vertices of the
+    /// inset boundaries (outer shrunk, holes grown), tried singly and as
+    /// consecutive pairs along the same boundary. Shortest wins.
+    private static func routeViaWaypoints(from a: Point2D, to b: Point2D, polygons: [[Point2D]], insetMM: Double) -> [Point2D]? {
+        let boundaries = polygons.enumerated().map { index, polygon in
+            PolygonGeometry.offsetPolygon(polygon, by: index == 0 ? insetMM : -insetMM)
+        }
+        // Reachability of every vertex from each end, computed once.
+        var fromA: [[Bool]] = [], toB: [[Bool]] = []
+        for boundary in boundaries {
+            fromA.append(boundary.map { PolygonGeometry.pointInPolygons($0, polygons: polygons) && routeStaysInside([a, $0], polygons: polygons) })
+            toB.append(boundary.map { PolygonGeometry.pointInPolygons($0, polygons: polygons) && routeStaysInside([$0, b], polygons: polygons) })
+        }
+        var best: [Point2D]?
+        var bestLength = Double.infinity
+        for (k, boundary) in boundaries.enumerated() {
+            let n = boundary.count
+            guard n >= 3 else { continue }
+            for i in 0..<n {
+                let w = boundary[i]
+                if fromA[k][i], toB[k][i] {
+                    let length = a.distance(to: w) + w.distance(to: b)
+                    if length < bestLength { best = [a, w, b]; bestLength = length }
+                }
+                let j = (i + 1) % n
+                let w2 = boundary[j]
+                if fromA[k][i], toB[k][j], routeStaysInside([w, w2], polygons: polygons) {
+                    let length = a.distance(to: w) + w.distance(to: w2) + w2.distance(to: b)
+                    if length < bestLength { best = [a, w, w2, b]; bestLength = length }
+                }
+            }
         }
         return best
     }

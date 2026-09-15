@@ -45,6 +45,9 @@ struct ImportSetupSheet: View {
     }
 
     @State private var step: Step = .placement
+    /// The customer unticked the laydown for terry; don't re-tick it
+    /// when the fabric step re-appears.
+    @State private var laydownDeclined = false
     @State private var placement: Placement?
     @State private var hoopChoice: HoopChoice?
     /// The size the recommender picked from the artwork before any answer,
@@ -299,6 +302,15 @@ struct ImportSetupSheet: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 10).fill(PSColor.paper))
+            if app.selectedFabricType == .terry {
+                Toggle(isOn: Binding(get: { app.laydown != nil }, set: { app.laydown = $0 ? app.defaultLaydown : nil })) {
+                    Text("Flatten the nap first with a laydown stitch (recommended for towels and fleece)")
+                        .font(.system(size: 13))
+                }
+                .help("A light, open fill sewn first over the whole design to flatten the pile so the stitching on top doesn't sink into it. You can change its thread colour later in the Laydown panel.")
+                .onAppear { if app.laydown == nil, !laydownDeclined { app.laydown = app.defaultLaydown } }
+                .onChange(of: app.laydown == nil) { off in laydownDeclined = off }
+            }
         }
     }
 

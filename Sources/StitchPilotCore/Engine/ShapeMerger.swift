@@ -43,6 +43,73 @@ public enum ShapeMerger {
         return trace(polygonSets: nonEmpty.map { $0.subPaths.map { $0.points } })
     }
 
+    /// The union of `shapes` grown outward by `marginMM` on every side,
+    /// as one shape -- the footprint a laydown stitch covers
+    /// (`LaydownGenerator`). Grown on the raster by a square dilation
+    /// (exact along the axes, ~1.4× on a diagonal), which is what a
+    /// laydown margin needs and far cheaper than a true disc. With
+    /// `fillHoles`, enclosed background (letter counters, the inside of a
+    /// ring) becomes part of the footprint too, so the nap is flattened
+    /// there as well.
+    public static func dilatedUnion(_ shapes: [VectorShape], marginMM: Double, fillHoles: Bool) -> VectorShape? {
+        let nonEmpty = shapes.filter { !$0.subPaths.isEmpty }
+        guard !nonEmpty.isEmpty, marginMM >= 0 else { return nil }
+        var bounds = BoundingBox.empty
+        for shape in nonEmpty { bounds = bounds.union(shape.boundingBox) }
+        // Room for the margin on every side.
+        let grown = BoundingBox(minX: bounds.minX - marginMM, minY: bounds.minY - marginMM, maxX: bounds.maxX + marginMM, maxY: bounds.maxY + marginMM)
+        guard let sizing = rasterSizing(for: grown) else { return nil }
+        var mask = [Bool](repeating: false, count: sizing.width * sizing.height)
+        for shape in nonEmpty {
+            rasterize(polygons: shape.subPaths.map { $0.points }, into: &mask, width: sizing.width, height: sizing.height,
+                      originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        }
+        let radius = Int((marginMM * sizing.scale).rounded())
+        if radius > 0 { dilate(&mask, width: sizing.width, height: sizing.height, radius: radius) }
+        if fillHoles { fillEnclosedBackground(&mask, width: sizing.width, height: sizing.height) }
+        return traceMask(mask, sizing: sizing)
+    }
+
+    /// Square dilation by `radius` pixels: a horizontal pass then a
+    /// vertical pass, each marking every pixel within `radius` of a set
+    /// one along that axis, in O(pixels) via a running count.
+    private static func dilate(_ mask: inout [Bool], width: Int, height: Int, radius: Int) {
+        func pass(length: Int, count: Int, index: (Int, Int) -> Int) {
+            var line = [Bool](repeating: false, count: length)
+            for l in 0..<count {
+                for i in 0..<length { line[i] = mask[index(l, i)] }
+                var window = 0
+                for i in 0..<(length + radius) {
+                    if i < length, line[i] { window += 1 }
+                    let leaving = i - 2 * radius - 1
+                    if leaving >= 0, line[leaving] { window -= 1 }
+                    let target = i - radius
+                    if target >= 0, target < length, window > 0 { mask[index(l, target)] = true }
+                }
+            }
+        }
+        pass(length: width, count: height) { row, x in row * width + x }
+        pass(length: height, count: width) { column, y in y * width + column }
+    }
+
+    /// Sets every background pixel that can't reach the raster's border
+    /// through background -- the holes inside the foreground.
+    private static func fillEnclosedBackground(_ mask: inout [Bool], width: Int, height: Int) {
+        var outside = [Bool](repeating: false, count: mask.count)
+        var stack: [Int] = []
+        func seed(_ i: Int) { if !mask[i], !outside[i] { outside[i] = true; stack.append(i) } }
+        for x in 0..<width { seed(x); seed((height - 1) * width + x) }
+        for y in 0..<height { seed(y * width); seed(y * width + width - 1) }
+        while let i = stack.popLast() {
+            let x = i % width, y = i / width
+            if x > 0 { seed(i - 1) }
+            if x < width - 1 { seed(i + 1) }
+            if y > 0 { seed(i - width) }
+            if y < height - 1 { seed(i + width) }
+        }
+        for i in mask.indices where !mask[i] && !outside[i] { mask[i] = true }
+    }
+
     /// Merges `shapes` together with an additional freehand brush stroke —
     /// a sequence of points sampled along a drag, at physical radius
     /// `radiusMM` — the operation behind "paint in more coverage": the

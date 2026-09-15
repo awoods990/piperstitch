@@ -178,6 +178,10 @@ do {
         if ProcessInfo.processInfo.environment["ALLOW_BRANCHING_SATIN"] != nil {
             parameters.allowBranchingSatin = true
         }
+        // FABRIC=terry (any FabricType raw value): sew as if on that fabric.
+        if let raw = ProcessInfo.processInfo.environment["FABRIC"], let fabric = FabricType(rawValue: raw) {
+            parameters.fabricType = fabric
+        }
         let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
         objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))
@@ -191,8 +195,12 @@ do {
         print("Isolated Object \(only): \(objects[0].stitchType.rawValue), subPaths=\(objects[0].shape.subPaths.count)")
     }
 
-    let document = StitchDocument(name: inputURL.deletingPathExtension().lastPathComponent,
-                                   physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
+    var document = StitchDocument(name: inputURL.deletingPathExtension().lastPathComponent,
+                                  physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
+    // LAYDOWN=1: a white laydown stitch first (`LaydownSettings`).
+    if ProcessInfo.processInfo.environment["LAYDOWN"] != nil {
+        document.laydown = LaydownSettings(threadColor: .generic(RGBColor(hex: 0xF2EFE8), name: "Ecru"))
+    }
     let (plan, colors) = try DigitizePipeline.flattenWithColors(document)
     checkpoint("Flattened plan: \(plan.stitchCount) stitches, \(colors.count) colors")
     let report = QualityAnalyzer.analyze(plan, document: document)

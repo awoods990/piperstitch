@@ -467,6 +467,40 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
     }
 }
 
+/// A laydown stitch under the whole design -- docs/WILCOM_MANUAL_REVIEW.md
+/// C1. On a napped fabric (towelling, fleece, fur) the pile swallows
+/// stitching; a light, open fill sewn first over the design's footprint
+/// (grown by `marginMM`) flattens the nap so the real stitching sits on
+/// top of it. Two layers at opposing angles hold the pile down better
+/// than one. The thread is chosen to blend with the fabric, since the
+/// laydown shows around the design's edge.
+public struct LaydownSettings: Codable, Sendable, Equatable {
+    public var threadColor: ThreadColor
+    /// How far past the design's outline the laydown extends.
+    public var marginMM: Double
+    /// Row spacing of each layer -- open, not a cover.
+    public var spacingMM: Double
+    public var stitchLengthMM: Double
+    /// Second layer at 90° to the first.
+    public var twoLayers: Bool
+    /// Cover enclosed background (letter counters, the inside of a ring)
+    /// as well, so the nap is held down there too.
+    public var coverHoles: Bool
+
+    public init(threadColor: ThreadColor, marginMM: Double = 2.0, spacingMM: Double = 3.0, stitchLengthMM: Double = 4.0,
+                twoLayers: Bool = true, coverHoles: Bool = true) {
+        self.threadColor = threadColor
+        self.marginMM = marginMM
+        self.spacingMM = spacingMM
+        self.stitchLengthMM = stitchLengthMM
+        self.twoLayers = twoLayers
+        self.coverHoles = coverHoles
+    }
+
+    /// Fabrics whose pile a laydown is for.
+    public static func isRecommended(for fabric: FabricType) -> Bool { fabric == .terry }
+}
+
 /// The root editable project document — the ".stitchpilot" master format
 /// (spec §6). Machine files (.dst, .pes, ...) are generated FROM this; they
 /// are manufacturing output, not the source of truth, and are never read
@@ -493,18 +527,24 @@ public struct StitchDocument: Codable, Sendable {
     /// flow turns it on for caps, whose frames register on the centre.
     /// Machines that auto-centre simply ignore it.
     public var startAndEndAtCenter: Bool
+    /// A laydown stitch sewn first under the whole design, or nil for
+    /// none -- `LaydownSettings`. Generated at flatten time from the
+    /// current objects, so it follows every edit.
+    public var laydown: LaydownSettings?
 
-    public init(name: String, physicalWidthMM: Double, physicalHeightMM: Double, objects: [EmbroideryObject] = [], startAndEndAtCenter: Bool = false) {
+    public init(name: String, physicalWidthMM: Double, physicalHeightMM: Double, objects: [EmbroideryObject] = [],
+                startAndEndAtCenter: Bool = false, laydown: LaydownSettings? = nil) {
         self.schemaVersion = Self.currentSchemaVersion
         self.name = name
         self.physicalWidthMM = physicalWidthMM
         self.physicalHeightMM = physicalHeightMM
         self.objects = objects
         self.startAndEndAtCenter = startAndEndAtCenter
+        self.laydown = laydown
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, name, physicalWidthMM, physicalHeightMM, objects, startAndEndAtCenter
+        case schemaVersion, name, physicalWidthMM, physicalHeightMM, objects, startAndEndAtCenter, laydown
     }
 
     public init(from decoder: Decoder) throws {
@@ -516,6 +556,7 @@ public struct StitchDocument: Codable, Sendable {
         objects = try c.decode([EmbroideryObject].self, forKey: .objects)
         // Files saved before the flag existed decode as "off".
         startAndEndAtCenter = try c.decodeIfPresent(Bool.self, forKey: .startAndEndAtCenter) ?? false
+        laydown = try c.decodeIfPresent(LaydownSettings.self, forKey: .laydown)
     }
 
     /// The point the machine starts from and returns to when

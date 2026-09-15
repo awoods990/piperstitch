@@ -55,6 +55,7 @@ public enum QualityAnalyzer {
         checkFragmentation(document, into: &issues)
         checkSameColorStitchTypeConsistency(document, into: &issues)
         addStabilizerAdvice(document, into: &issues)
+        checkLaydown(document, into: &issues)
 
         let score = max(0, min(100, 100 - issues.reduce(0) { $0 + $1.scorePenalty }))
         return EmbroideryReadinessReport(score: score, issues: issues)
@@ -220,6 +221,19 @@ public enum QualityAnalyzer {
             // server build (see server/) can't rely on.
             message: "Fine detail (as narrow as \(String(format: "%.1f", narrowest.widthMM))mm) on \(narrowest.fabric.shortName) fabric often doesn't sew cleanly -- the pile or stretch can swallow or distort thin satin/fill in a way this preview can't show. Consider a bolder design, a larger size, or a stabilizer topping.",
             scorePenalty: 8
+        ))
+    }
+
+    /// A napped fabric with no laydown (docs/WILCOM_MANUAL_REVIEW.md C1):
+    /// the pile swallows fine stitching. A real risk, but a production
+    /// choice, so a small penalty and a pointer at the fix.
+    private static func checkLaydown(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
+        guard let document, document.laydown == nil,
+              let fabric = document.objects.first?.parameters.fabricType, LaydownSettings.isRecommended(for: fabric) else { return }
+        issues.append(QualityIssue(
+            severity: .warning,
+            message: "No laydown stitch on \(fabric.shortName.lowercased()) -- the pile can swallow fine detail. Turn on \"Flatten the nap first\" (Laydown) so a light open fill holds the pile down under the design.",
+            scorePenalty: 4
         ))
     }
 

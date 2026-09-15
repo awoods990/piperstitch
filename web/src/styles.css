@@ -84,6 +84,7 @@ button, input, select { font: inherit; color: inherit; }
 .setup-sub { margin: 0; color: var(--muted); }
 .setup-note { margin: 4px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); color: var(--muted); font-size: 13px; line-height: 1.45; }
 .setup-note b { color: var(--ink); }
+.setup-check { margin-top: 6px; font-size: 13px; }
 .setup-body { padding: 8px 0 4px; min-height: 200px; }
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .section-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--label); margin-bottom: 8px; }

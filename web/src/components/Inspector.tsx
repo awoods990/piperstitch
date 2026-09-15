@@ -5,7 +5,7 @@
 // App re-digitize; only merge needs the server.
 
 import { useEffect, useState } from "react";
-import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, FillPattern, StitchDocument, StitchType, ThreadColor, UnderlayType } from "../types";
+import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, FillPattern, LaydownSettings, StitchDocument, StitchType, ThreadColor, UnderlayType } from "../types";
 import { cm, inches, formatRunTime } from "../format";
 import { PRESET_LABELS } from "./SetupFlow";
 import { rgbCSS } from "../prefs";
@@ -41,6 +41,14 @@ export interface InspectorProps {
   /** Scale every satin/fill spacing so the design lands near this many stitches (C5). */
   onTargetStitchCount: (target: number) => void;
   onStartAtCenter: (on: boolean) => void;
+  onLaydown: (laydown: LaydownSettings | null) => void;
+}
+
+/** The default laydown: white 40wt, 2 mm margin, two open layers. */
+export function defaultLaydown(palette: ThreadColor[]): LaydownSettings {
+  const white = palette.find((c) => c.rgb.r > 240 && c.rgb.g > 240 && c.rgb.b > 240)
+    ?? { id: "laydown-white", name: "White", rgb: { r: 255, g: 255, b: 255 } };
+  return { threadColor: white, marginMM: 2, spacingMM: 3, stitchLengthMM: 4, twoLayers: true, coverHoles: true };
 }
 
 export default function Inspector(p: InspectorProps) {
@@ -62,6 +70,7 @@ export default function Inspector(p: InspectorProps) {
           <input type="checkbox" checked={!!doc.startAndEndAtCenter} onChange={(e) => p.onStartAtCenter(e.target.checked)} /> Start and end at hoop centre
         </label>
       </section>
+      <LaydownSection p={p} />
       <section className="panel">
         <h3>Colour reduction</h3>
         <select value={p.colorPreset} disabled={p.isVector || !p.hasSource} onChange={(e) => p.onColorPreset(e.target.value as ColorPresetId)}>
@@ -225,6 +234,39 @@ function TargetStitchCount({ current, onApply }: { current: number; onApply: (ta
         <button className="btn small" disabled={!valid} onClick={() => onApply(target)}>Apply</button>
       </span>
     </div>
+  );
+}
+
+/** C1: a laydown stitch for napped fabrics. */
+function LaydownSection({ p }: { p: InspectorProps }) {
+  const doc = p.document;
+  const laydown = doc.laydown ?? null;
+  const fabric = doc.objects[0]?.parameters.fabricType;
+  const recommended = fabric === "terry";
+  const colorKey = (c: ThreadColor) => `${c.name}|${c.rgb.r},${c.rgb.g},${c.rgb.b}`;
+  const palette = laydown && !p.palette.some((c) => colorKey(c) === colorKey(laydown.threadColor)) ? [laydown.threadColor, ...p.palette] : p.palette;
+  return (
+    <section className="panel">
+      <h3>Laydown <small>napped fabrics</small></h3>
+      <label className="check" title="A light, open fill sewn first over the whole design (plus a margin) to flatten the pile of a towel or fleece so the stitching on top doesn't sink into it. Pick a thread that blends with the fabric — it shows around the edge.">
+        <input type="checkbox" checked={!!laydown} onChange={(e) => p.onLaydown(e.target.checked ? defaultLaydown(p.palette) : null)} /> Flatten the nap first
+      </label>
+      {!laydown && recommended && <span className="hint warn-text">Recommended for terry and fleece: without it the pile swallows fine stitching.</span>}
+      {laydown && (
+        <>
+          <label className="row">Thread colour
+            <select value={colorKey(laydown.threadColor)} onChange={(e) => { const c = palette.find((x) => colorKey(x) === e.target.value); if (c) p.onLaydown({ ...laydown, threadColor: c }); }}>
+              {palette.map((c) => <option key={colorKey(c)} value={colorKey(c)}>{c.name}{c.catalogNumber ? ` (${c.catalogNumber})` : ""}</option>)}
+            </select>
+          </label>
+          <NumberRow label="Margin (mm)" value={laydown.marginMM} step={0.5} min={0} onChange={(v) => p.onLaydown({ ...laydown, marginMM: v })} />
+          <NumberRow label="Row spacing (mm)" value={laydown.spacingMM} step={0.5} min={1} onChange={(v) => p.onLaydown({ ...laydown, spacingMM: v })} />
+          <label className="check"><input type="checkbox" checked={laydown.twoLayers} onChange={(e) => p.onLaydown({ ...laydown, twoLayers: e.target.checked })} /> Two layers (crossed)</label>
+          <label className="check"><input type="checkbox" checked={laydown.coverHoles} onChange={(e) => p.onLaydown({ ...laydown, coverHoles: e.target.checked })} /> Cover holes and counters too</label>
+          <span className="hint">Choose a thread close to the fabric colour; the laydown shows just outside the design.</span>
+        </>
+      )}
+    </section>
   );
 }
 

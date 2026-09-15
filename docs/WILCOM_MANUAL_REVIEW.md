@@ -171,10 +171,17 @@ recommendation**. Priority is by expected sew-out impact per hour of work.
 | 12 | B5, B6, B2, B3, C3 | 1.5 d total | Polish |
 | 13 | C2, C7 | 2 d | SVG overlap cleanup; outline/border options |
 
-**Status (2026-09-15):** A1–A7 and B1 are implemented — see
-CHANGELOG.md "digitizing engine — seven rules from the Wilcom reference
-manual" (commits 79890e4, 9ca898b, c62b612, and the mitred-corners
-commit). Remaining: B7, C1, C4–C7, B2/B3/B5/B6, C2/C3.
+**Status (2026-09-15):** A1–A7, B1, B7, C1, C4, C5, C6 are implemented —
+see CHANGELOG.md. Remaining: B2/B3/B5/B6, C2/C3/C7.
+
+**Found along the way — next engine item:** on a fill with holes or
+concave notches (any "B"), most trims come from the tatami's own chain
+order: connectors between chains that would cross sewn rows or leave
+the shape become trims. Wilcom sequences the pieces so each connector
+travels *under rows not yet sewn*. A chain sequencer that plans travel
+through unsewn chains (graph of chains, connectors allowed only across
+unsewn area, shortest Hamiltonian-ish walk) would take the cap logo's
+"B" from 7 trims toward 2–3. ~1–2 days.
 
 Every item lands with tests in `Tests/StitchPilotCoreTests/` and a
 before/after run of `DigitizeCLI` over `TestArtwork/` (the regression
