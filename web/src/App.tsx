@@ -198,6 +198,8 @@ export default function App() {
       const imp = await reimportIfNeeded(imported, a.colorPreset, a.hoop);
       setImported(imp); setAnswers(a);
       let doc = await buildFrom(imp, a);
+      // Cap frames register on the centre mark (C4).
+      if (a.placement && a.placement !== "custom" && /cap|hat/i.test(a.placement.name)) doc = { ...doc, startAndEndAtCenter: true };
       const densityMM = THREAD_WEIGHT_DENSITY_MM[a.threadWeight];
       if (a.threadWeight !== "standard") {
         doc = { ...doc, objects: doc.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: densityMM } }
@@ -296,6 +298,16 @@ export default function App() {
     applyEdit(r); setTool("select");
   };
   const onGlobalSatin = (mm: number) => { setGlobalSatin(mm); if (!document) return; commit({ ...document, objects: document.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: mm } } : o) }); };
+  /** C5: stitch count is ~proportional to 1/spacing, so scale every satin/fill spacing by current/target (clamped 0.2-1.0 mm). */
+  const onTargetStitchCount = (target: number) => {
+    if (!document || !digitized || target <= 0 || digitized.stats.stitchCount <= 0) return;
+    const scale = digitized.stats.stitchCount / target;
+    const clamp = (v: number) => Math.min(1.0, Math.max(0.2, v));
+    commit({ ...document, objects: document.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: clamp(o.parameters.satinDensityMM * scale) } }
+      : o.stitchType === "tatamiFill" ? { ...o, parameters: { ...o.parameters, fillSpacingMM: clamp(o.parameters.fillSpacingMM * scale) } } : o) },
+      { status: `Aiming for about ${target.toLocaleString()} stitches.` });
+  };
+  const onStartAtCenter = (on: boolean) => { if (!document) return; commit({ ...document, startAndEndAtCenter: on }, { status: on ? "The file will start and end at the hoop centre." : "The file starts at its first stitch." }); };
   const onGlobalFill = (mm: number) => { setGlobalFill(mm); if (!document) return; commit({ ...document, objects: document.objects.map((o) => o.stitchType === "tatamiFill" ? { ...o, parameters: { ...o.parameters, fillSpacingMM: mm } } : o) }); };
 
   // keyboard: delete, undo, escape
@@ -431,7 +443,7 @@ export default function App() {
           onTool={setTool} onPrefs={setPrefs} onSelect={onSelect} onTranslate={onTranslate} onScale={onScale} onStroke={onStroke}
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}
-          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
+          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
           onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} onOpenProjects={onOpenProjectsSheet} />
         {sheets}
       </>

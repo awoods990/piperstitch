@@ -9,3 +9,12 @@ export function inches(mm: number): string {
 }
 
 export const approx = (a: number, b: number) => Math.abs(a - b) < 0.5;
+
+/** "4 min 20 s", "1 h 12 min", "45 s" -- mirrors RunTimeEstimator.format. */
+export function formatRunTime(seconds: number): string {
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  if (h > 0) return `${h} h ${m} min`;
+  if (m > 0) return s > 0 ? `${m} min ${s} s` : `${m} min`;
+  return `${s} s`;
+}

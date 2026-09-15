@@ -99,6 +99,18 @@ struct WireStats: Content {
     var maxStitchLengthMM: Double
     var totalThreadMM: Double
     var bounds: BoundingBox
+    /// `RunTimeEstimator` at its default machine speed (C5).
+    var estimatedRunSeconds: Double
+
+    init(_ plan: StitchPlan) {
+        stitchCount = plan.stitchCount
+        colorChangeCount = plan.colorChangeCount
+        trimCount = plan.trimCount
+        maxStitchLengthMM = plan.maxStitchLength()
+        totalThreadMM = plan.totalStitchLength
+        bounds = plan.boundingBox
+        estimatedRunSeconds = RunTimeEstimator.estimate(plan).totalSeconds
+    }
 }
 
 struct DigitizeResponse: Content {
@@ -116,7 +128,7 @@ struct ExportRequest: Content {
 // MARK: - Catalog (the UI's pick-lists, straight from the engine's own tables)
 
 struct CatalogSize: Content { var name: String; var widthMM: Double; var heightMM: Double }
-struct CatalogFabric: Content { var id: String; var displayName: String; var shortName: String; var isHeadwear: Bool }
+struct CatalogFabric: Content { var id: String; var displayName: String; var shortName: String; var isHeadwear: Bool; var stabilizer: String }
 struct CatalogColorPreset: Content { var id: String; var maxColors: Int }
 struct CatalogNamed: Content { var id: String; var displayName: String }
 

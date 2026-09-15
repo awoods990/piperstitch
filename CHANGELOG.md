@@ -4,6 +4,32 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: run-time estimate, target stitch count, stabiliser advice, start/end at hoop centre
+
+Shop-facing features from the Wilcom review (`docs/WILCOM_MANUAL_REVIEW.md`
+C4, C5, C6), on every surface (Mac app, web app, server API, CLI).
+
+- **Estimated run time** (`RunTimeEstimator`): stitches at 800 spm (the
+  machine speed is a parameter), slowed proportionally when the average
+  stitch is over 4 mm, plus 3 s per trim and 20 s per automatic colour
+  change. Shown in Production Statistics and the CLI summary;
+  `stats.estimatedRunSeconds` on the digitize response.
+- **Target stitch count** (`StitchBudget`): type the count a job is
+  quoted at and every satin density and fill row spacing is scaled by
+  current ÷ target (clamped 0.2–1.0 mm), landing near the target
+  (underlay and running stitches don't scale). In the Density section.
+- **Stabilizer advice** (`FabricType.stabilizerAdvice`): what to hoop
+  each fabric with — cut-away for knits, tear-away for stable wovens,
+  cap backing for caps, water-soluble topping on terry/beanies, and so
+  on. Shown under the fabric step of the setup flow, as a no-penalty
+  info line on the readiness report, and as `stabilizer` in the catalog.
+- **Start and end at hoop centre** (`StitchDocument.startAndEndAtCenter`):
+  the file begins with a jump from the design centre to the first
+  stitch and returns there at the end so the operator can align on the
+  hoop's centre mark. Off by default; the setup flow turns it on for
+  caps. Older project files decode as off. Toggle in the Hoop section.
+- Tests: `ProductionFeaturesTests` (6) — 369 pass.
+
 ## Changed: digitizing engine — seven rules from the Wilcom reference manual (A1–A7)
 
 Reviewed against the Wilcom Reference Manual (`docs/WILCOM_MANUAL_REVIEW.md`

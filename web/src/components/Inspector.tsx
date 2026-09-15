@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, FillPattern, StitchDocument, StitchType, ThreadColor, UnderlayType } from "../types";
-import { cm, inches } from "../format";
+import { cm, inches, formatRunTime } from "../format";
 import { PRESET_LABELS } from "./SetupFlow";
 import { rgbCSS } from "../prefs";
 
@@ -38,6 +38,9 @@ export interface InspectorProps {
   onExtendedDensity: (on: boolean) => void;
   onGlobalSatinDensity: (mm: number) => void;
   onGlobalFillSpacing: (mm: number) => void;
+  /** Scale every satin/fill spacing so the design lands near this many stitches (C5). */
+  onTargetStitchCount: (target: number) => void;
+  onStartAtCenter: (on: boolean) => void;
 }
 
 export default function Inspector(p: InspectorProps) {
@@ -55,6 +58,9 @@ export default function Inspector(p: InspectorProps) {
           <option value="">None (no fit check)</option>
           {catalog.hoops.map((x) => <option key={x.name} value={x.name}>{x.name} — {cm(x.widthMM)} × {cm(x.heightMM)} cm</option>)}
         </select>
+        <label className="check" title="The file begins with the needle at the centre of the design and returns there at the end, so you can line up on the hoop's centre mark before pressing start. Cap frames register on the centre, so it's on for caps.">
+          <input type="checkbox" checked={!!doc.startAndEndAtCenter} onChange={(e) => p.onStartAtCenter(e.target.checked)} /> Start and end at hoop centre
+        </label>
       </section>
       <section className="panel">
         <h3>Colour reduction</h3>
@@ -199,7 +205,26 @@ function DensitySection({ p }: { p: InspectorProps }) {
       <DensitySlider label="Satin density" valueMM={p.globalSatinDensityMM} floorMM={p.allowExtendedDensity ? 0.1 : 0.2} onChange={p.onGlobalSatinDensity} />
       <DensitySlider label="Fill row spacing" valueMM={p.globalFillSpacingMM} floorMM={p.allowExtendedDensity ? 0.05 : 0.2} onChange={p.onGlobalFillSpacing} />
       <span className="hint">Applies to every satin or fill object at once. Select an individual object to fine-tune just that one.</span>
+      {p.digitized && <TargetStitchCount current={p.digitized.stats.stitchCount} onApply={p.onTargetStitchCount} />}
     </section>
+  );
+}
+
+/** Wilcom's "Process Stitches" idea: name the stitch count you can afford and the
+ *  spacing of every satin and fill object is scaled to land near it. */
+function TargetStitchCount({ current, onApply }: { current: number; onApply: (target: number) => void }) {
+  const [text, setText] = useState(String(current));
+  useEffect(() => setText(String(current)), [current]);
+  const target = parseInt(text, 10);
+  const valid = Number.isFinite(target) && target > 0 && target !== current;
+  return (
+    <div className="row" title="Scales every satin density and fill row spacing (between 0.2 and 1.0 mm) so the design lands near this many stitches. Useful when a job is quoted by stitch count.">
+      <span>Target stitch count</span>
+      <span className="row-inline">
+        <input type="number" min={1} step={100} value={text} onChange={(e) => setText(e.target.value)} />
+        <button className="btn small" disabled={!valid} onClick={() => onApply(target)}>Apply</button>
+      </span>
+    </div>
   );
 }
 
@@ -215,6 +240,7 @@ function StatsSection({ d }: { d: DigitizeResponse }) {
         <div><b>{s.trimCount}</b><span>trims</span></div>
         <div><b>{(s.totalThreadMM / 1000).toFixed(1)} m</b><span>thread</span></div>
         <div><b>{s.maxStitchLengthMM.toFixed(1)} mm</b><span>longest</span></div>
+        <div title="Sewing at 800 stitches per minute, plus about 3 s per trim and 20 s per automatic colour change. A single-needle machine re-threaded by hand takes longer."><b>{formatRunTime(s.estimatedRunSeconds ?? 0)}</b><span>est. run time</span></div>
       </div>
     </section>
   );

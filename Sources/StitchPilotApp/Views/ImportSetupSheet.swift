@@ -292,6 +292,13 @@ struct ImportSetupSheet: View {
                     }
                 }
             }
+            // What to hoop it with (C6) -- shown for whichever fabric is picked.
+            (Text("Stabilizer for \(app.selectedFabricType.shortName.lowercased()): ").fontWeight(.semibold).foregroundColor(PSColor.ink)
+             + Text(app.selectedFabricType.stabilizerAdvice).foregroundColor(PSColor.muted))
+                .font(.system(size: 12))
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10).fill(PSColor.paper))
         }
     }
 

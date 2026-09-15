@@ -163,6 +163,13 @@ public enum DigitizePipeline {
         }
 
         commands.append(.trim)
+        if document.startAndEndAtCenter, !commands.isEmpty, case .jump = commands[0] {
+            // Start at the centre, jump to the first stitch (the plan's
+            // own first command is that jump); end by jumping back.
+            // `StitchDocument.startAndEndAtCenter`.
+            commands.insert(.jump(document.centerPoint), at: 0)
+            commands.append(.jump(document.centerPoint))
+        }
         commands.append(.end)
         return (StitchPlan(commands: commands), colors)
     }

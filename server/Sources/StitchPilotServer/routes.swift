@@ -28,8 +28,7 @@ func routes(_ app: Application) throws {
             return (plan, colors, report)
         }
         return DigitizeResponse(plan: WirePlan(plan), colors: colors, report: WireReport(report),
-                                stats: WireStats(stitchCount: plan.stitchCount, colorChangeCount: plan.colorChangeCount, trimCount: plan.trimCount,
-                                                 maxStitchLengthMM: plan.maxStitchLength(), totalThreadMM: plan.totalStitchLength, bounds: plan.boundingBox),
+                                stats: WireStats(plan),
                                 elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
     }
     let engine = api.grouped(EntitlementGate())
@@ -39,7 +38,7 @@ func routes(_ app: Application) throws {
         CatalogResponse(
             hoops: HoopProfile.commonHoops.map { CatalogSize(name: $0.name, widthMM: $0.widthMM, heightMM: $0.heightMM) },
             garmentPresets: GarmentSizePreset.standardPresets.map { CatalogSize(name: $0.name, widthMM: $0.widthMM, heightMM: $0.heightMM) },
-            fabrics: FabricType.allCases.map { CatalogFabric(id: $0.rawValue, displayName: $0.displayName, shortName: $0.shortName, isHeadwear: $0.isHeadwear) },
+            fabrics: FabricType.allCases.map { CatalogFabric(id: $0.rawValue, displayName: $0.displayName, shortName: $0.shortName, isHeadwear: $0.isHeadwear, stabilizer: $0.stabilizerAdvice) },
             colorPresets: ColorQuantizationPreset.allCases.map { CatalogColorPreset(id: $0.rawValue, maxColors: $0.defaultMaxColors) },
             threadPalette: ThreadLibrary.genericPalette,
             stitchTypes: StitchType.allCases.map(\.rawValue),
@@ -128,8 +127,7 @@ func routes(_ app: Application) throws {
             plan: WirePlan(plan),
             colors: colors,
             report: WireReport(report),
-            stats: WireStats(stitchCount: plan.stitchCount, colorChangeCount: plan.colorChangeCount, trimCount: plan.trimCount,
-                             maxStitchLengthMM: plan.maxStitchLength(), totalThreadMM: plan.totalStitchLength, bounds: plan.boundingBox),
+            stats: WireStats(plan),
             elapsedMS: Int(Date().timeIntervalSince(started) * 1000)
         )
     }

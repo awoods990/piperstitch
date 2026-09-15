@@ -1223,6 +1223,36 @@ final class AppState: ObservableObject {
         physicalWidthMM = preset.widthMM
         physicalHeightMM = preset.heightMM
         applyPhysicalSizeChange()
+        // Cap frames register on the centre mark, so a cap design starts
+        // and ends there (`StitchDocument.startAndEndAtCenter`, C4).
+        let isCap = preset.name.localizedCaseInsensitiveContains("cap") || preset.name.localizedCaseInsensitiveContains("hat")
+        if isCap, document?.startAndEndAtCenter == false { startAndEndAtCenter = true }
+    }
+
+    /// `StitchDocument.startAndEndAtCenter` as a binding for the Hoop
+    /// section: the file begins with the needle at the design centre and
+    /// returns there at the end.
+    var startAndEndAtCenter: Bool {
+        get { document?.startAndEndAtCenter ?? false }
+        set {
+            guard var current = document, current.startAndEndAtCenter != newValue else { return }
+            commitImmediateUndoSnapshot()
+            current.startAndEndAtCenter = newValue
+            document = current
+            scheduleLiveRegenerate()
+        }
+    }
+
+    /// Scales every satin density and fill row spacing so the design
+    /// lands near `target` stitches (`StitchBudget`, C5).
+    func applyTargetStitchCount(_ target: Int) {
+        guard var current = document, let plan = stitchPlan, target > 0 else { return }
+        let scale = StitchBudget.spacingScale(currentStitchCount: plan.stitchCount, targetStitchCount: target)
+        guard scale != 1 else { return }
+        commitImmediateUndoSnapshot()
+        StitchBudget.apply(scale: scale, to: &current)
+        document = current
+        scheduleLiveRegenerate()
     }
 
     // MARK: - Project-wide density

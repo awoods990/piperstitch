@@ -54,6 +54,7 @@ public enum QualityAnalyzer {
         checkFabricSuitability(document, into: &issues)
         checkFragmentation(document, into: &issues)
         checkSameColorStitchTypeConsistency(document, into: &issues)
+        addStabilizerAdvice(document, into: &issues)
 
         let score = max(0, min(100, 100 - issues.reduce(0) { $0 + $1.scorePenalty }))
         return EmbroideryReadinessReport(score: score, issues: issues)
@@ -219,6 +220,19 @@ public enum QualityAnalyzer {
             // server build (see server/) can't rely on.
             message: "Fine detail (as narrow as \(String(format: "%.1f", narrowest.widthMM))mm) on \(narrowest.fabric.shortName) fabric often doesn't sew cleanly -- the pile or stretch can swallow or distort thin satin/fill in a way this preview can't show. Consider a bolder design, a larger size, or a stabilizer topping.",
             scorePenalty: 8
+        ))
+    }
+
+    /// Not a defect -- a reminder, carried on the report because the
+    /// stabiliser is the one production choice this file can't make for
+    /// the customer and the one most often got wrong (docs/
+    /// WILCOM_MANUAL_REVIEW.md C6). Costs no points.
+    private static func addStabilizerAdvice(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
+        guard let document, let fabric = document.objects.first?.parameters.fabricType else { return }
+        issues.append(QualityIssue(
+            severity: .info,
+            message: "Stabilizer for \(fabric.shortName.lowercased()): \(fabric.stabilizerAdvice)",
+            scorePenalty: 0
         ))
     }
 

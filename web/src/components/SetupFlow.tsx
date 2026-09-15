@@ -229,6 +229,9 @@ export default function SetupFlow(props: Props) {
                   </div>
                 </div>
               ))}
+              {(() => { const f = catalog.fabrics.find((x) => x.id === a.fabric); return f ? (
+                <p className="setup-note"><b>Stabilizer for {f.shortName.toLowerCase()}:</b> {f.stabilizer}</p>
+              ) : null; })()}
             </div>
           )}
 

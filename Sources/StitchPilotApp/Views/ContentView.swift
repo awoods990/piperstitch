@@ -669,6 +669,9 @@ private struct InspectorView: View {
                     Text("Applies to every satin or fill object in the project at once. Select an individual object above to fine-tune just that one.")
                         .font(.caption)
                         .foregroundStyle(PSColor.muted)
+                    if let plan = app.stitchPlan {
+                        TargetStitchCountRow(current: plan.stitchCount) { app.applyTargetStitchCount($0) }
+                    }
                 }
 
                 PSSection("Hoop") {
@@ -678,6 +681,9 @@ private struct InspectorView: View {
                             Text("\(hoop.name) (\(cmString(hoop.widthMM))×\(cmString(hoop.heightMM))cm)").tag(HoopProfile?.some(hoop))
                         }
                     }
+                    Toggle("Start and end at hoop centre", isOn: Binding(get: { app.startAndEndAtCenter }, set: { app.startAndEndAtCenter = $0 }))
+                        .help("The file begins with the needle at the centre of the design and returns there at the end, so you can line up on the hoop's centre mark before pressing start. Cap frames register on the centre, so it's on for caps.")
+                        .disabled(app.document == nil)
                 }
 
                 PSSection("Color Reduction") {
@@ -714,6 +720,8 @@ private struct InspectorView: View {
                             PSRow("Color changes", "\(plan.colorChangeCount)")
                             PSRow("Trims", "\(plan.trimCount)")
                             PSRow("Max stitch", String(format: "%.3f cm", plan.maxStitchLength() / 10))
+                            PSRow("Est. run time", RunTimeEstimator.estimate(plan).formatted)
+                                .help("Sewing at 800 stitches per minute, plus about 3 s per trim and 20 s per automatic colour change. A single-needle machine re-threaded by hand takes longer.")
                         }
                     }
                 }
@@ -1650,5 +1658,37 @@ private struct GlossarySheet: View {
             .padding()
         }
         .frame(minWidth: 480, idealWidth: 560, maxWidth: 720, minHeight: 480, idealHeight: 640, maxHeight: 800)
+    }
+}
+
+/// Wilcom's "Process Stitches" idea (C5): name the stitch count you can
+/// afford and every satin density and fill row spacing is scaled to land
+/// near it.
+private struct TargetStitchCountRow: View {
+    let current: Int
+    let apply: (Int) -> Void
+    @State private var text = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Target stitch count").foregroundStyle(PSColor.ink2)
+            Spacer()
+            TextField("\(current)", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 84)
+                .multilineTextAlignment(.trailing)
+                .onSubmit(submit)
+            Button("Apply", action: submit)
+                .disabled(Int(text).map { $0 <= 0 || $0 == current } ?? true)
+        }
+        .font(.system(size: 12))
+        .help("Scales every satin density and fill row spacing (between 0.2 and 1.0 mm) so the design lands near this many stitches. Useful when a job is quoted by stitch count.")
+        .onChange(of: current) { _ in text = "" }
+    }
+
+    private func submit() {
+        guard let target = Int(text), target > 0, target != current else { return }
+        apply(target)
+        text = ""
     }
 }

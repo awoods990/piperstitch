@@ -117,6 +117,35 @@ public enum FabricType: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// What to hoop it with -- docs/WILCOM_MANUAL_REVIEW.md C6 (Wilcom's
+    /// fabric presets carry a stabiliser recommendation and show it when
+    /// the fabric is picked). Plain industry practice, phrased for someone
+    /// who may be new to it: the stabiliser matters as much as any
+    /// digitizing setting, and a knit sewn on tear-away puckers no matter
+    /// how good the file is.
+    public var stabilizerAdvice: String {
+        switch self {
+        case .standard:
+            return "One layer of medium tear-away backing. If the fabric stretches at all, use cut-away instead."
+        case .stableWoven:
+            return "One layer of medium tear-away backing; for heavy fills, two layers or a medium cut-away."
+        case .knit:
+            return "Medium cut-away backing (never tear-away on a knit -- it lets the fabric stretch and pucker). A light spray adhesive helps keep it from shifting."
+        case .stretchKnit:
+            return "Medium or heavy cut-away backing, plus a water-soluble topping on the surface so stitches don't sink into the stretch. Hoop the backing, float the garment, and don't stretch it in the hoop."
+        case .terry:
+            return "Medium cut-away backing underneath and a water-soluble topping on top -- the topping keeps the loops of the pile from poking through between stitches. Tear the topping away after sewing."
+        case .leatherOrVinyl:
+            return "Medium tear-away or a cut-away backing. Don't hoop the material itself (the hoop marks it): hoop the backing, then stick or float the piece on top with a light adhesive."
+        case .structuredCap:
+            return "One layer of cap backing (a firm tear-away made for cap frames). The buckram front does most of the stabilising; keep the frame's clamp tight so the panel can't shift."
+        case .unstructuredCap:
+            return "A firm tear-away cap backing, and a soft cut-away if the panel is thin or stretchy. Take the crease out before framing so the front lies flat."
+        case .beanie:
+            return "Medium cut-away backing and a water-soluble topping. Hoop the backing, float the beanie on it with a light adhesive, and don't stretch the knit -- the design sews at the size it's hooped."
+        }
+    }
+
     /// Multiplies `PullCompensationCalculator`'s base pull/push estimate.
     /// Scaled so a mid-width satin column on each fabric lands on the
     /// published industry guideline (Wilcom reference manual, "Pull
@@ -455,14 +484,43 @@ public struct StitchDocument: Codable, Sendable {
     public var physicalHeightMM: Double
     /// Sewing order == array order.
     public var objects: [EmbroideryObject]
+    /// Begin and end the stitch file at the centre of the design (the
+    /// hoop centre when the design is hooped centred) with a jump to
+    /// the first stitch and back from the last -- docs/
+    /// WILCOM_MANUAL_REVIEW.md C4. The operator can then line the needle
+    /// up on the hoop's centre mark before pressing start, and the
+    /// machine returns there when it finishes. Off by default; the setup
+    /// flow turns it on for caps, whose frames register on the centre.
+    /// Machines that auto-centre simply ignore it.
+    public var startAndEndAtCenter: Bool
 
-    public init(name: String, physicalWidthMM: Double, physicalHeightMM: Double, objects: [EmbroideryObject] = []) {
+    public init(name: String, physicalWidthMM: Double, physicalHeightMM: Double, objects: [EmbroideryObject] = [], startAndEndAtCenter: Bool = false) {
         self.schemaVersion = Self.currentSchemaVersion
         self.name = name
         self.physicalWidthMM = physicalWidthMM
         self.physicalHeightMM = physicalHeightMM
         self.objects = objects
+        self.startAndEndAtCenter = startAndEndAtCenter
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, name, physicalWidthMM, physicalHeightMM, objects, startAndEndAtCenter
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        name = try c.decode(String.self, forKey: .name)
+        physicalWidthMM = try c.decode(Double.self, forKey: .physicalWidthMM)
+        physicalHeightMM = try c.decode(Double.self, forKey: .physicalHeightMM)
+        objects = try c.decode([EmbroideryObject].self, forKey: .objects)
+        // Files saved before the flag existed decode as "off".
+        startAndEndAtCenter = try c.decodeIfPresent(Bool.self, forKey: .startAndEndAtCenter) ?? false
+    }
+
+    /// The point the machine starts from and returns to when
+    /// `startAndEndAtCenter` is on: the design's physical centre.
+    public var centerPoint: Point2D { Point2D(physicalWidthMM / 2, physicalHeightMM / 2) }
 
     public var boundingBox: BoundingBox {
         var box = BoundingBox.empty

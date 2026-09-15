@@ -64,6 +64,8 @@ export interface StitchDocument {
   physicalWidthMM: number;
   physicalHeightMM: number;
   objects: EmbroideryObject[];
+  /** Begin and end the file at the design centre (hoop centre) -- on for caps. */
+  startAndEndAtCenter?: boolean;
 }
 
 export interface ImportedSource {
@@ -91,12 +93,13 @@ export interface DigitizeResponse {
   stats: {
     stitchCount: number; colorChangeCount: number; trimCount: number;
     maxStitchLengthMM: number; totalThreadMM: number; bounds: BoundingBox;
+    estimatedRunSeconds: number;
   };
   elapsedMS: number;
 }
 
 export interface CatalogSize { name: string; widthMM: number; heightMM: number }
-export interface CatalogFabric { id: FabricType; displayName: string; shortName: string; isHeadwear: boolean }
+export interface CatalogFabric { id: FabricType; displayName: string; shortName: string; isHeadwear: boolean; stabilizer: string }
 
 export interface Catalog {
   hoops: CatalogSize[];

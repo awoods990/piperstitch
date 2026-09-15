@@ -200,7 +200,7 @@ do {
 
     print("=== \(inputURL.lastPathComponent) ===")
     print("Objects: \(objects.count)  Stitches: \(plan.stitchCount)  Colors: \(colors.count)  Color changes: \(plan.colorChangeCount)  Trims: \(plan.trimCount)")
-    print("Max stitch length: \(String(format: "%.2f", plan.maxStitchLength()))mm  Total thread: \(String(format: "%.0f", plan.totalStitchLength))mm")
+    print("Max stitch length: \(String(format: "%.2f", plan.maxStitchLength()))mm  Total thread: \(String(format: "%.0f", plan.totalStitchLength))mm  Est. run time: \(RunTimeEstimator.estimate(plan).formatted) at \(Int(RunTimeEstimator.defaultStitchesPerMinute)) spm")
     print("Readiness: \(report.score)/100 (\(report.isReadyToSew ? "Ready to Sew" : "Review Recommended"))")
     for issue in report.issues {
         print("  [\(issue.severity.rawValue)] \(issue.message)")
