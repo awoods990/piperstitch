@@ -171,7 +171,13 @@ do {
         let fitted = shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: combined)
         let detectedRGB = (i < fillColors.count ? fillColors[i] : nil) ?? RGBColor(hex: 0x000000)
         let threadColor = ThreadLibrary.nearestMatch(to: detectedRGB) ?? .generic(detectedRGB)
-        let parameters = StitchGenerationParameters()
+        var parameters = StitchGenerationParameters()
+        // Diagnostic toggle, like ONLY_OBJECT/DEBUG_SATIN below: exercise the
+        // branching-satin path (see DIGITIZING_ENGINE.md) against a real file
+        // without changing the engine's own default.
+        if ProcessInfo.processInfo.environment["ALLOW_BRANCHING_SATIN"] != nil {
+            parameters.allowBranchingSatin = true
+        }
         let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
         objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))

@@ -187,23 +187,30 @@ struct BranchingSatinGeneratorTests {
         }
     }
 
-    /// `computeSegmentCrossings` has no equivalent of `generatePartial`'s
-    /// per-crossing width splitting (converting only the too-wide
-    /// sections of a column to a local fill sub-region) -- a segment
-    /// that's too wide anywhere must reject cleanly (the same strict,
-    /// all-or-nothing check `generate` itself uses), not silently emit
-    /// impractically wide "satin" zigzag stitches. Found directly
-    /// against a real large logo shape (a bold "A," genuinely a wide
-    /// tapering blob rather than a letter stroke) whose segment reached
-    /// 20mm+ wide in places.
-    @Test func branchingDeclinesASegmentWiderThanMaxSatinWidth() {
+    /// Width is not a rejection reason for a branch segment, exactly as
+    /// it isn't for a single column: the too-wide stretch sews as a local
+    /// fill sub-region (`generatePartial`'s own per-crossing split, shared
+    /// via `stitchesSplittingByWidth`) and the rest stays satin. This used
+    /// to be a strict all-or-nothing rejection -- found directly against
+    /// a real cap-logo "B" at 100mm whose bowls reached ~16mm against the
+    /// 12mm cap, which sent the ENTIRE letter to tatami rather than just
+    /// its two widest stretches. Every stitch must still land inside the
+    /// shape either way: the fill sub-region is built from the very same
+    /// rail points the satin would have used.
+    @Test func branchingSewsAnOverWideStretchAsLocalFillRatherThanRejecting() throws {
         var narrow = params()
         narrow.maxSatinWidthMM = 1.0
-        #expect(!SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: hShape(), parameters: narrow))
+        #expect(SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: hShape(), parameters: narrow))
 
-        var normal = params()
-        normal.maxSatinWidthMM = 12.0
-        #expect(SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: hShape(), parameters: normal))
+        let h = hShape()
+        let stitches = try SatinColumnGenerator.generateBranching(for: h, parameters: narrow)
+        #expect(stitches.count > 100, "expected real coverage across all three strokes, got \(stitches.count) points")
+        let box = h.boundingBox
+        let margin = 1.5
+        for point in stitches {
+            #expect(point.x >= box.minX - margin && point.x <= box.maxX + margin, "x=\(point.x) escaped the H's own bounding box")
+            #expect(point.y >= box.minY - margin && point.y <= box.maxY + margin, "y=\(point.y) escaped the H's own bounding box")
+        }
     }
 
     @Test func generateBranchingThrowsRatherThanCrashingOnAnUnsuitableShape() {
@@ -394,5 +401,48 @@ struct BranchingSatinGeneratorTests {
 
         let stitches = try SatinColumnGenerator.generateBranching(for: fitted, parameters: p)
         #expect(stitches.count > 200, "expected dense real coverage across the B's stem and both bowls, got \(stitches.count) points")
+    }
+
+    /// A second real Red Sox "B" -- the cap logo, a chunkier cut of the
+    /// same letterform on a solid navy ground -- at a realistic cap size,
+    /// which exposed three separate gaps at once (see DIGITIZING_ENGINE.md):
+    /// a 3.1mm thinning-residue loop just over the old 3.0mm residue
+    /// threshold that rejected the whole letter at 70mm specifically; the
+    /// old strict width cap rejecting it at 100mm; and, once it branched,
+    /// hops between pieces sewn straight across its counters as visible
+    /// lines. The last is the one only `generateBranchingRuns` can show:
+    /// every hop between consecutive points of a run must stay on the
+    /// shape's own material -- a hop that would leave it (across a
+    /// counter) has to be a run break instead.
+    @Test func realCapLogoBBranchesAtCapSizeWithNoRunSewnAcrossItsCounters() throws {
+        let data = try Data(contentsOf: testArtworkURL("Boston Red Sox Cap.png"))
+        let imported = try ImageImporter.importShapes(from: data, maxColors: 8)
+        var combined = BoundingBox.empty
+        for shape in imported.shapes { combined = combined.union(shape.boundingBox) }
+        let bIndex = imported.shapes.firstIndex { $0.subPaths.count == 3 }
+        let index = try #require(bIndex, "expected to find the B's own shape (outer + two counters) among the imported shapes")
+        let fitted = imported.shapes[index].fitToPhysicalSize(widthMM: 70, heightMM: 70, within: combined)
+
+        var p = params()
+        p.allowBranchingSatin = true
+        #expect(StitchTypeClassifier.classify(shape: fitted, parameters: p) == .satin)
+
+        let runs = try SatinColumnGenerator.generateBranchingRuns(for: fitted, parameters: p)
+        let polygons = fitted.subPaths.map { $0.points }
+        var total = 0
+        for run in runs {
+            total += run.count
+            for i in 1..<run.count {
+                let a = run[i - 1], b = run[i]
+                // A satin crossing's midpoint is on the stroke's own
+                // centerline; a fan spoke's is halfway to the junction
+                // center; only a hop sewn straight across a counter has
+                // its midpoint on open fabric.
+                let mid = Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
+                #expect(PolygonGeometry.pointInPolygons(mid, polygons: polygons),
+                        "a \(String(format: "%.1f", a.distance(to: b)))mm stitch is sewn across open fabric, midpoint (\(mid.x), \(mid.y))")
+            }
+        }
+        #expect(total > 1000, "expected dense real coverage across the whole letter, got \(total) points in \(runs.count) runs")
     }
 }

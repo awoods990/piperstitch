@@ -851,6 +851,94 @@ remains default `false` (this fix hasn't yet been through the same
 a second, deliberate default flip is a separate future decision, not
 automatic just because this specific defect is fixed).
 
+## Phase 2 (continued) — a second real "B" (the cap logo): seven fixes from one file
+
+Two new Red Sox test files (`TestArtwork/Boston Red Sox Cap.png`, a
+960px cut on a solid navy ground, and the 4096px `boston-red-sox-logo.png`)
+were reported as "left off the background, added colored lines, and
+digitized in fill instead of satin." Every one of those symptoms traced
+to a real, separate defect — most of them in code the earlier 96px "B"
+had never exercised. In the order they were found:
+
+1. **Stray "colored lines" were 1px anti-aliasing columns traced as
+   their own objects.** `smoothAmbiguousBoundaryLabels` resolves a ramp
+   pixel only when one confident side has a strict plurality of its
+   neighbors; along a perfectly straight vertical or horizontal edge a 1px
+   ramp column has exactly 3 confident neighbors per side and a dead 3-3
+   tie at every pixel, so the whole column survived as a zero-width
+   running-stitch object. Now a two-way tie is broken toward whichever
+   side's color the pixel is actually nearer (`tieBreak`). The same 96px
+   file had shown identical lines all along, mistaken for baseball-seam
+   detail. Separately, `backgroundRampClusterIndices` now also flags a
+   cluster lying between two larger *foreground* clusters (not just
+   foreground/background) — `mergeAntiAliasingClusters` only folds a
+   blend when both endpoints are ≥8% of pixels, so the navy/white blend
+   column at each counter edge of the 96px file (white under 8%) had
+   survived as its own tight, "confident" cluster. Both files now import
+   as exactly their real objects (2 and 3), no slivers.
+2. **"Background left off" is correct behavior, not a bug** — the cap
+   file's navy fills the entire canvas, so it IS the page background by
+   this importer's own corner-sampling rule, exactly as a white page
+   would be. Documented here so it isn't re-investigated.
+3. **A 3.1mm thinning-residue loop rejected the whole letter at 70mm.**
+   `minimumClosedLoopLengthMM` raised 3.0 → 6.0; a real hole's skeleton
+   loop is π × (hole + stroke) around, so nothing embroiderable falls
+   under 6mm.
+4. **The strict `maxSatinWidthMM` cap in `computeSegmentCrossings`
+   rejected the letter at 100mm** (its bowls reach ~16mm). Removed;
+   branch segments now go through the same per-crossing width split as
+   a single column (`stitchesSplittingByWidth`, factored out of
+   `generatePartial`). An over-wide stretch in a branch segment is sewn
+   as **split satin** — the fewest parallel columns that each fit under
+   the cap, alternating direction so the stretch stays one continuous
+   pass — not a local tatami sub-region: a fill's rows run at their own
+   angle and read as a jarring block of foreign texture dropped into
+   the middle of a smooth satin arm (confirmed by rendering it).
+5. **Hops between pieces were sewn straight across the counters.**
+   `orderedEdges`' fallback (when nothing left touches the current node)
+   took an arbitrary next edge as-is; it now starts the next leg from the
+   nearest remaining edge end. And `generateBranchingRuns` (new; what
+   `DigitizePipeline` now calls) breaks the output into separate runs
+   wherever a hop's straight line would leave the shape, which
+   `flattenWithColors` turns into a real trim+jump — same contract as
+   `TatamiFillGenerator.generateRuns`. A hop that stays on the material
+   is sewn and covered by what follows.
+6. **The twist check ran on crossings the junction patch replaces.**
+   `isTwisted` now runs inside `branchingPlan` on each segment's *kept*
+   crossings only (using the full segment's own interior margin
+   intersected with the kept range, so a trimmed segment is never
+   checked more strictly than an untrimmed one). It also now treats two
+   adjacent crossings that intersect within `fanPivotToleranceMM` of one
+   of their own endpoints as a fan about a stalled inner rail (an inside
+   corner doing what satin should) rather than a twist. And ring exemption
+   is keyed off the edge being a self-loop, not `first == last` on the
+   resampled rail (which differs in the last floating-point digit and had
+   silently stopped exempting every ring — caught by the synthetic "P").
+   `canRepresentAsBranchingSatinColumn` is now literally "does
+   `branchingPlan` succeed," so it can never disagree with generation.
+7. **Junction trim radius** is now half the node's own width (the
+   inscribed-circle radius at the merge point), uncapped —
+   `0.4x`/3mm-cap failed to reach the fan at all on the cap logo's 17mm
+   waist. And **`pruneBranchLengthFactor` 1.5 → 1.0**: the 96px "B"'s
+   own hook (9.5mm against a 7.1mm junction) was being pruned as a spur.
+8. **`computeRails` now throws for more than one hole** instead of
+   silently walking the outer boundary alone — after the sliver cleanup
+   nudged the 96px outline by a pixel, that walk passed the twist check
+   and sewed a solid red slab over both counters, pre-empting the
+   branching path (`DigitizePipeline` only falls through to it once the
+   single-column path throws).
+
+Result, with the flag on: the 96px "B" at 100mm and the cap "B" at both
+70mm and 100mm all sew as branching satin with rosettes at every
+junction and nothing across a counter (rendered and inspected at
+40px/mm). Flag-off output is byte-identical on the 96px "B" and LIBBi,
+and identical in object count/classification on the Amerus mark. Two
+new real-file tests lock this in (`realCapLogoBBranchesAtCapSizeWithNo
+RunSewnAcrossItsCounters` checks every stitch's midpoint stays on the
+shape). 347 tests pass. `allowBranchingSatin` remains default `false`;
+`DigitizeCLI` gained an `ALLOW_BRANCHING_SATIN=1` diagnostic toggle
+alongside its existing `ONLY_OBJECT`/`DEBUG_SATIN` ones.
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster

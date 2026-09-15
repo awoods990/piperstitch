@@ -327,8 +327,16 @@ public enum DigitizePipeline {
                 // falling through to the existing tatami fallback below
                 // rather than aborting the whole digitize either way.
                 if object.parameters.allowBranchingSatin,
-                   let branchingStitches = try? SatinColumnGenerator.generateBranching(for: object.shape, parameters: object.parameters) {
-                    return [Array(underlay.reversed()) + branchingStitches]
+                   let branchingRuns = try? SatinColumnGenerator.generateBranchingRuns(for: object.shape, parameters: object.parameters),
+                   let firstRun = branchingRuns.first {
+                    // Same underlay-first seam handling as the plain column
+                    // above; any further runs are the branching generator's
+                    // own deliberate breaks (a hop that would otherwise be
+                    // sewn straight across a counter) and become real
+                    // trim+jumps in `flattenWithColors`, like a fill's.
+                    var runs: [[Point2D]] = [Array(underlay.reversed()) + firstRun]
+                    runs.append(contentsOf: branchingRuns.dropFirst())
+                    return runs
                 }
                 // `StitchTypeClassifier` picks satin from a shape's average
                 // width alone, which is a real width measurement but no

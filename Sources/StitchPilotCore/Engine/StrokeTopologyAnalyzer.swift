@@ -78,13 +78,18 @@ public enum StrokeTopologyAnalyzer {
         /// A spurious branch shorter than this multiple of the local
         /// stroke width at its junction end is pruned — thinning
         /// algorithms reliably throw off short fake branches at every
-        /// real junction and at every bit of boundary noise; a real
-        /// letterform branch (a serif, a stem) is always several stroke-
-        /// widths long, so this threshold separates the two without
-        /// needing per-letter tuning. Treated as an initial value, like
-        /// every other engine threshold in this file, to be refined
-        /// against real fonts once this is wired into generation.
-        public var pruneBranchLengthFactor: Double = 1.5
+        /// real junction and at every bit of boundary noise. Such a spur
+        /// reaches from the skeleton's junction point into one corner of
+        /// the stroke, so it's well under one stroke width long; a real
+        /// letterform branch is longer. Lowered from 1.5: a real Red Sox
+        /// "B"'s own hook measured 9.5mm against a 7.1mm-wide junction
+        /// (1.33x) and was being pruned as a spur, collapsing the top
+        /// junction into one 68mm stem-over-the-top edge whose rails
+        /// then had to negotiate hook material the topology no longer
+        /// knew about. A hook or serif between 1x and 1.5x its junction's
+        /// width is an ordinary real feature; nothing thinning produces
+        /// reaches 1x.
+        public var pruneBranchLengthFactor: Double = 1.0
         /// A floor under the factor above so a very thin stroke's own
         /// tiny width doesn't let a genuinely-too-short spurious branch
         /// survive.
@@ -102,7 +107,19 @@ public enum StrokeTopologyAnalyzer {
     /// The shortest circumference a closed-loop edge (see
     /// `walkClosedLoops`) is trusted as a real feature rather than
     /// dropped as thinning residue — see that guard's own comment.
-    private static let minimumClosedLoopLengthMM = 3.0
+    ///
+    /// A real hole's skeleton loop runs through the MIDDLE of the ring
+    /// of material around it, so its circumference is roughly
+    /// π × (hole diameter + stroke width): for this to fall under 6mm the
+    /// hole plus its own stroke would have to be under ~2mm across, well
+    /// below anything a satin ring could sew (`minSatinWidthMM` alone is
+    /// 1.5mm). Raised from 3.0: a real cap-logo "B" produced a 13-pixel
+    /// isolated ring of 3.1mm — a pinhole in the rasterized mask where
+    /// its own waist boundaries nearly touch, thinned into a tiny loop —
+    /// which slipped past the old threshold, reached `SatinColumnGenerator`
+    /// as a ring segment whose centroid sat in solid material, and so
+    /// rejected the entire otherwise-sound letter from the branching path.
+    private static let minimumClosedLoopLengthMM = 6.0
 
     // MARK: - Entry point
 

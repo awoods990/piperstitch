@@ -54,6 +54,21 @@ public enum SatinColumnGenerator {
         guard let sub = shape.subPaths.first else {
             throw SatinGenerationError.shapeNotSuitable("no outline was provided")
         }
+        // Neither rail technique below can represent more than one hole:
+        // the ring path takes exactly one, and the open-column path only
+        // ever looks at the outer boundary. Silently walking that outer
+        // boundary alone used to "succeed" here for a two-counter "B" --
+        // one column swept straight across both counters as if they
+        // weren't there. That output was normally masked because the
+        // walk also twisted and was rejected downstream, but on the real
+        // Red Sox "B" a one-pixel change to the outline was enough for it
+        // to pass the twist check and sew a solid red slab over the
+        // counters, pre-empting the branching path that actually handles
+        // multi-hole shapes (`DigitizePipeline` only falls through to
+        // `generateBranchingRuns` once this path throws).
+        guard shape.subPaths.count <= 2 else {
+            throw SatinGenerationError.shapeNotSuitable("a single satin column can't represent more than one hole")
+        }
 
         // A shape with exactly one hole (a letterform counter -- O, P, R,
         // A, D, Q...) is a genuine ring, not a "sausage" with two ends --
@@ -416,15 +431,61 @@ public enum SatinColumnGenerator {
     private static func isTwisted(_ resampledA: [Point2D], _ resampledB: [Point2D]) -> Bool {
         let count = resampledA.count
         guard count > 2 else { return false }
-        let interior = interiorRange(count: count)
-        guard interior.count > 1 else { return false }
+        return isTwisted(resampledA, resampledB, within: interiorRange(count: count))
+    }
 
-        for i in interior where i + 1 < count {
-            if segmentsIntersect(resampledA[i], resampledB[i], resampledA[i + 1], resampledB[i + 1]) {
-                return true
-            }
+    /// The same adjacent-crossing intersection test restricted to `range`
+    /// -- `branchingPlan` passes the whole segment's own `interiorRange`
+    /// intersected with the crossings it will actually sew, so a segment
+    /// trimmed at a junction end is never checked MORE strictly than the
+    /// untrimmed segment would have been (a margin recomputed from the
+    /// shorter kept range shrinks at the far, untrimmed end too, exposing
+    /// a tapering tip's own natural end twist that the full-length margin
+    /// correctly ignores -- found directly against a real cap-logo "B" at
+    /// 100mm, whose hook tip started failing the moment its junction end
+    /// was trimmed).
+    private static func isTwisted(_ resampledA: [Point2D], _ resampledB: [Point2D], within range: Range<Int>) -> Bool {
+        let count = resampledA.count
+        guard range.count > 1 else { return false }
+        for i in range where i + 1 < count {
+            let a0 = resampledA[i], b0 = resampledB[i], a1 = resampledA[i + 1], b1 = resampledB[i + 1]
+            guard segmentsIntersect(a0, b0, a1, b1), let p = intersectionPoint(a0, b0, a1, b1) else { continue }
+            // Two adjacent crossings that meet right at one of their own
+            // endpoints are FANNING, not twisted: at a tight inside bend
+            // the inner rail stalls (several consecutive crossings share
+            // nearly the same inner point) while the outer rail sweeps
+            // on, so consecutive crossings pivot about that inner point
+            // and, with a hair of backward drift in it, technically cross
+            // there. That's what satin is supposed to do at an inside
+            // corner. A genuine twist -- the two rails having swapped
+            // sides, or scissoring in opposite directions past each
+            // other -- crosses well inside both crossings, away from any
+            // endpoint. Found directly against the 96px Red Sox "B" at
+            // 100mm, where each source pixel is ~1mm and the bottom
+            // bowl's inside corner is a literal sharp vertex.
+            let nearEndpoint = [a0, b0, a1, b1].contains { $0.distance(to: p) <= fanPivotToleranceMM }
+            if !nearEndpoint { return true }
         }
         return false
+    }
+
+    /// How close to one of its own endpoints two adjacent crossings may
+    /// intersect and still count as a fan about that endpoint rather than
+    /// a twist -- see `isTwisted(_:_:within:)`. A stalled inner rail
+    /// drifts by a few hundredths of a mm per crossing; a real twist's
+    /// intersection sits millimeters from every endpoint.
+    private static let fanPivotToleranceMM = 0.5
+
+    /// Where segments `p1`-`p2` and `p3`-`p4` cross, given that
+    /// `segmentsIntersect` already said they do (nil only if the two are
+    /// parallel, which that test excludes).
+    private static func intersectionPoint(_ p1: Point2D, _ p2: Point2D, _ p3: Point2D, _ p4: Point2D) -> Point2D? {
+        let r = p2 - p1, s = p4 - p3
+        let denominator = r.x * s.y - r.y * s.x
+        guard abs(denominator) > 1e-12 else { return nil }
+        let qp = p3 - p1
+        let t = (qp.x * s.y - qp.y * s.x) / denominator
+        return p1 + r * t
     }
 
     /// True when any interior crossing OR zigzag connector's own midpoint
@@ -633,10 +694,44 @@ public enum SatinColumnGenerator {
     /// from two or more consecutive out-of-range crossings.
     public static func generatePartial(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
         let crossings = try computeCrossings(for: shape, parameters: parameters)
-        let expandedA = crossings.expandedA, expandedB = crossings.expandedB
-        let interior = interiorRange(count: crossings.widths.count)
+        return stitchesSplittingByWidth(expandedA: crossings.expandedA, expandedB: crossings.expandedB, widths: crossings.widths,
+                                        overWide: .localFill, parameters: parameters)
+    }
 
-        var kind: [CrossingKind] = crossings.widths.enumerated().map { i, width in
+    /// What `stitchesSplittingByWidth` does with a run of crossings wider
+    /// than `maxSatinWidthMM`.
+    private enum OverWideStrategy {
+        /// The quad-strip those crossings span becomes a local tatami fill
+        /// sub-region (`fillSegment`) -- `generatePartial`'s long-standing
+        /// behavior for a single column.
+        case localFill
+        /// Those crossings are sewn as two or more parallel satin columns
+        /// side by side, each under the cap (`splitSatinSegment`) -- the
+        /// standard real-world technique for an over-wide satin stroke,
+        /// used for a branching shape's segments: a fill sub-region's rows
+        /// run at their own angle, unrelated to the satin direction on
+        /// either side of it, and on a real cap-logo "B" at 100mm that
+        /// read as jarring blocks of different texture dropped into the
+        /// middle of otherwise smooth satin arms (confirmed directly by
+        /// rendering it). Split satin keeps the same direction and sheen,
+        /// with only a seam down the middle of the stroke.
+        case splitSatin
+    }
+
+    /// The width-aware body of `generatePartial`, factored out so a
+    /// branching shape's individual segments (`generateBranching`) get the
+    /// same per-crossing satin/narrow-run split a single column does --
+    /// a branch segment whose bowl is genuinely too wide for satin in one
+    /// stretch (found directly against a real cap-logo "B" at 100mm, whose
+    /// bowls reached ~16mm against the 12mm cap) handles that stretch per
+    /// `overWide` and stays satin everywhere else, rather than the whole
+    /// letter being rejected from the branching path and falling back to
+    /// tatami fill outright.
+    private static func stitchesSplittingByWidth(expandedA: [Point2D], expandedB: [Point2D], widths: [Double],
+                                                 overWide: OverWideStrategy, parameters: StitchGenerationParameters) -> [Point2D] {
+        let interior = interiorRange(count: widths.count)
+
+        var kind: [CrossingKind] = widths.enumerated().map { i, width in
             if width > parameters.maxSatinWidthMM { return .fill }
             if interior.contains(i), width < parameters.minSatinWidthMM { return .narrowRun }
             return .satin
@@ -654,7 +749,12 @@ public enum SatinColumnGenerator {
             while j < kind.count, kind[j] == kind[i] { j += 1 }
             switch kind[i] {
             case .fill:
-                stitches.append(contentsOf: fillSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
+                switch overWide {
+                case .localFill:
+                    stitches.append(contentsOf: fillSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
+                case .splitSatin:
+                    stitches.append(contentsOf: splitSatinSegment(expandedA: expandedA, expandedB: expandedB, widths: widths, range: i...(j - 1), parameters: parameters))
+                }
             case .narrowRun:
                 stitches.append(contentsOf: narrowRunSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
             case .satin:
@@ -690,6 +790,37 @@ public enum SatinColumnGenerator {
         subParameters.pullCompensationMM = 0
         subParameters.pushCompensationMM = 0
         return TatamiFillGenerator.generate(for: polygon, parameters: subParameters)
+    }
+
+    /// Sews rail crossings `range` -- all wider than `maxSatinWidthMM` --
+    /// as the fewest parallel satin columns that each fit under it, laid
+    /// side by side between the same two rails: for `n` columns, the
+    /// intermediate rails are the points `k/n` of the way across each
+    /// crossing. Columns alternate direction (the first walks the range
+    /// forward, the next walks it back, ...) so each one ends exactly
+    /// where the next begins and the whole stretch sews as one continuous
+    /// pass with no hop at all. See `OverWideStrategy.splitSatin` for why
+    /// this exists alongside `fillSegment`.
+    private static func splitSatinSegment(expandedA: [Point2D], expandedB: [Point2D], widths: [Double], range: ClosedRange<Int>, parameters: StitchGenerationParameters) -> [Point2D] {
+        let cap = max(parameters.maxSatinWidthMM, 0.1)
+        let widest = range.map { widths[$0] }.max() ?? 0
+        let columns = max(2, Int((widest / cap).rounded(.up)))
+
+        func rail(_ k: Int, _ i: Int) -> Point2D {
+            let t = Double(k) / Double(columns)
+            return expandedA[i] + (expandedB[i] - expandedA[i]) * t
+        }
+
+        var stitches: [Point2D] = []
+        for k in 0..<columns {
+            let forward = k % 2 == 0
+            let indices = forward ? Array(range) : Array(range.reversed())
+            for i in indices {
+                stitches.append(rail(k, i))
+                stitches.append(rail(k + 1, i))
+            }
+        }
+        return stitches
     }
 
     /// Sews rail crossings `range` as a triple-run (bean-stitch) line along
@@ -774,15 +905,7 @@ public enum SatinColumnGenerator {
     /// one hole) or isn't usable at all, and shouldn't route through this
     /// newer, less-proven decomposition when it doesn't need to.
     public static func canRepresentAsBranchingSatinColumn(shape: VectorShape, parameters: StitchGenerationParameters) -> Bool {
-        guard !shape.subPaths.isEmpty else { return false }
-        let polygons = shape.subPaths.map { $0.points }
-        guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty,
-              topology.nodes.contains(where: { $0.isJunction }) else { return false }
-        for edge in topology.edges {
-            guard let (railA, railB) = try? railsForEdge(edge, shapePolygons: polygons),
-                  computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters) != nil else { return false }
-        }
-        return true
+        (try? branchingPlan(for: shape, parameters: parameters)) != nil
     }
 
     /// Routes to `computeSegmentRingRails` for a self-loop edge (a
@@ -808,10 +931,10 @@ public enum SatinColumnGenerator {
     /// instead of one global end-cap-to-end-cap axis), then concatenating
     /// them in stroke-graph walk order (`orderedEdges`) into one flat
     /// stitch list — the same `[Point2D]` contract `generate`/
-    /// `generatePartial` already return, so nothing downstream of this
-    /// function (`DigitizePipeline`, sequencing, hidden-travel routing,
-    /// every export format) needs to know a shape's satin came from one
-    /// column or several stitched together.
+    /// `generatePartial` already return. `DigitizePipeline` uses
+    /// `generateBranchingRuns` instead, which keeps the same pieces split
+    /// into separately-sewn runs wherever a hop between them would
+    /// otherwise be sewn straight across open fabric.
     ///
     /// Every node where two or more segments meet gets a dedicated radial
     /// fan patch (`junctionPatchFill`) in place of each incident segment's
@@ -823,6 +946,97 @@ public enum SatinColumnGenerator {
     /// leave a real, visible crease at every junction once checked
     /// against a real letterform at high resolution.
     public static func generateBranching(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
+        try generateBranchingRuns(for: shape, parameters: parameters).flatMap { $0 }
+    }
+
+    /// `generateBranching`'s pieces as one or more disjoint runs, the
+    /// same contract `TatamiFillGenerator.generateRuns` uses: consecutive
+    /// pieces stay in one run when the hop between them can be sewn as an
+    /// ordinary connector, and start a new run (which `DigitizePipeline`
+    /// turns into a real trim+jump) when it can't. A hop can't be sewn
+    /// when its straight line leaves the shape -- across a letterform's
+    /// own counter, say -- whatever its length: a stitched connector there
+    /// lies on open fabric with nothing sewn over it later, a visible
+    /// stray line (found directly against a real cap-logo "B", whose
+    /// counters each showed one straight red line cut clean across them).
+    /// A hop that stays on the shape's own material is fine to sew: it
+    /// gets covered by whatever sews there next, exactly like the
+    /// underlay-to-crossings seam every plain satin column already has.
+    public static func generateBranchingRuns(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [[Point2D]] {
+        let plan = try branchingPlan(for: shape, parameters: parameters)
+
+        // Assemble the pieces in walk order: each edge's kept crossings,
+        // with its START node's patch just before them and its END node's
+        // patch just after (each patch once, at the first edge to reach
+        // it) -- so the sequence flows arm -> patch -> next arm with the
+        // needle already at the junction, rather than the patch landing
+        // far away after an arm that merely *began* there.
+        var pieces: [[Point2D]] = []
+        var emittedPatchNodes = Set<Int>()
+        func emitPatch(at nodeID: Int) {
+            guard !emittedPatchNodes.contains(nodeID), let patch = plan.patchByNode[nodeID] else { return }
+            pieces.append(patch)
+            emittedPatchNodes.insert(nodeID)
+        }
+        for segment in plan.segments {
+            emitPatch(at: segment.edge.startNodeID)
+            if !segment.kept.isEmpty {
+                pieces.append(stitchesSplittingByWidth(
+                    expandedA: Array(segment.expandedA[segment.kept]), expandedB: Array(segment.expandedB[segment.kept]),
+                    widths: Array(segment.widths[segment.kept]), overWide: .splitSatin, parameters: parameters))
+            }
+            emitPatch(at: segment.edge.endNodeID)
+        }
+        pieces.removeAll { $0.isEmpty }
+        guard !pieces.isEmpty else {
+            throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
+        }
+
+        var runs: [[Point2D]] = [pieces[0]]
+        for piece in pieces.dropFirst() {
+            if let last = runs[runs.count - 1].last, hopStaysOnShape(from: last, to: piece[0], polygons: plan.polygons) {
+                runs[runs.count - 1].append(contentsOf: piece)
+            } else {
+                runs.append(piece)
+            }
+        }
+        return runs
+    }
+
+    /// One branch segment, rail-fit and resampled, with the index range of
+    /// its crossings that will actually be sewn (the rest lies inside a
+    /// junction patch at one end or the other).
+    private struct BranchSegment {
+        var edge: StrokeTopologyAnalyzer.Edge
+        var expandedA: [Point2D]
+        var expandedB: [Point2D]
+        var widths: [Double]
+        var kept: Range<Int>
+    }
+
+    private struct BranchingPlan {
+        var polygons: [[Point2D]]
+        var segments: [BranchSegment]
+        var patchByNode: [Int: [Point2D]]
+    }
+
+    /// Everything `generateBranchingRuns` sews, decided in one place so
+    /// `canRepresentAsBranchingSatinColumn` answers "would this succeed?"
+    /// by literally trying it rather than by a separate approximation --
+    /// the two can never disagree about what counts as a usable segment.
+    ///
+    /// In particular, the twist check (`isTwisted`) runs on each segment's
+    /// KEPT crossings only, after junction trimming. It used to run on the
+    /// whole segment inside `computeSegmentCrossings`, which rejected a
+    /// segment for crossings that were never going to be sewn: right at a
+    /// junction the two rails routinely fan about a near-fixed midpoint
+    /// (each rail's nearest boundary there belongs partly to a different
+    /// arm), and that fan is exactly what the junction patch exists to
+    /// replace. Found directly against the 96px Red Sox "B" once its
+    /// anti-aliasing slivers were cleaned up: a 1px nudge to its hook put
+    /// a fan in the first ~3mm of its stem, and the whole letter fell back
+    /// to tatami over stitches the patch would have covered anyway.
+    private static func branchingPlan(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> BranchingPlan {
         guard !shape.subPaths.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("no outline was provided")
         }
@@ -830,76 +1044,107 @@ public enum SatinColumnGenerator {
         guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("couldn't derive a stroke topology for this shape")
         }
+        guard topology.nodes.contains(where: { $0.isJunction }) else {
+            throw SatinGenerationError.shapeNotSuitable("this shape has no junction to branch at")
+        }
 
-        var edgeCrossings: [(edge: StrokeTopologyAnalyzer.Edge, expandedA: [Point2D], expandedB: [Point2D])] = []
+        var segments: [BranchSegment] = []
         for edge in orderedEdges(topology) {
             let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons)
-            guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters) else {
+            guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters),
+                  !crossings.expandedA.isEmpty else {
                 throw SatinGenerationError.shapeNotSuitable("a branch segment couldn't be rail-fit as satin")
             }
-            guard !crossings.expandedA.isEmpty else { continue }
-            edgeCrossings.append((edge, crossings.expandedA, crossings.expandedB))
-        }
-        guard !edgeCrossings.isEmpty else {
-            throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
+            segments.append(BranchSegment(edge: edge, expandedA: crossings.expandedA, expandedB: crossings.expandedB,
+                                          widths: crossings.widths, kept: 0..<crossings.expandedA.count))
         }
 
         let nodesByID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
         var incidentEdgeCount: [Int: Int] = [:]
-        for entry in edgeCrossings where entry.edge.startNodeID != entry.edge.endNodeID {
-            incidentEdgeCount[entry.edge.startNodeID, default: 0] += 1
-            incidentEdgeCount[entry.edge.endNodeID, default: 0] += 1
+        for segment in segments where segment.edge.startNodeID != segment.edge.endNodeID {
+            incidentEdgeCount[segment.edge.startNodeID, default: 0] += 1
+            incidentEdgeCount[segment.edge.endNodeID, default: 0] += 1
         }
         let patchedNodeIDs = Set(incidentEdgeCount.filter { $0.value >= minimumJunctionEdgeCount }.map { $0.key })
+
+        // Trim off whichever of each incident edge's own crossings near a
+        // patched node fall within that node's trim radius -- those are
+        // exactly the crossings whose own direction never accounted for
+        // the OTHER edges meeting at the same point (the crease itself),
+        // to be covered by the patch instead. A crossing is trimmed by
+        // its MIDPOINT's distance, but its two rail ends sit half a stroke
+        // width to either side, farther out -- so each node's patch is
+        // sized to the farthest rail end of anything trimmed at it, not
+        // to the trim radius itself: a patch built at the trim radius
+        // alone left visible uncovered wedges beside every rosette on a
+        // real 7mm-wide arm (found directly by rendering it).
+        var patchRadiusByNode: [Int: Double] = [:]
+        for index in segments.indices {
+            let segment = segments[index]
+            let count = segment.expandedA.count
+            var lo = 0, hi = count
+            if segment.edge.startNodeID != segment.edge.endNodeID {
+                if let node = nodesByID[segment.edge.startNodeID], patchedNodeIDs.contains(segment.edge.startNodeID) {
+                    let radius = junctionTrimRadius(for: node)
+                    while lo < hi - 1, node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) <= radius {
+                        let reach = max(node.position.distance(to: segment.expandedA[lo]), node.position.distance(to: segment.expandedB[lo]))
+                        patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? radius, reach)
+                        lo += 1
+                    }
+                }
+                if let node = nodesByID[segment.edge.endNodeID], patchedNodeIDs.contains(segment.edge.endNodeID) {
+                    let radius = junctionTrimRadius(for: node)
+                    while hi > lo + 1, node.position.distance(to: midpoint(segment.expandedA[hi - 1], segment.expandedB[hi - 1])) <= radius {
+                        let reach = max(node.position.distance(to: segment.expandedA[hi - 1]), node.position.distance(to: segment.expandedB[hi - 1]))
+                        patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? radius, reach)
+                        hi -= 1
+                    }
+                }
+            }
+            segments[index].kept = lo..<hi
+
+            // A self-loop's ring rails (`railsForEdge` routes exactly these
+            // to `computeSegmentRingRails`) can't twist by construction --
+            // radial spokes from one center -- so they're exempt, exactly
+            // as `computeCrossings` exempts a plain ring. Keyed off the
+            // edge itself rather than "first rail point == last rail
+            // point": after resampling those two differ in the last
+            // floating-point digit, and that exact-equality check silently
+            // stopped exempting every ring (caught by the synthetic "P"
+            // fixture the moment the check moved here).
+            let isRing = segment.edge.startNodeID == segment.edge.endNodeID
+            let checked = interiorRange(count: count).clamped(to: lo..<hi)
+            if !isRing, isTwisted(segment.expandedA, segment.expandedB, within: checked) {
+                throw SatinGenerationError.shapeNotSuitable("a branch segment's rails twist across each other")
+            }
+        }
 
         var patchByNode: [Int: [Point2D]] = [:]
         for nodeID in patchedNodeIDs {
             guard let node = nodesByID[nodeID] else { continue }
-            if let patch = junctionPatchFill(node: node, shapePolygons: polygons, parameters: parameters) {
+            let radius = patchRadiusByNode[nodeID] ?? junctionTrimRadius(for: node)
+            if let patch = junctionPatchFill(node: node, radius: radius, shapePolygons: polygons, parameters: parameters) {
                 patchByNode[nodeID] = patch
             }
         }
+        return BranchingPlan(polygons: polygons, segments: segments, patchByNode: patchByNode)
+    }
 
-        // Trim off whichever of each incident edge's own crossings near a
-        // patched node fall within that node's own patch radius -- those
-        // are exactly the crossings whose own direction never accounted
-        // for the OTHER edges meeting at the same point (the crease
-        // itself), now covered by the patch instead. Matching the same
-        // radius the patch itself was built from keeps the two exactly
-        // in sync: the patch's own boundary is where each arm's kept
-        // crossings pick back up.
-        var stitches: [Point2D] = []
-        var emittedPatchNodes = Set<Int>()
-        for entry in edgeCrossings {
-            let count = entry.expandedA.count
-            var lo = 0, hi = count
-            if entry.edge.startNodeID != entry.edge.endNodeID {
-                if let node = nodesByID[entry.edge.startNodeID], patchedNodeIDs.contains(entry.edge.startNodeID) {
-                    let radius = junctionPatchRadius(for: node)
-                    while lo < hi - 1, node.position.distance(to: midpoint(entry.expandedA[lo], entry.expandedB[lo])) <= radius { lo += 1 }
-                }
-                if let node = nodesByID[entry.edge.endNodeID], patchedNodeIDs.contains(entry.edge.endNodeID) {
-                    let radius = junctionPatchRadius(for: node)
-                    while hi > lo + 1, node.position.distance(to: midpoint(entry.expandedA[hi - 1], entry.expandedB[hi - 1])) <= radius { hi -= 1 }
-                }
-            }
-            if lo < hi {
-                for i in lo..<hi {
-                    stitches.append(entry.expandedA[i])
-                    stitches.append(entry.expandedB[i])
-                }
-            }
-            for nodeID in [entry.edge.startNodeID, entry.edge.endNodeID] where !emittedPatchNodes.contains(nodeID) {
-                if let patch = patchByNode[nodeID] {
-                    stitches.append(contentsOf: patch)
-                    emittedPatchNodes.insert(nodeID)
-                }
-            }
+    /// How finely `hopStaysOnShape` samples a connector for leaving the
+    /// shape -- a counter narrower than this could in principle be
+    /// stepped over unnoticed, but nothing embroiderable is that small.
+    private static let hopSampleSpacingMM = 0.5
+
+    private static func hopStaysOnShape(from: Point2D, to: Point2D, polygons: [[Point2D]]) -> Bool {
+        let length = from.distance(to: to)
+        guard length > hopSampleSpacingMM else { return true }
+        let steps = Int((length / hopSampleSpacingMM).rounded(.up))
+        for step in 1..<steps {
+            let t = Double(step) / Double(steps)
+            let p = from + (to - from) * t
+            if !PolygonGeometry.pointInPolygons(p, polygons: polygons) { return false }
         }
-        guard !stitches.isEmpty else {
-            throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
-        }
-        return stitches
+        return true
     }
 
     /// A junction node needs a patch only once at least two DISTINCT
@@ -918,30 +1163,28 @@ public enum SatinColumnGenerator {
     /// reasoning for the same tradeoff.
     private static let junctionPatchSampleCount = 60
 
-    /// How far out from a junction node its own patch reaches, as a
-    /// multiple of the node's own local stroke width -- wide enough to
-    /// cover the real junction area (where multiple arms' own boundaries
-    /// genuinely diverge) without reaching so far that it eats into an
-    /// arm's own straight, already-smooth satin run. Deliberately
-    /// conservative (well under 1x the node's own width, and capped
-    /// absolutely besides): a junction NODE's own `widthMM` is the local
-    /// stroke width AT the point several arms' own material overlaps,
-    /// not any one arm's ordinary width away from the junction -- using
-    /// it directly and generously (`1.3x`, uncapped, tried first)
-    /// overestimated badly at exactly the nodes that need a patch most
-    /// (the real Red Sox "B"'s own waist nodes measured 7.7-10.6mm wide),
-    /// trimming away most of a short connecting arm's own length and
-    /// leaving huge gaps -- confirmed directly by rendering it.
-    private static let junctionPatchRadiusFactor = 0.4
+    /// How far along each arm from a junction node its crossings are
+    /// trimmed (by crossing midpoint), as a multiple of the node's own
+    /// local stroke width. A junction NODE's `widthMM` is the diameter of
+    /// the largest circle that fits at the point where its arms' material
+    /// merges (twice the distance transform there), so half of it is that
+    /// circle's radius: a crossing whose midpoint lies inside the circle
+    /// is a junction crossing -- its rails belong partly to different arms
+    /// and fan about the node rather than running with any one column --
+    /// and one outside it has cleared the junction and belongs to its arm.
+    /// Two earlier values bracketed this from both sides on real files:
+    /// `1.3x`, uncapped, ate most of a short connecting arm's own length
+    /// and left huge gaps (the original Red Sox "B"'s waist nodes measure
+    /// 7.7-10.6mm wide); `0.4x` capped at 3mm then failed to reach the fan
+    /// at all on the same letterform's cap-logo cut at 100mm, whose waist
+    /// merges into one 17mm-wide blob with the first crossing's midpoint
+    /// already 6mm out -- the whole letter fell back to tatami over that
+    /// one untrimmed fan. The PATCH's own radius is derived from what
+    /// actually got trimmed (see `branchingPlan`), not from this directly.
+    private static let junctionTrimRadiusFactor = 0.5
 
-    /// Absolute ceiling on the radius above, regardless of the node's own
-    /// width -- the visible crease this patch fixes was itself only a
-    /// few mm across on the real file that motivated it; nothing this
-    /// large-scale needs a patch reaching further than that.
-    private static let junctionPatchMaxRadiusMM = 3.0
-
-    private static func junctionPatchRadius(for node: StrokeTopologyAnalyzer.Node) -> Double {
-        min(max(node.widthMM, 1.0) * junctionPatchRadiusFactor, junctionPatchMaxRadiusMM)
+    private static func junctionTrimRadius(for node: StrokeTopologyAnalyzer.Node) -> Double {
+        max(node.widthMM, 1.0) * junctionTrimRadiusFactor
     }
 
     /// Traces the shape's own real boundary around `node` via the same
@@ -955,10 +1198,11 @@ public enum SatinColumnGenerator {
     /// sparse, gap-riddled zigzag instead of a solid fill). A ray cast
     /// from the node's own position, in any direction, always finds a
     /// real, physically-meaningful boundary point -- clamped to
-    /// `junctionPatchRadius`, so a direction that runs straight down one
-    /// of the arms (where the nearest boundary is actually far away,
-    /// along that arm's own length) gets a point at the radius limit
-    /// instead of one arbitrarily far out.
+    /// `radius` (sized by the caller to cover every crossing it trimmed
+    /// at this node), so a direction that runs straight down one of the
+    /// arms (where the nearest boundary is actually far away, along that
+    /// arm's own length) gets a point at the radius limit instead of one
+    /// arbitrarily far out.
     ///
     /// Stitches the resulting small, roughly star-shaped region as a
     /// radial FAN -- alternating between the node's own center and each
@@ -981,8 +1225,7 @@ public enum SatinColumnGenerator {
     /// concave notch -- using all of it as spokes directly would sew far
     /// more stitches, all piling onto the same center point, than the
     /// small patch's own size calls for).
-    private static func junctionPatchFill(node: StrokeTopologyAnalyzer.Node, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> [Point2D]? {
-        let radius = junctionPatchRadius(for: node)
+    private static func junctionPatchFill(node: StrokeTopologyAnalyzer.Node, radius: Double, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> [Point2D]? {
         var boundary: [Point2D] = []
         for i in 0..<junctionPatchSampleCount {
             let theta = 2 * Double.pi * Double(i) / Double(junctionPatchSampleCount)
@@ -1157,7 +1400,6 @@ public enum SatinColumnGenerator {
             let tangentLength = tangent.length
             guard tangentLength > 1e-9 else { continue }
             let perp = Point2D(-tangent.y / tangentLength, tangent.x / tangentLength)
-
             let hitA: Point2D
             let hitB: Point2D
             if widthsMM[i] <= taperCollapseWidthMM {
@@ -1362,20 +1604,19 @@ public enum SatinColumnGenerator {
 
         let resampledA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
         let resampledB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
-        // A closed rail pair (`railA.first == railA.last`, exactly how
-        // `computeSegmentRingRails` closes a self-loop's rails, matching
-        // `computeRingRails`'s own convention) is exempt from
-        // `isTwisted` for the same reason `computeCrossings` already
-        // exempts a plain ring from it: the check's interior-margin
-        // exclusion assumes a column with real, tapered open ends, which
-        // a radial sweep from one fixed center doesn't have and can't
-        // produce a twisted zigzag from by construction. Applying it
-        // anyway was a real bug, not a stricter safety net — found
-        // directly against a real branching-plus-hole letterform shape
-        // (a "P"), whose hole loop failed here even once its rails came
+        // No twist check here: `branchingPlan` applies `isTwisted` to each
+        // segment's KEPT crossings after junction trimming (see its own
+        // doc comment for why checking the untrimmed segment rejected
+        // real letterforms over crossings the patch replaces anyway). A
+        // closed (ring) rail pair -- `railA.first == railA.last`, how
+        // `computeSegmentRingRails` closes a self-loop's rails -- is exempt
+        // there for the same reason `computeCrossings` exempts a plain
+        // ring: a radial sweep from one fixed center can't twist by
+        // construction, and the check's interior-margin exclusion assumes
+        // real, tapered open ends. Applying it anyway was a real bug —
+        // found directly against a real branching-plus-hole letterform
+        // shape (a "P"), whose hole loop failed even once its rails came
         // back fully covered and geometrically sound.
-        let isClosedRail = railA.count > 1 && railA.first == railA.last
-        if !isClosedRail, isTwisted(resampledA, resampledB) { return nil }
 
         let rawWidths = (0...crossingCount).map { resampledA[$0].distance(to: resampledB[$0]) }
         let averageWidth = rawWidths.reduce(0, +) / Double(max(1, rawWidths.count))
@@ -1393,23 +1634,16 @@ public enum SatinColumnGenerator {
             expandedB.append(eb)
             widths.append(ea.distance(to: eb))
         }
-        // No equivalent yet of `generatePartial`'s per-crossing width
-        // splitting (converting only the too-wide sections of a column
-        // to a local fill sub-region) — a genuinely branching shape that
-        // also has a wide section is real future work, not something
-        // stage 2 built. Until then, this is the same strict, all-or-
-        // nothing check `generate` itself uses: reject the whole segment
-        // rather than silently emit impractically wide "satin" zigzag
-        // stitches — the safe failure mode this file's existing
-        // `SatinGenerationError.shapeNotSuitable` fallback chain already
-        // handles at every call site. Found directly against a real
-        // large logo shape (a bold "A," genuinely a wide tapering blob
-        // rather than a letter stroke) whose segment reached 20mm+ wide
-        // in places — this check wasn't yet what declined it (a pruning
-        // bug independently meant it had no real junction to begin with
-        // once fixed), but it's exactly the kind of shape this exists to
-        // guard regardless.
-        guard widths.max() ?? 0 <= parameters.maxSatinWidthMM else { return nil }
+        // Width is deliberately NOT a rejection reason here, matching
+        // `computeCrossings` for the single-column path: `generateBranching`
+        // runs every segment's crossings through the same per-crossing
+        // satin/fill/narrow-run split `generatePartial` uses
+        // (`stitchesSplittingByWidth`), so a stretch too wide for satin
+        // sews as a local fill sub-region rather than either emitting an
+        // impractically wide zigzag or rejecting the whole letter. A strict
+        // `maxSatinWidthMM` cap used to live here instead; found directly
+        // against a real cap-logo "B" at 100mm whose bowls reached ~16mm,
+        // which it rejected outright, sending the entire letter to tatami.
         return (expandedA, expandedB, widths)
     }
 
@@ -1445,18 +1679,40 @@ public enum SatinColumnGenerator {
             if let index = foundIndex {
                 var candidate = remaining.remove(at: index)
                 if candidate.startNodeID != currentNode {
-                    candidate = StrokeTopologyAnalyzer.Edge(startNodeID: candidate.endNodeID, endNodeID: candidate.startNodeID,
-                                                             isClosedLoop: candidate.isClosedLoop,
-                                                             polyline: Array(candidate.polyline.reversed()),
-                                                             widthsMM: Array(candidate.widthsMM.reversed()))
+                    candidate = reversed(candidate)
                 }
                 next = candidate
             } else {
-                next = remaining.removeFirst()
+                // Nothing left touches the current node (the walk exhausted
+                // this branch of a graph with cycles) -- rather than an
+                // arbitrary next edge taken as-is, start the next leg from
+                // whichever remaining edge END is physically nearest to
+                // where the needle currently is, flipping that edge if its
+                // far end is the nearer one. This can't make the hop
+                // connected, but it makes it as short as the graph allows;
+                // `generateBranchingRuns` then decides whether even that
+                // hop can be sewn or must become a trim+jump.
+                let here = ordered.last?.polyline.last ?? remaining[0].polyline[0]
+                var bestIndex = 0, bestFlip = false, bestDistance = Double.infinity
+                for i in remaining.indices {
+                    let startDistance = here.distance(to: remaining[i].polyline[0])
+                    let endDistance = here.distance(to: remaining[i].polyline[remaining[i].polyline.count - 1])
+                    if startDistance < bestDistance { bestDistance = startDistance; bestIndex = i; bestFlip = false }
+                    if endDistance < bestDistance { bestDistance = endDistance; bestIndex = i; bestFlip = true }
+                }
+                let candidate = remaining.remove(at: bestIndex)
+                next = bestFlip ? reversed(candidate) : candidate
             }
             ordered.append(next)
             currentNode = next.endNodeID
         }
         return ordered
+    }
+
+    private static func reversed(_ edge: StrokeTopologyAnalyzer.Edge) -> StrokeTopologyAnalyzer.Edge {
+        StrokeTopologyAnalyzer.Edge(startNodeID: edge.endNodeID, endNodeID: edge.startNodeID,
+                                    isClosedLoop: edge.isClosedLoop,
+                                    polyline: Array(edge.polyline.reversed()),
+                                    widthsMM: Array(edge.widthsMM.reversed()))
     }
 }

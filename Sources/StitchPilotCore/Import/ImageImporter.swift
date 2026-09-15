@@ -157,7 +157,18 @@ public enum ImageImporter {
             // too well.
             isAmbiguous[i] = ratioAmbiguous || backgroundRampIndices.contains(index)
         }
-        labels = smoothAmbiguousBoundaryLabels(labels, isAmbiguous: isAmbiguous, foregroundMask: foregroundMask, width: width, height: height)
+        labels = smoothAmbiguousBoundaryLabels(labels, isAmbiguous: isAmbiguous, foregroundMask: foregroundMask, width: width, height: height,
+                                               tieBreak: { pixelIndex, candidates in
+            // See the tie-handling comment inside `smoothAmbiguousBoundaryLabels`.
+            let color = RGBColor(r: pixels[pixelIndex * 4], g: pixels[pixelIndex * 4 + 1], b: pixels[pixelIndex * 4 + 2])
+            func distance(to label: Int) -> Double {
+                if label == backgroundLabelSentinel {
+                    return backgroundColor.map { RGBColor.deltaE(color, $0) } ?? .infinity
+                }
+                return RGBColor.deltaE(color, clusters[label].rgb)
+            }
+            return candidates.min { distance(to: $0) < distance(to: $1) }
+        })
 
         var shapes: [VectorShape] = []
         var fillColors: [RGBColor?] = []
@@ -240,22 +251,44 @@ public enum ImageImporter {
     /// centroid (see the ambiguity computation there), leaving the actual
     /// per-pixel decision -- background or a specific neighboring color --
     /// to `smoothAmbiguousBoundaryLabels`'s neighbor vote.
+    ///
+    /// Also flags a cluster sitting on the line between two *foreground*
+    /// clusters that are each larger than it. `mergeAntiAliasingClusters`
+    /// only folds such a blend when BOTH endpoints are "large" (>= 8% of
+    /// all pixels), so a blend between a dominant color and a minor one
+    /// slips through it -- found directly against the 96px Red Sox "B"
+    /// (transparent background, so no background reference at all):
+    /// the 1px column where its navy disc meets each white counter is
+    /// exactly the navy/white midpoint, the white was under 8%, and the
+    /// column survived as its own tight, "confident" gray-blue cluster
+    /// that the per-pixel ambiguity test never questioned -- traced as
+    /// zero-width gray running-stitch lines, mistaken at first for
+    /// baseball-seam detail. Same per-pixel neighbor-vote treatment as
+    /// the background case, for the same reason.
     private static func backgroundRampClusterIndices(_ clusters: [ColorCluster], backgroundColor: RGBColor?) -> Set<Int> {
-        guard let backgroundColor, clusters.count > 1 else { return [] }
-        let bgLab = backgroundColor.lab
+        guard clusters.count > 1 else { return [] }
         var suspects = Set<Int>()
+        func liesBetween(_ lab: LABColor, _ endA: LABColor, _ endB: LABColor) -> Bool {
+            let dAB = sqrt(labDistanceSquared(endA, endB))
+            guard dAB > 1 else { return false }
+            let dA = sqrt(labDistanceSquared(lab, endA)), dB = sqrt(labDistanceSquared(lab, endB))
+            return ((dA + dB) - dAB) / dAB <= 0.15
+        }
         for (c, candidate) in clusters.enumerated() {
             let lab = candidate.rgb.lab
-            for (d, other) in clusters.enumerated() where d != c && candidate.pixelCount < other.pixelCount {
-                let otherLab = other.rgb.lab
-                let dAB = sqrt(labDistanceSquared(bgLab, otherLab))
-                guard dAB > 1 else { continue }
-                let dA = sqrt(labDistanceSquared(lab, bgLab)), dB = sqrt(labDistanceSquared(lab, otherLab))
-                let relSlack = ((dA + dB) - dAB) / dAB
-                if relSlack <= 0.15 {
-                    suspects.insert(c)
-                    break
+            let larger = clusters.enumerated().filter { $0.offset != c && candidate.pixelCount < $0.element.pixelCount }
+            if let backgroundColor, larger.contains(where: { liesBetween(lab, backgroundColor.lab, $0.element.rgb.lab) }) {
+                suspects.insert(c)
+                continue
+            }
+            for i in larger.indices {
+                for j in larger.indices where j > i {
+                    if liesBetween(lab, larger[i].element.rgb.lab, larger[j].element.rgb.lab) {
+                        suspects.insert(c)
+                        break
+                    }
                 }
+                if suspects.contains(c) { break }
             }
         }
         return suspects
@@ -336,7 +369,8 @@ public enum ImageImporter {
     /// "until convergence" with a data-dependent iteration count.
     private static let maxAmbiguousSmoothingRounds = 4
 
-    private static func smoothAmbiguousBoundaryLabels(_ labels: [Int], isAmbiguous: [Bool], foregroundMask: [Bool], width: Int, height: Int) -> [Int] {
+    private static func smoothAmbiguousBoundaryLabels(_ labels: [Int], isAmbiguous: [Bool], foregroundMask: [Bool], width: Int, height: Int,
+                                                      tieBreak: (_ pixelIndex: Int, _ candidates: [Int]) -> Int?) -> [Int] {
         var current = labels
         var resolved = isAmbiguous.map { !$0 }
 
@@ -388,15 +422,43 @@ public enum ImageImporter {
                     // unresolved while still clearing tiny corner/speck
                     // clusters). A strict plurality (`bestCount >
                     // secondBestCount`) with a small evidence floor
-                    // resolves the ordinary straight-edge case while still
-                    // correctly leaving a genuine three-way junction (no
-                    // single dominant neighbor, a real tie) unresolved.
+                    // resolves the ordinary case while still leaving a
+                    // genuine three-way junction (three confident sides,
+                    // no single dominant neighbor) unresolved.
+                    //
+                    // An exact TWO-way tie is different, and common: a
+                    // 1px ramp column along a perfectly straight vertical
+                    // or horizontal edge has exactly 3 confident neighbors
+                    // on each side and its own 2 (ambiguous) ramp neighbors
+                    // above and below -- a dead 3-3 tie at every pixel down
+                    // the whole column, so nothing ever resolves except the
+                    // few pixels within `maxAmbiguousSmoothingRounds` hops
+                    // of a curved end. The column then survives as its own
+                    // tall, 1px-wide traced object. Found directly against
+                    // a real cap-logo "B", whose counters' straight left
+                    // edges each came back as a zero-width gray
+                    // running-stitch line (and the same file's older
+                    // 96px cut had shown the identical lines, mistaken for
+                    // baseball-seam detail). A pixel in a 2-way tie is a
+                    // genuine 50/50 blend of the two sides, so either side
+                    // is visually right; what matters is that it joins one
+                    // of them rather than becoming its own object -- the
+                    // caller breaks the tie toward whichever side's own
+                    // color the pixel is actually closer to.
                     let sortedCounts = confidentNeighborCounts.values.sorted(by: >)
                     guard let bestLabel = confidentNeighborCounts.max(by: { $0.value < $1.value })?.key else { continue }
                     let bestCount = sortedCounts[0]
                     let secondBestCount = sortedCounts.count > 1 ? sortedCounts[1] : 0
-                    guard bestCount >= 2, bestCount > secondBestCount else { continue }
-                    next[i] = bestLabel
+                    guard bestCount >= 2 else { continue }
+                    let resolvedLabel: Int
+                    if bestCount > secondBestCount {
+                        resolvedLabel = bestLabel
+                    } else {
+                        let tied = confidentNeighborCounts.filter { $0.value == bestCount }.map { $0.key }
+                        guard tied.count == 2, let chosen = tieBreak(i, tied) else { continue }
+                        resolvedLabel = chosen
+                    }
+                    next[i] = resolvedLabel
                     nextResolved[i] = true
                     anyChange = true
                 }
