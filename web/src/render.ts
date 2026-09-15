@@ -1,15 +1,19 @@
 // Draws a stitch plan on a <canvas> the way StitchRenderer does on the
-// Mac: every stitch stroked at real thread width with round caps,
-// alternating a darker/lighter shade so stitches read as separate
-// threads, then a thin highlight offset perpendicular to each stitch so
-// the thread reads as round. Jumps are hidden (trimmed jumps leave no
+// Mac, plus what makes a real sew-out look the way it does: every stitch
+// is stroked at real thread width with round caps, over a soft shadow
+// that gives it depth against the fabric, shaded by its DIRECTION -- a
+// thread is a cylinder, so a run of parallel stitches catches the light
+// or falls into shade depending on which way it runs (this is the sheen
+// that makes satin read as satin), and finally a thin bright highlight
+// offset perpendicular to the stitch so each one reads as round rather
+// than a flat painted stripe. Jumps are hidden (trimmed jumps leave no
 // thread; see HiddenTravelRouter). The plan is in design millimeters;
 // `view` maps mm to canvas pixels.
 
 import type { RGBColor, ThreadColor, WireCommand } from "./types";
 
 export const THREAD_WIDTH_MM = 0.35;
-export const PAPER = "#f7f3ec";
+export const PAPER = "#fbf9f5";
 
 export interface View {
   /** Canvas pixels per design mm. */
@@ -23,6 +27,16 @@ const rgb = (c: RGBColor, k = 1, add = 0) =>
   `rgb(${clamp(c.r * k + add)},${clamp(c.g * k + add)},${clamp(c.b * k + add)})`;
 const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
 
+/** Light comes from the upper left, as on the Mac. A stitch running
+ *  perpendicular to that direction presents its side to the light and
+ *  reads brightest; one running along it reads darkest. */
+const LIGHT_ANGLE = -Math.PI / 4;
+/** How many brightness steps the sheen is quantized into -- enough that
+ *  a fan of stitches grades smoothly, few enough that each color is still
+ *  drawn as a handful of batched paths rather than one stroke per stitch. */
+const SHEEN_LEVELS = 8;
+const SHEEN_MIN = 0.86, SHEEN_MAX = 1.1;
+
 export function drawPlan(
   ctx: CanvasRenderingContext2D,
   commands: WireCommand[],
@@ -33,11 +47,13 @@ export function drawPlan(
   const { scale, offsetX, offsetY } = view;
   const threadPx = Math.max(0.75, THREAD_WIDTH_MM * scale);
   const hlOffset = THREAD_WIDTH_MM * 0.2 * scale;
+  const shadowOffset = THREAD_WIDTH_MM * 0.18 * scale;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
   let colorIndex = 0;
-  let dark = new Path2D(), light = new Path2D(), highlight = new Path2D(), jumps = new Path2D();
+  let bodies: Path2D[] = Array.from({ length: SHEEN_LEVELS }, () => new Path2D());
+  let shadow = new Path2D(), highlight = new Path2D(), jumps = new Path2D();
   let parity = false;
   let hasSegment = false;
   let last: [number, number] | null = null;
@@ -45,16 +61,23 @@ export function drawPlan(
   const flush = () => {
     if (hasSegment) {
       const c = (colors[Math.min(colorIndex, colors.length - 1)] ?? colors[0])?.rgb ?? { r: 40, g: 40, b: 40 };
-      ctx.lineWidth = threadPx;
-      ctx.strokeStyle = rgb(c, 0.88);
-      ctx.stroke(dark);
-      ctx.strokeStyle = rgb(c, 1.08, 5);
-      ctx.stroke(light);
+      // Shadow first, under everything of this color: a touch wider and
+      // offset away from the light, so each stitch stands off the fabric.
+      ctx.lineWidth = threadPx * 1.15;
+      ctx.strokeStyle = "rgba(20,14,8,0.22)";
+      ctx.stroke(shadow);
+      for (let i = 0; i < SHEEN_LEVELS; i++) {
+        const k = SHEEN_MIN + ((SHEEN_MAX - SHEEN_MIN) * i) / (SHEEN_LEVELS - 1);
+        ctx.lineWidth = threadPx;
+        ctx.strokeStyle = rgb(c, k, k > 1 ? 4 : 0);
+        ctx.stroke(bodies[i]);
+      }
       ctx.lineWidth = threadPx * 0.35;
-      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      ctx.strokeStyle = "rgba(255,255,255,0.42)";
       ctx.stroke(highlight);
     }
-    dark = new Path2D(); light = new Path2D(); highlight = new Path2D();
+    bodies = Array.from({ length: SHEEN_LEVELS }, () => new Path2D());
+    shadow = new Path2D(); highlight = new Path2D();
     hasSegment = false;
   };
 
@@ -62,11 +85,18 @@ export function drawPlan(
     const x = offsetX + mx * scale, y = offsetY + my * scale;
     if (code === 0) {
       if (last) {
-        const p = parity ? light : dark;
-        p.moveTo(last[0], last[1]); p.lineTo(x, y);
-        parity = !parity;
         const dx = x - last[0], dy = y - last[1];
         const len = Math.hypot(dx, dy);
+        // Sheen from the stitch's own direction: |sin| of the angle to the
+        // light, so a thread across the light is bright and one along it
+        // is dark; the alternating parity nudge keeps neighbors reading as
+        // separate threads even in a run at one angle.
+        const angle = Math.atan2(dy, dx);
+        const sheen = Math.abs(Math.sin(angle - LIGHT_ANGLE));
+        const level = Math.max(0, Math.min(SHEEN_LEVELS - 1, Math.round(sheen * (SHEEN_LEVELS - 1) + (parity ? 0.4 : -0.4))));
+        parity = !parity;
+        bodies[level].moveTo(last[0], last[1]); bodies[level].lineTo(x, y);
+        shadow.moveTo(last[0] + shadowOffset, last[1] + shadowOffset); shadow.lineTo(x + shadowOffset, y + shadowOffset);
         if (len > 0.01) {
           const nx = -dy / len, ny = dx / len;
           highlight.moveTo(last[0] + nx * hlOffset, last[1] + ny * hlOffset);
@@ -95,6 +125,24 @@ export function drawPlan(
     ctx.stroke(jumps);
     ctx.setLineDash([]);
   }
+}
+
+/** A faint woven texture over the design area, so stitches sit on
+ *  something that reads as fabric rather than blank paper. Drawn at a
+ *  fixed pitch in design mm so it zooms with the stitches. */
+export function drawFabric(ctx: CanvasRenderingContext2D, view: View, widthMM: number, heightMM: number) {
+  const pitchPx = 0.5 * view.scale;
+  if (pitchPx < 2) return; // too fine to show at this zoom -- skip rather than moiré
+  const x0 = view.offsetX, y0 = view.offsetY, w = widthMM * view.scale, h = heightMM * view.scale;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
+  ctx.strokeStyle = "rgba(90,70,40,0.045)";
+  ctx.lineWidth = Math.max(0.5, pitchPx * 0.35);
+  ctx.beginPath();
+  for (let x = x0; x <= x0 + w; x += pitchPx) { ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); }
+  for (let y = y0; y <= y0 + h; y += pitchPx) { ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); }
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** A view that centers `widthMM` x `heightMM` in a canvas with a margin. */

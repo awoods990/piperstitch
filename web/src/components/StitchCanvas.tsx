@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CatalogSize, DigitizeResponse, EmbroideryObject, Point2D, StitchDocument } from "../types";
-import { PAPER, drawPlan, fitView, type View } from "../render";
-import { boxIsEmpty, boxesIntersect, objectAt, selectionBounds, shapeBounds } from "../geometry";
+import { PAPER, drawFabric, drawPlan, fitView, type View } from "../render";
+import { boxContains, boxIsEmpty, objectAt, selectionBounds, shapeBounds } from "../geometry";
 import { rgbCSS } from "../prefs";
 import type { RGBColor } from "../types";
 
@@ -90,12 +90,21 @@ export default function StitchCanvas(p: Props) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !view || size.w === 0) return;
+    // Supersample: draw at twice the device resolution and let the browser
+    // downscale to the CSS size. Thread edges and the sub-pixel highlight
+    // lines come out clean instead of aliased, which matters most at
+    // fit-to-window zoom where a stitch is only a pixel or two wide. Capped
+    // so a huge canvas on a 3x display can't ask for a backing store the
+    // GPU refuses.
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(size.w * dpr); canvas.height = Math.floor(size.h * dpr);
+    const ss = size.w * size.h * dpr * dpr * 4 <= 24_000_000 ? 2 : 1;
+    const res = dpr * ss;
+    canvas.width = Math.floor(size.w * res); canvas.height = Math.floor(size.h * res);
     const ctx = canvas.getContext("2d")!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(res, 0, 0, res, 0, 0);
     ctx.fillStyle = PAPER; ctx.fillRect(0, 0, size.w, size.h);
     const { scale, offsetX, offsetY } = view;
+    drawFabric(ctx, view, doc.physicalWidthMM, doc.physicalHeightMM);
 
     if (hoop) {
       const hx = offsetX + ((doc.physicalWidthMM - hoop.widthMM) / 2) * scale, hy = offsetY + ((doc.physicalHeightMM - hoop.heightMM) / 2) * scale;
@@ -211,7 +220,9 @@ export default function StitchCanvas(p: Props) {
         const box = { minX: Math.min(d.start.x, d.end.x), minY: Math.min(d.start.y, d.end.y), maxX: Math.max(d.start.x, d.end.x), maxY: Math.max(d.start.y, d.end.y) };
         const dragged = view && Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y) * view.scale > 3;
         if (!dragged) { if (!d.additive) p.onSelect([], false); return; }
-        p.onSelect(doc.objects.filter((o) => boxesIntersect(shapeBounds(o.shape), box)).map((o) => o.id), d.additive);
+        // Only objects the band fully encloses -- a band that merely
+        // clips the edge of a big neighbor shouldn't grab it.
+        p.onSelect(doc.objects.filter((o) => boxContains(box, shapeBounds(o.shape))).map((o) => o.id), d.additive);
         break;
       }
       case "move": if (d.moved) p.onTranslate(d.last.x - d.start.x, d.last.y - d.start.y); break;

@@ -68,11 +68,14 @@ export const PRESET_LABELS: Record<ColorPresetId, [string, string]> = {
   minimalColors: ["As few as possible", "simplest possible, quickest to sew"],
 };
 
-/** Only placements whose name names a garment/material commit to a guess. */
+/** The fabric a placement most often means, so the fabric step arrives
+ *  pre-answered: caps are structured, a polo/chest/sleeve is a knit, a full
+ *  back is usually a jacket. The user can still change it. */
 export function predictedFabric(preset: CatalogSize): FabricType | null {
   const n = preset.name.toLowerCase();
   if (n.includes("cap") || n.includes("hat")) return "structuredCap";
-  if (n.includes("polo")) return "knit";
+  if (n.includes("polo") || n.includes("chest") || n.includes("sleeve")) return "knit";
+  if (n.includes("back")) return "stableWoven";
   return null;
 }
 
@@ -86,14 +89,33 @@ export default function SetupFlow(props: Props) {
   const { catalog, recommendedWidthMM, recommendedHeightMM, aspectRatio, isVector, busy } = props;
   const [step, setStep] = useState<Step>("placement");
   const [a, setA] = useState<SetupAnswers>(props.initial);
+  // Steps the user has answered by hand. An earlier answer pre-fills a
+  // later step (placement -> fabric, size -> hoop) only until the user
+  // has chosen that later step themselves; after that their choice sticks.
+  const [chosen, setChosen] = useState<{ hoop: boolean; fabric: boolean }>({ hoop: false, fabric: false });
   const stepIndex = STEPS.indexOf(step);
 
   const isCap = a.placement && a.placement !== "custom" && /cap|hat/i.test(a.placement.name);
 
+  /** The hoop answer that follows from a size: the smallest hoop that fits,
+   *  unless the current one already does (a default from preferences, say). */
+  const withPredictedHoop = (next: SetupAnswers): SetupAnswers => {
+    if (chosen.hoop) return next;
+    const fits = (h: CatalogSize | null) => !!h && h.widthMM >= next.widthMM && h.heightMM >= next.heightMM;
+    // A cap front goes in a cap frame, whatever the preferred everyday hoop
+    // is -- it's a different piece of hardware, not just a different size.
+    const capPlacement = next.placement && next.placement !== "custom" && /cap|hat/i.test(next.placement.name);
+    const capHoop = capPlacement ? catalog.hoops.find((h) => /cap|hat/i.test(h.name) && fits(h)) ?? null : null;
+    if (capHoop) return { ...next, hoopMode: "specific", hoop: capHoop };
+    if (next.hoopMode === "specific" && fits(next.hoop)) return next;
+    const smallest = smallestHoopThatFits(catalog.hoops, next.widthMM, next.heightMM);
+    return smallest ? { ...next, hoopMode: "specific", hoop: smallest } : { ...next, hoopMode: "none", hoop: null };
+  };
+
   const setSize = (w: number, h?: number) => {
     const width = Math.max(1, w);
     const height = h ?? (a.lockAspect && aspectRatio > 0 ? width / aspectRatio : a.heightMM);
-    setA({ ...a, widthMM: width, heightMM: Math.max(1, height) });
+    setA(withPredictedHoop({ ...a, widthMM: width, heightMM: Math.max(1, height) }));
   };
 
   const subtitle = useMemo(() => {
@@ -107,17 +129,25 @@ export default function SetupFlow(props: Props) {
         }
         return `Based on the finest detail in your artwork, I'd suggest about ${cm(recommendedWidthMM)} × ${cm(recommendedHeightMM)} cm. Type any size you want.`;
       case "hoop":
+        if (!chosen.hoop && a.hoopMode === "specific" && a.hoop)
+          return isCap && /cap|hat/i.test(a.hoop.name)
+            ? `I've picked the ${a.hoop.name} since this is going on a cap. Cap frames vary by machine — change it if yours is a different size.`
+            : `I've picked ${a.hoop.name} — it fits ${cm(a.widthMM)} × ${cm(a.heightMM)} cm. Change it if your machine uses a different one.`;
         return isCap
           ? "Cap frames vary by machine — pick the closest size, or let me choose one that fits."
           : "I'll warn you if the design won't fit. Not sure? Let me pick the smallest one that does.";
-      case "fabric":
-        return isCap
-          ? "For a cap front I've started with a structured cap. A stiff buckram front barely pulls; a soft cap or a knit beanie pulls a lot more, so I compensate differently for each."
-          : "Stretchier material pulls more as it sews, so I widen the shapes more to keep the finished size true.";
+      case "fabric": {
+        const predicted = !chosen.fabric && a.placement && a.placement !== "custom" ? predictedFabric(a.placement) : null;
+        if (isCap)
+          return "For a cap front I've started with a structured cap. A stiff buckram front barely pulls; a soft cap or a knit beanie pulls a lot more, so I compensate differently for each.";
+        if (predicted && a.placement && a.placement !== "custom")
+          return `For ${a.placement.name.toLowerCase()} I've started with ${catalog.fabrics.find((f) => f.id === predicted)?.shortName.toLowerCase() ?? predicted}. Stretchier material pulls more as it sews, so change it if that's not what you're using.`;
+        return "Stretchier material pulls more as it sews, so I widen the shapes more to keep the finished size true.";
+      }
       case "colors":
         return "Fewer colours means fewer thread changes and a faster sew-out. Vector artwork always keeps its own colours.";
     }
-  }, [step, a.placement, isCap, recommendedWidthMM, recommendedHeightMM]);
+  }, [step, a.placement, a.hoopMode, a.hoop, a.widthMM, a.heightMM, chosen, isCap, catalog.fabrics, recommendedWidthMM, recommendedHeightMM]);
 
   const fabricGroups = useMemo(() => {
     const byId = (ids: FabricType[]) => ids.map((id) => catalog.fabrics.find((f) => f.id === id)).filter(Boolean) as CatalogFabric[];
@@ -162,9 +192,8 @@ export default function SetupFlow(props: Props) {
                 <Choice key={p.name} title={p.name} subtitle={`${cm(p.widthMM)} × ${cm(p.heightMM)} cm`}
                   selected={a.placement !== "custom" && a.placement?.name === p.name}
                   onClick={() => {
-                    const changed = a.placement === "custom" || a.placement?.name !== p.name;
-                    const predicted = changed ? predictedFabric(p) : null;
-                    setA({ ...a, placement: p, widthMM: p.widthMM, heightMM: p.heightMM, fabric: predicted ?? a.fabric });
+                    const predicted = chosen.fabric ? null : predictedFabric(p);
+                    setA(withPredictedHoop({ ...a, placement: p, widthMM: p.widthMM, heightMM: p.heightMM, fabric: predicted ?? a.fabric }));
                   }} />
               ))}
               <Choice title="Something else" subtitle="I'll set the size myself" selected={a.placement === "custom"}
@@ -189,7 +218,7 @@ export default function SetupFlow(props: Props) {
                   onChange={(e) => setSize(Number(e.target.value) * 10)} /></label>
                 <span className="x">×</span>
                 <label>Height <input type="number" step="0.1" min="0.5" value={+(a.heightMM / 10).toFixed(1)}
-                  onChange={(e) => setA({ ...a, heightMM: Math.max(1, Number(e.target.value) * 10), lockAspect: false })} /></label>
+                  onChange={(e) => setA(withPredictedHoop({ ...a, heightMM: Math.max(1, Number(e.target.value) * 10), lockAspect: false }))} /></label>
                 <span className="unit">cm</span>
                 <label className="check"><input type="checkbox" checked={a.lockAspect}
                   onChange={(e) => {
@@ -208,13 +237,13 @@ export default function SetupFlow(props: Props) {
                   <Choice key={h.name} title={h.name}
                     subtitle={fits ? `${cm(h.widthMM)} × ${cm(h.heightMM)} cm · fits` : `too small for ${cm(a.widthMM)} × ${cm(a.heightMM)} cm`}
                     warning={!fits} selected={a.hoopMode === "specific" && a.hoop?.name === h.name}
-                    onClick={() => setA({ ...a, hoopMode: "specific", hoop: h })} />
+                    onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "specific", hoop: h }); }} />
                 );
               })}
               <Choice title="Choose one for me" subtitle="the smallest that fits" selected={a.hoopMode === "recommend"}
-                onClick={() => setA({ ...a, hoopMode: "recommend" })} />
+                onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "recommend" }); }} />
               <Choice title="Skip for now" subtitle="no fit check" selected={a.hoopMode === "none"}
-                onClick={() => setA({ ...a, hoopMode: "none", hoop: null })} />
+                onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "none", hoop: null }); }} />
             </div>
           )}
 
@@ -226,7 +255,7 @@ export default function SetupFlow(props: Props) {
                   <div className="choices">
                     {fabrics.map((f) => (
                       <Choice key={f.id} title={f.shortName} subtitle={FABRIC_HINTS[f.id]} selected={a.fabric === f.id}
-                        onClick={() => setA({ ...a, fabric: f.id })} />
+                        onClick={() => { setChosen({ ...chosen, fabric: true }); setA({ ...a, fabric: f.id }); }} />
                     ))}
                   </div>
                 </div>

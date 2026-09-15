@@ -17,6 +17,9 @@ export function unionBounds(a: BoundingBox, b: BoundingBox): BoundingBox {
 
 export const boxIsEmpty = (b: BoundingBox) => b.minX > b.maxX || b.minY > b.maxY;
 export const boxesIntersect = (a: BoundingBox, b: BoundingBox) => a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY;
+/** `inner` lies entirely inside `outer` (touching the edge counts as inside). */
+export const boxContains = (outer: BoundingBox, inner: BoundingBox) =>
+  inner.minX >= outer.minX && inner.maxX <= outer.maxX && inner.minY >= outer.minY && inner.maxY <= outer.maxY;
 
 /** Even-odd rule across every sub-path, so a letter's counter reads as a hole. */
 export function shapeContains(shape: VectorShape, p: Point2D): boolean {

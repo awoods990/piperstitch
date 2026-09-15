@@ -3,7 +3,10 @@
   --navy900: #081a33; --navy800: #0f2a4d; --navy700: #143a6b; --navy600: #1a4f8f;
   --blue500: #1a6fd1; --blue400: #3b8ee6; --blue200: #b9d4f3;
   --caramel600: #a8621f; --caramel500: #c0722a;
-  --paper: #f7f3ec; --panel: #fffffe; --ink: #12161c; --ink2: #3a424e; --muted: #5d6472; --label: #8b9099;
+  /* --paper is the page behind the panels; --surface is the design canvas
+     itself: a shade lighter than the page so it still reads as its own
+     sheet against the white panels without looking dim next to them. */
+  --paper: #f7f3ec; --surface: #fbf9f5; --panel: #fffffe; --ink: #12161c; --ink2: #3a424e; --muted: #5d6472; --label: #8b9099;
   --line: #e6e0d4; --line2: #eae7e0; --rowline: #f0ede6;
   --readyBG: #e9f3ec; --readyBorder: #cfe5d5; --readyText: #2f6b41;
   --warnBG: #faefe3; --warnBorder: #efd9b7; --warnText: #8a5a12;
@@ -72,7 +75,10 @@ button, input, select { font: inherit; color: inherit; }
 
 /* --- setup flow --- */
 .setup { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
-.setup-card { width: min(760px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 22px 26px; display: flex; flex-direction: column; gap: 10px; }
+/* The card is a fixed height for the whole flow (not sized to each step's
+   content), so Next sits at the same spot on screen on every step; a step
+   with more choices than fit scrolls inside .setup-body instead. */
+.setup-card { width: min(760px, 100%); height: min(640px, calc(100vh - 48px)); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 22px 26px; display: flex; flex-direction: column; gap: 10px; }
 .setup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .setup-kicker { font-weight: 600; color: var(--navy800); }
 .setup-file { color: var(--label); font-size: 12px; }
@@ -85,7 +91,7 @@ button, input, select { font: inherit; color: inherit; }
 .setup-note { margin: 4px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); color: var(--muted); font-size: 13px; line-height: 1.45; }
 .setup-note b { color: var(--ink); }
 .setup-check { margin-top: 6px; font-size: 13px; }
-.setup-body { padding: 8px 0 4px; min-height: 200px; }
+.setup-body { padding: 8px 4px 4px 0; flex: 1; min-height: 0; overflow-y: auto; }
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .section-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--label); margin-bottom: 8px; }
 .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
@@ -121,7 +127,7 @@ button, input, select { font: inherit; color: inherit; }
 .error-bar.floating { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); border-radius: 8px; border: 1px solid #f1c9c4; z-index: 5; }
 .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 340px; }
 .canvas-area { position: relative; display: flex; flex-direction: column; min-width: 0; }
-.canvas-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; touch-action: none; }
+.canvas-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; touch-action: none; background: var(--surface); /* keep in sync with PAPER in render.ts */ }
 .canvas-wrap:active { cursor: grabbing; }
 .canvas-wrap canvas { display: block; }
 .canvas-wrap.stale canvas { opacity: .6; transition: opacity .2s; }
