@@ -531,6 +531,30 @@ public enum SatinColumnGenerator {
             && ((d3 > 0) != (d4 > 0)) && (d3 != 0) && (d4 != 0)
     }
 
+    /// Both rails resampled to their final crossing positions: a fine,
+    /// curvature-weighted grid at `density / SatinSpacing.oversampling`,
+    /// thinned by `SatinSpacing.decimate` to width-dependent spacing.
+    /// Returns the rails and `count` such that valid indices are
+    /// `0...count`, matching what the former direct resample produced.
+    private static func fineThenDecimatedRails(railA: [Point2D], railB: [Point2D], density: Double, parameters: StitchGenerationParameters) -> (railA: [Point2D], railB: [Point2D], count: Int) {
+        let fineDensity = density / SatinSpacing.oversampling
+        let weightedLength = max(
+            PolygonGeometry.weightedPathLength(railA, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight),
+            PolygonGeometry.weightedPathLength(railB, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
+        )
+        let fineCount = max(2, Int((weightedLength / fineDensity).rounded()))
+        let fineA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: fineCount, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
+        let fineB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: fineCount, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
+        let kept = SatinSpacing.decimate(railA: fineA, railB: fineB, parameters: parameters)
+        // Never fewer than three crossings (two for a degenerate stub):
+        // `interiorRange` and the twist checks assume a real column.
+        if kept.a.count < 3, fineA.count >= 3 {
+            let mid = fineA.count / 2
+            return ([fineA[0], fineA[mid], fineA[fineA.count - 1]], [fineB[0], fineB[mid], fineB[fineB.count - 1]], 2)
+        }
+        return (kept.a, kept.b, kept.a.count - 1)
+    }
+
     /// Resampled, compensated rail crossings shared by `generate` and
     /// `generatePartial` — the two differ only in what they do once they
     /// know each crossing's final (post-compensation) width, not in how
@@ -551,22 +575,17 @@ public enum SatinColumnGenerator {
         // not something that should shift with how curvy the column
         // happens to be.
         let approxLength = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
-        // The crossing *count*, though, is sized from a curvature-weighted
-        // length: a tight curve (e.g. a small "O"'s round stroke) needs
-        // denser crossings than a straight run at the same
-        // `satinDensityMM` to avoid a faceted, gap-toothed outer edge.
-        // Weighting the length this way grows the crossing budget to
-        // cover that, rather than just redistributing the same fixed
-        // count across the column -- which would starve straight sections
-        // of their own chosen density to pay for the curve.
-        let weightedLength = max(
-            PolygonGeometry.weightedPathLength(railA, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight),
-            PolygonGeometry.weightedPathLength(railB, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
-        )
-        let crossingCount = max(2, Int((weightedLength / density).rounded()))
-
-        let resampledA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
-        let resampledB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        // Crossings are laid down on a FINE grid first (`SatinSpacing.
+        // oversampling` per nominal spacing, curvature-weighted so a tight
+        // curve gets proportionally more candidates than a straight run)
+        // and then thinned to the real stitch spacing by `SatinSpacing.
+        // decimate`, which measures distance along the outer rail and
+        // chooses each gap from the crossing's own width -- narrow columns
+        // sew at a wider spacing, wide columns tighter (docs/
+        // WILCOM_MANUAL_REVIEW.md A2/A3). The curvature weighting still
+        // matters for *where* candidates sit; the thinning decides how
+        // many survive.
+        let (resampledA, resampledB, crossingCount) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
 
         // The single-global-axis end-cap algorithm above (see this type's
         // own doc comment) is built for a single "sausage" -- a shape that
@@ -758,14 +777,26 @@ public enum SatinColumnGenerator {
             case .narrowRun:
                 stitches.append(contentsOf: narrowRunSegment(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
             case .satin:
-                for k in i..<j {
-                    stitches.append(expandedA[k])
-                    stitches.append(expandedB[k])
-                }
+                stitches.append(contentsOf: satinZigzag(expandedA: expandedA, expandedB: expandedB, range: i...(j - 1), parameters: parameters))
             }
             i = j
         }
         return stitches
+    }
+
+    /// The plain satin zigzag over crossings `range`, with stitch
+    /// shortening on the inside of bends and long-stitch auto split
+    /// applied (`SatinSpacing`). `generate` -- the strict, test-facing
+    /// variant -- deliberately emits raw crossings instead.
+    private static func satinZigzag(expandedA: [Point2D], expandedB: [Point2D], range: ClosedRange<Int>, parameters: StitchGenerationParameters) -> [Point2D] {
+        let crossings = SatinSpacing.shorten(expandedA: expandedA, expandedB: expandedB, range: range, parameters: parameters)
+        var stitches: [Point2D] = []
+        stitches.reserveCapacity(crossings.count * 2)
+        for c in crossings {
+            stitches.append(c.a)
+            stitches.append(c.b)
+        }
+        return SatinSpacing.autoSplit(stitches, parameters: parameters, seed: range.lowerBound)
     }
 
     /// Builds the closed quad-strip polygon spanning rail crossings `range`
@@ -820,7 +851,7 @@ public enum SatinColumnGenerator {
                 stitches.append(rail(k + 1, i))
             }
         }
-        return stitches
+        return SatinSpacing.autoSplit(stitches, parameters: parameters, seed: range.lowerBound &+ 7919)
     }
 
     /// Sews rail crossings `range` as a triple-run (bean-stitch) line along
@@ -1596,14 +1627,9 @@ public enum SatinColumnGenerator {
         // directly against a real raster-traced "B" logo's own stem,
         // after the corner-fan issue `nearestBoundaryPoint` fixes was
         // ruled out as the cause there).
-        let weightedLength = max(
-            PolygonGeometry.weightedPathLength(railA, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight),
-            PolygonGeometry.weightedPathLength(railB, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
-        )
-        let crossingCount = max(2, Int((weightedLength / density).rounded()))
-
-        let resampledA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
-        let resampledB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        // Same fine-grid-then-decimate placement as `computeCrossings` --
+        // see the comment there.
+        let (resampledA, resampledB, crossingCount) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
         // No twist check here: `branchingPlan` applies `isTwisted` to each
         // segment's KEPT crossings after junction trimming (see its own
         // doc comment for why checking the untrimmed segment rejected

@@ -166,6 +166,26 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     // CHANGELOG.md.
     public var satinDensityMM: Double = 0.32     // spacing between satin crossings
     public var maxSatinWidthMM: Double = 12.0    // beyond this, split or convert to fill
+    /// Vary satin spacing with column width -- wider spacing on narrow
+    /// columns, tighter on wide ones -- rather than a flat `satinDensityMM`
+    /// everywhere. See `SatinSpacing`. Off means the nominal density is
+    /// used at every width, as before.
+    public var satinAutoSpacing: Bool = true
+    /// Where along a crossing the spacing is measured: 0 = the outside
+    /// edge of a bend (standard; fullest outer coverage, most inner
+    /// bunching), 1 = the inside edge. Wilcom's "fractional spacing";
+    /// 0.25 trims the crossing count on curves a little without opening
+    /// the outer edge. Stitch shortening handles the inside either way.
+    public var satinSpacingOffsetFraction: Double = 0.25
+    /// Below this fraction of the target spacing on the inside of a bend,
+    /// alternate stitches are shortened so they stop before the inner rail
+    /// (`SatinSpacing.shorten`). 0 disables shortening.
+    public var satinShortenBelowFraction: Double = 0.6
+    /// A satin stitch (or the connector between two crossings) longer than
+    /// this is split at a randomised point (`SatinSpacing.autoSplit`) --
+    /// the machine's comfortable maximum without the split points forming
+    /// a line. 0 disables; `maxStitchLengthMM` still applies afterwards.
+    public var satinAutoSplitMM: Double = 7.0
     /// Below this, a section of a column is too narrow to zigzag reliably
     /// (thread bunching, not enough fabric width for a stable satin
     /// crossing) and sews as a triple-run (bean-stitch) line instead — the
@@ -252,6 +272,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case stitchLengthMM, minStitchLengthMM, maxStitchLengthMM
         case satinDensityMM, maxSatinWidthMM, minSatinWidthMM
+        case satinAutoSpacing, satinSpacingOffsetFraction, satinShortenBelowFraction, satinAutoSplitMM
         case fillSpacingMM, fillAngleDegrees, fillRowStaggerMM, fillPattern
         case underlayType, underlayStitchLengthMM, underlayInsetMM, zigzagUnderlaySpacingMM, zigzagUnderlayWidthThresholdMM
         case pullCompensationMM, pushCompensationMM, fabricType, allowBranchingSatin
@@ -279,6 +300,10 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         satinDensityMM = try c.decodeIfPresent(Double.self, forKey: .satinDensityMM) ?? defaults.satinDensityMM
         maxSatinWidthMM = try c.decodeIfPresent(Double.self, forKey: .maxSatinWidthMM) ?? defaults.maxSatinWidthMM
         minSatinWidthMM = try c.decodeIfPresent(Double.self, forKey: .minSatinWidthMM) ?? defaults.minSatinWidthMM
+        satinAutoSpacing = try c.decodeIfPresent(Bool.self, forKey: .satinAutoSpacing) ?? defaults.satinAutoSpacing
+        satinSpacingOffsetFraction = try c.decodeIfPresent(Double.self, forKey: .satinSpacingOffsetFraction) ?? defaults.satinSpacingOffsetFraction
+        satinShortenBelowFraction = try c.decodeIfPresent(Double.self, forKey: .satinShortenBelowFraction) ?? defaults.satinShortenBelowFraction
+        satinAutoSplitMM = try c.decodeIfPresent(Double.self, forKey: .satinAutoSplitMM) ?? defaults.satinAutoSplitMM
         fillSpacingMM = try c.decodeIfPresent(Double.self, forKey: .fillSpacingMM) ?? defaults.fillSpacingMM
         fillAngleDegrees = try c.decodeIfPresent(Double.self, forKey: .fillAngleDegrees)
         fillRowStaggerMM = try c.decodeIfPresent(Double.self, forKey: .fillRowStaggerMM) ?? defaults.fillRowStaggerMM
