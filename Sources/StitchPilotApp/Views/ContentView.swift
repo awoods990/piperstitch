@@ -740,6 +740,10 @@ private struct InspectorView: View {
                     }
                 }
 
+                PSSection("Finishing") {
+                    FinishingControls()
+                }
+
                 PSSection("Color Reduction") {
                     Picker("Preset", selection: $app.colorPreset) {
                         ForEach(ColorQuantizationPreset.allCases, id: \.self) { preset in
@@ -1744,5 +1748,52 @@ private struct TargetStitchCountRow: View {
         guard let target = Int(text), target > 0, target != current else { return }
         apply(target)
         text = ""
+    }
+}
+
+/// C7: the finishing touches an auto-digitizer offers -- outlines round
+/// every colour area, a satin border round the design.
+private struct FinishingControls: View {
+    @EnvironmentObject private var app: AppState
+    @State private var borderRGB: StitchPilotCore.RGBColor?
+    @State private var widthMM = DesignFinishing.borderWidthMM
+
+    var body: some View {
+        let palette = app.effectivePalette
+        let hasBorder = app.document?.objects.contains { $0.name == "Border" } ?? false
+        VStack(alignment: .leading, spacing: 8) {
+            Button("Outline Colour Areas") { app.addOutlines() }
+                .help("Adds a bean-stitch (triple run) outline around every filled shape in its own colour, sewn after that colour's fills. Sharpens edges on knits and towels.")
+                .disabled(app.document == nil)
+            Picker("Border Colour", selection: Binding(get: { borderRGB ?? darkest(palette)?.rgb }, set: { borderRGB = $0 })) {
+                ForEach(palette, id: \.rgb) { color in
+                    Label {
+                        Text(color.name)
+                    } icon: {
+                        Circle()
+                            .fill(Color(red: Double(color.rgb.r) / 255, green: Double(color.rgb.g) / 255, blue: Double(color.rgb.b) / 255))
+                            .frame(width: 10, height: 10)
+                    }
+                    .tag(Optional(color.rgb))
+                }
+            }
+            HStack {
+                Text("Border width").foregroundStyle(PSColor.ink2)
+                Spacer()
+                Stepper(value: $widthMM, in: 1...6, step: 0.5) { Text(String(format: "%.1f mm", widthMM)).monospacedDigit() }
+            }
+            .font(.system(size: 12))
+            Button(hasBorder ? "Replace Border" : "Add Satin Border") {
+                if let rgb = borderRGB ?? darkest(palette)?.rgb, let color = palette.first(where: { $0.rgb == rgb }) {
+                    app.addBorder(threadColor: color, widthMM: widthMM)
+                }
+            }
+            .help("A satin ring around the outside of the whole design (tatami where the ring can't be railed). Replaces an existing border.")
+            .disabled(app.document == nil)
+        }
+    }
+
+    private func darkest(_ palette: [StitchPilotCore.ThreadColor]) -> StitchPilotCore.ThreadColor? {
+        palette.min { Int($0.rgb.r) + Int($0.rgb.g) + Int($0.rgb.b) < Int($1.rgb.r) + Int($1.rgb.g) + Int($1.rgb.b) }
     }
 }

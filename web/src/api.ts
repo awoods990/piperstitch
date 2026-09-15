@@ -108,6 +108,8 @@ export const api = {
     selectedID?: string; paintColor: RGBColor; matchToThreadLibrary: boolean; palette?: ThreadColor[];
   }) => postJSON<EditResponse | PendingMerge>("/edit/paint", body),
   classify: (document: StitchDocument, objectIDs: string[]) => postJSON<EditResponse>("/edit/classify", { document, objectIDs }),
+  outlines: (document: StitchDocument) => postJSON<EditResponse>("/edit/outlines", { document }),
+  border: (document: StitchDocument, threadColor: ThreadColor, widthMM?: number) => postJSON<EditResponse>("/edit/border", { document, threadColor, widthMM }),
   lettering: (body: { document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D; replaceIDs?: string[] }) =>
     postJSON<EditResponse>("/edit/lettering", body),
 

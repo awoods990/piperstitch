@@ -70,6 +70,81 @@ public enum ShapeMerger {
         return traceMask(mask, sizing: sizing)
     }
 
+    /// `base` with every part that `covers` will sew over removed, except
+    /// a band `keepOverlapMM` wide under each cover's edge (registration:
+    /// the cover must have something to land on if the fabric shifts) --
+    /// Wilcom's "remove overlaps" (docs/WILCOM_MANUAL_REVIEW.md C2).
+    /// Pieces smaller than `minFragmentAreaMM2` are dropped so no tiny
+    /// object survives. Returns nil when nothing sewable is left.
+    ///
+    /// Returned as one shape per connected piece (each with its own
+    /// holes): a shape cut in two by a cover sews as two objects, not as
+    /// one outline-with-a-hole that a satin rail would bridge.
+    public static func subtractCoverage(of base: VectorShape, by covers: [VectorShape], keepOverlapMM: Double, minFragmentAreaMM2: Double) -> [VectorShape] {
+        guard !base.subPaths.isEmpty else { return [] }
+        let coverage = covers.filter { !$0.subPaths.isEmpty }
+        guard !coverage.isEmpty else { return [base] }
+        var bounds = base.boundingBox
+        for cover in coverage { bounds = bounds.union(cover.boundingBox) }
+        guard let sizing = rasterSizing(for: bounds) else { return [base] }
+        var mask = [Bool](repeating: false, count: sizing.width * sizing.height)
+        rasterize(polygons: base.subPaths.map { $0.points }, into: &mask, width: sizing.width, height: sizing.height,
+                  originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        var erase = [Bool](repeating: false, count: mask.count)
+        for cover in coverage {
+            rasterize(polygons: cover.subPaths.map { $0.points }, into: &erase, width: sizing.width, height: sizing.height,
+                      originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        }
+        // What survives outright, plus the registration band: covered
+        // base within `keepOverlapMM` of the surviving part -- the strip
+        // the cover's edge lands on. (Not a uniform band round every
+        // cover: where a cover extends past the base there is no seam,
+        // and a strip there would just be a sliver sewn twice.)
+        var remaining = [Bool](repeating: false, count: mask.count)
+        var removedAny = false
+        for i in mask.indices where mask[i] {
+            if erase[i] { removedAny = true } else { remaining[i] = true }
+        }
+        guard removedAny else { return [base] }
+        // Drop uncovered fragments below the minimum (before the band is
+        // added back, so a sliver doesn't survive on its band alone).
+        let minPixels = max(1, Int(minFragmentAreaMM2 * sizing.scale * sizing.scale))
+        guard RasterTracing.removeSmallComponents(&remaining, width: sizing.width, height: sizing.height, minAreaPixels: minPixels) else { return [] }
+        let radius = Int((keepOverlapMM * sizing.scale).rounded())
+        var near = remaining
+        if radius > 0 { dilate(&near, width: sizing.width, height: sizing.height, radius: radius) }
+        for i in mask.indices { mask[i] = remaining[i] || (mask[i] && near[i]) }
+        guard let traced = traceMask(mask, sizing: sizing) else { return [] }
+        return splitIntoPieces(traced)
+    }
+
+    /// One shape per outer boundary, each with the holes that lie inside
+    /// it. `traceMask` lists outers first, then every hole; an outer is a
+    /// subpath not inside any other subpath.
+    static func splitIntoPieces(_ shape: VectorShape) -> [VectorShape] {
+        let paths = shape.subPaths.filter { $0.points.count >= 3 }
+        guard paths.count > 1 else { return paths.isEmpty ? [] : [VectorShape(subPaths: paths)] }
+        func isInside(_ inner: SubPath, _ outer: SubPath) -> Bool {
+            let probe = inner.points[0]
+            let pointOfInner = Point2D(probe.x + (inner.points[1].x - probe.x) * 0.5, probe.y + (inner.points[1].y - probe.y) * 0.5)
+            return PolygonGeometry.pointInPolygon(pointOfInner, polygon: outer.points)
+        }
+        var outers: [Int] = [], holes: [Int] = []
+        for (i, path) in paths.enumerated() {
+            let insideAnother = paths.indices.contains { j in j != i && abs(PolygonGeometry.signedArea(paths[j].points)) > abs(PolygonGeometry.signedArea(path.points)) && isInside(path, paths[j]) }
+            if insideAnother { holes.append(i) } else { outers.append(i) }
+        }
+        return outers.map { o in
+            // A hole belongs to the smallest outer that contains it.
+            let mine = holes.filter { h in
+                let containing = outers.filter { isInside(paths[h], paths[$0]) }
+                let smallest = containing.min { abs(PolygonGeometry.signedArea(paths[$0].points)) < abs(PolygonGeometry.signedArea(paths[$1].points)) }
+                return smallest == o
+            }
+            return VectorShape(subPaths: [paths[o]] + mine.map { paths[$0] })
+        }
+    }
+
     /// Square dilation by `radius` pixels: a horizontal pass then a
     /// vertical pass, each marking every pixel within `radius` of a set
     /// one along that axis, in O(pixels) via a running count.

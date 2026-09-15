@@ -44,6 +44,8 @@ export interface InspectorProps {
   onStartAtCenter: (on: boolean) => void;
   onLaydown: (laydown: LaydownSettings | null) => void;
   onThreadWeight: (weight: ThreadWeight) => void;
+  onAddOutlines: () => void;
+  onAddBorder: (threadColor: ThreadColor, widthMM: number) => void;
 }
 
 /** The default laydown: white 40wt, 2 mm margin, two open layers. */
@@ -73,6 +75,7 @@ export default function Inspector(p: InspectorProps) {
         </label>
       </section>
       <LaydownSection p={p} />
+      <FinishingSection p={p} />
       <section className="panel">
         <h3>Colour reduction</h3>
         <select value={p.colorPreset} disabled={p.isVector || !p.hasSource} onChange={(e) => p.onColorPreset(e.target.value as ColorPresetId)}>
@@ -241,6 +244,30 @@ function TargetStitchCount({ current, onApply }: { current: number; onApply: (ta
         <button className="btn small" disabled={!valid} onClick={() => onApply(target)}>Apply</button>
       </span>
     </div>
+  );
+}
+
+/** C7: the finishing touches an auto-digitizer offers. */
+function FinishingSection({ p }: { p: InspectorProps }) {
+  const colorKey = (c: ThreadColor) => `${c.name}|${c.rgb.r},${c.rgb.g},${c.rgb.b}`;
+  const darkest = [...p.palette].sort((a, b) => (a.rgb.r + a.rgb.g + a.rgb.b) - (b.rgb.r + b.rgb.g + b.rgb.b))[0];
+  const [borderColor, setBorderColor] = useState<string>(darkest ? colorKey(darkest) : "");
+  const [width, setWidth] = useState(2.5);
+  const hasBorder = p.document.objects.some((o) => o.name === "Border");
+  return (
+    <section className="panel">
+      <h3>Finishing</h3>
+      <button className="btn small" disabled={p.busy} onClick={p.onAddOutlines}
+        title="Adds a bean-stitch (triple run) outline around every filled shape in its own colour, sewn after that colour's fills. Sharpens edges on knits and towels.">Outline colour areas</button>
+      <div className="row"><span>Border colour</span>
+        <select value={borderColor} onChange={(e) => setBorderColor(e.target.value)}>
+          {p.palette.map((c) => <option key={colorKey(c)} value={colorKey(c)}>{c.name}</option>)}
+        </select>
+      </div>
+      <NumberRow label="Border width (mm)" value={width} step={0.5} min={1} onChange={setWidth} />
+      <button className="btn small" disabled={p.busy || !borderColor} onClick={() => { const c = p.palette.find((x) => colorKey(x) === borderColor); if (c) p.onAddBorder(c, width); }}
+        title="A satin ring around the outside of the whole design (tatami where the ring can't be railed). Replaces an existing border.">{hasBorder ? "Replace border" : "Add satin border"}</button>
+    </section>
   );
 }
 

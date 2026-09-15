@@ -4,6 +4,31 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: overlap removal on vector import, outlines and satin border (C2, C7)
+
+- **Remove overlaps** (`DesignFinishing.removeOverlaps`, `ShapeMerger.
+  subtractCoverage`). Vector artwork is drawn back to front, so a badge's
+  three concentric discs used to sew three full discs on top of each
+  other. On SVG import (app, web build, CLI) every filled shape now loses
+  the part a later filled shape covers, keeping a 1.5 mm registration
+  band beside the surviving part so the cover has stitching to land on;
+  leftovers under 4 mm² are dropped, a shape cut in two becomes two
+  objects ("Object 3", "Object 3 (2)"), a shape covered entirely is
+  gone. Untouched shapes keep their exact vector geometry; cut ones are
+  re-traced at 0.1 mm. Raster imports are unaffected (a trace has no
+  overlaps). The badge test SVG: three rings and two half-discs, each
+  sewn once.
+- **Outline colour areas** (`DesignFinishing.outlineObjects`): one click
+  adds a bean-stitch (triple run) outline round every filled object in
+  its own colour, following holes too; the sequencer's details-last
+  rule sews each after its colour's fills. Never added twice.
+- **Add satin border** (`DesignFinishing.borderObject`): a ring (2.5 mm
+  by default, colour of your choice) round the outside of the whole
+  design, classified like any shape (satin where it can be railed).
+  Replaces an existing border. Both in a new Finishing panel (Mac app
+  and web; server `/edit/outlines`, `/edit/border`).
+- Tests: `DesignFinishingTests` (3) — 383 pass.
+
 ## Changed: locks on every trim, chord-gap runs, thread weight, tatami jitter, short buried travel (B2, B3, B5, B6, C3)
 
 - **Tie-in and tie-off around every trim** (B2). Lock stitches were only

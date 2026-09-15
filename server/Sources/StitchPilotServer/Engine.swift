@@ -79,8 +79,13 @@ enum DocumentBuilder {
                       matchToThreadLibrary: Bool, palette: [ThreadColor]?, fabricType: FabricType) -> StitchDocument {
         let effectivePalette = (palette?.isEmpty == false) ? palette! : ThreadLibrary.genericPalette
         var objects: [EmbroideryObject] = []
-        for (i, shape) in source.shapes.enumerated() {
-            let fitted = shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: source.bounds)
+        var fittedPieces: [[VectorShape]] = source.shapes.map { [$0.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: source.bounds)] }
+        if source.pixelWidth == 0 {
+            // Vector fills overlap back to front; sew each region once (C2).
+            fittedPieces = DesignFinishing.removeOverlaps(fittedPieces.map { $0[0] }, opaque: source.fillColors.map { $0 != nil })
+        }
+        for (i, pieces) in fittedPieces.enumerated() {
+          for (pieceIndex, fitted) in pieces.enumerated() {
             let detectedRGB = (i < source.fillColors.count ? source.fillColors[i] : nil) ?? RGBColor(hex: 0x000000)
             let threadColor: ThreadColor
             // `bestMatch`, not the strict `nearestMatch`: automatic
@@ -99,8 +104,9 @@ enum DocumentBuilder {
             var parameters = StitchGenerationParameters()
             parameters.fabricType = fabricType
             let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
-            objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
+            objects.append(EmbroideryObject(name: pieceIndex == 0 ? "Object \(i + 1)" : "Object \(i + 1) (\(pieceIndex + 1))", shape: fitted, stitchType: stitchType,
                                              threadColor: threadColor, parameters: parameters))
+          }
         }
         objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
         objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)

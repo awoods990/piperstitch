@@ -167,8 +167,13 @@ do {
     for shape in rawShapes { combined = combined.union(shape.boundingBox) }
 
     var objects: [EmbroideryObject] = []
-    for (i, shape) in rawShapes.enumerated() {
-        let fitted = shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: combined)
+    var fittedPieces: [[VectorShape]] = rawShapes.map { [$0.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: combined)] }
+    if isSVG {
+        // Vector fills overlap back to front; sew each region once (C2).
+        fittedPieces = DesignFinishing.removeOverlaps(fittedPieces.map { $0[0] }, opaque: fillColors.map { $0 != nil })
+    }
+    for (i, pieces) in fittedPieces.enumerated() {
+      for (pieceIndex, fitted) in pieces.enumerated() {
         let detectedRGB = (i < fillColors.count ? fillColors[i] : nil) ?? RGBColor(hex: 0x000000)
         let threadColor = ThreadLibrary.nearestMatch(to: detectedRGB) ?? .generic(detectedRGB)
         var parameters = StitchGenerationParameters()
@@ -183,8 +188,9 @@ do {
             parameters.fabricType = fabric
         }
         let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
-        objects.append(EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
+        objects.append(EmbroideryObject(name: pieceIndex == 0 ? "Object \(i + 1)" : "Object \(i + 1) (\(pieceIndex + 1))", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))
+      }
     }
     objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
     objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)

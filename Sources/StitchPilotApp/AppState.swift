@@ -1130,7 +1130,7 @@ final class AppState: ObservableObject {
                 }
             }
 
-            rebuildDocument(rawShapes: rawShapes, fillColors: fillColors, combinedBounds: combined, name: url.deletingPathExtension().lastPathComponent)
+            rebuildDocument(rawShapes: rawShapes, fillColors: fillColors, combinedBounds: combined, name: url.deletingPathExtension().lastPathComponent, isVector: !isRasterURL(url))
             statusMessage = "Imported \(rawShapes.count) shape(s) from \(url.lastPathComponent)."
             // Digitize right away rather than waiting for a separate manual
             // step -- the preview should reflect what's on screen without
@@ -1163,12 +1163,17 @@ final class AppState: ObservableObject {
     private var lastFillColors: [StitchPilotCore.RGBColor?] = []
     private var lastCombinedBounds: BoundingBox = .empty
     private var lastName: String = "Design"
+    /// True when `lastRawShapes` came from vector artwork, whose filled
+    /// shapes overlap back to front and need `DesignFinishing.
+    /// removeOverlaps` (a raster trace has no overlaps by construction).
+    private var lastSourceIsVector = false
 
-    private func rebuildDocument(rawShapes: [VectorShape], fillColors: [StitchPilotCore.RGBColor?], combinedBounds: BoundingBox, name: String) {
+    private func rebuildDocument(rawShapes: [VectorShape], fillColors: [StitchPilotCore.RGBColor?], combinedBounds: BoundingBox, name: String, isVector: Bool) {
         lastRawShapes = rawShapes
         lastFillColors = fillColors
         lastCombinedBounds = combinedBounds
         lastName = name
+        lastSourceIsVector = isVector
         regenerateFromStoredGeometry()
     }
 
@@ -1241,6 +1246,33 @@ final class AppState: ObservableObject {
             document = current
             scheduleLiveRegenerate()
         }
+    }
+
+    /// C7: a bean-stitch outline round every filled object.
+    func addOutlines() {
+        guard var current = document else { return }
+        let outlines = DesignFinishing.outlineObjects(for: current)
+        guard !outlines.isEmpty else { statusMessage = "Every filled object already has an outline."; return }
+        commitImmediateUndoSnapshot()
+        current.objects += outlines
+        document = current
+        statusMessage = "Added \(outlines.count) outline\(outlines.count == 1 ? "" : "s")."
+        scheduleLiveRegenerate()
+    }
+
+    /// C7: a satin border round the whole design (replaces an existing one).
+    func addBorder(threadColor: ThreadColor, widthMM: Double) {
+        guard var current = document else { return }
+        current.objects.removeAll { $0.name == "Border" }
+        guard let border = DesignFinishing.borderObject(for: current, widthMM: widthMM, threadColor: threadColor) else {
+            statusMessage = "Couldn't build a border round this design."
+            return
+        }
+        commitImmediateUndoSnapshot()
+        current.objects.append(border)
+        document = current
+        statusMessage = "Added a \(String(format: "%.1f", widthMM)) mm border."
+        scheduleLiveRegenerate()
     }
 
     /// The design's thread weight (C3) -- written onto every object, like
@@ -1345,8 +1377,13 @@ final class AppState: ObservableObject {
 
     private func regenerateFromStoredGeometry() {
         var objects: [EmbroideryObject] = []
-        for (i, shape) in lastRawShapes.enumerated() {
-            let fitted = shape.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: lastCombinedBounds)
+        var fittedPieces: [[VectorShape]] = lastRawShapes.map { [$0.fitToPhysicalSize(widthMM: physicalWidthMM, heightMM: physicalHeightMM, within: lastCombinedBounds)] }
+        if lastSourceIsVector {
+            // Vector fills overlap back to front; sew each region once (C2).
+            fittedPieces = DesignFinishing.removeOverlaps(fittedPieces.map { $0[0] }, opaque: lastFillColors.map { $0 != nil })
+        }
+        for (i, pieces) in fittedPieces.enumerated() {
+          for (pieceIndex, fitted) in pieces.enumerated() {
             let detectedRGB = (i < lastFillColors.count ? lastFillColors[i] : nil) ?? StitchPilotCore.RGBColor(hex: 0x000000)
             let threadColor: StitchPilotCore.ThreadColor
             // `bestMatch`, not the strict `nearestMatch`: automatic
@@ -1364,9 +1401,10 @@ final class AppState: ObservableObject {
             }
             let parameters = StitchGenerationParameters()
             let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
-            let object = EmbroideryObject(name: "Object \(i + 1)", shape: fitted, stitchType: stitchType,
+            let object = EmbroideryObject(name: pieceIndex == 0 ? "Object \(i + 1)" : "Object \(i + 1) (\(pieceIndex + 1))", shape: fitted, stitchType: stitchType,
                                            threadColor: threadColor, parameters: parameters)
             objects.append(object)
+          }
         }
         // Each shape above was classified purely on its own geometry, with
         // no notion that several of them are letters of the same word --

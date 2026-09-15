@@ -55,6 +55,36 @@ public enum RasterTracing {
         return components
     }
 
+    /// Clears every 8-connected component of `mask` smaller than
+    /// `minAreaPixels`; returns whether anything is left.
+    @discardableResult
+    public static func removeSmallComponents(_ mask: inout [Bool], width: Int, height: Int, minAreaPixels: Int) -> Bool {
+        var visited = [Bool](repeating: false, count: width * height)
+        var anyKept = false
+        let neighborOffsets = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+        for start in mask.indices where mask[start] && !visited[start] {
+            var queue = [start]
+            visited[start] = true
+            var head = 0
+            while head < queue.count {
+                let idx = queue[head]; head += 1
+                let cx = idx % width, cy = idx / width
+                for (dx, dy) in neighborOffsets {
+                    let nx = cx + dx, ny = cy + dy
+                    guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                    let nIdx = ny * width + nx
+                    if mask[nIdx], !visited[nIdx] { visited[nIdx] = true; queue.append(nIdx) }
+                }
+            }
+            if queue.count < minAreaPixels {
+                for idx in queue { mask[idx] = false }
+            } else {
+                anyKept = true
+            }
+        }
+        return anyKept
+    }
+
     // MARK: - Moore-neighbor boundary tracing
 
     /// Compass directions in cyclic order (each adjacent to the next); the

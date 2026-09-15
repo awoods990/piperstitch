@@ -171,9 +171,8 @@ recommendation**. Priority is by expected sew-out impact per hour of work.
 | 12 | B5, B6, B2, B3, C3 | 1.5 d total | Polish |
 | 13 | C2, C7 | 2 d | SVG overlap cleanup; outline/border options |
 
-**Status (2026-09-15):** A1–A7, B1–B3, B5–B7, C1, C3–C6 are implemented —
-see CHANGELOG.md. Remaining: C2 (SVG overlap removal), C7 (outline colour
-areas / satin border), B8 (raised satin).
+**Status (2026-09-15):** every item except B8 (raised satin, low
+priority) is implemented — A1–A7, B1–B3, B5–B7, C1–C7. See CHANGELOG.md.
 
 **Found along the way — next engine item:** on a fill with holes or
 concave notches (any "B"), most trims come from the tatami's own chain

@@ -41,6 +41,34 @@ func editRoutes(_ engine: RoutesBuilder) {
         }
     }
 
+    /// AppState.addOutlines -- a bean-stitch outline round every filled object (C7).
+    edit.post("outlines") { req -> EditResponse in
+        struct In: Content { var document: StitchDocument }
+        let body = try req.content.decode(In.self)
+        return try await Engine.run {
+            var current = body.document
+            let outlines = DesignFinishing.outlineObjects(for: current)
+            guard !outlines.isEmpty else { throw Abort(.unprocessableEntity, reason: "Every filled object already has an outline.") }
+            current.objects += outlines
+            return EditResponse(document: current, selectedIDs: outlines.map(\.id), status: "Added \(outlines.count) outline\(outlines.count == 1 ? "" : "s").")
+        }
+    }
+
+    /// AppState.addBorder -- a satin border round the whole design (C7).
+    edit.post("border") { req -> EditResponse in
+        struct In: Content { var document: StitchDocument; var threadColor: ThreadColor; var widthMM: Double? }
+        let body = try req.content.decode(In.self)
+        return try await Engine.run {
+            var current = body.document
+            current.objects.removeAll { $0.name == "Border" }
+            guard let border = DesignFinishing.borderObject(for: current, widthMM: body.widthMM ?? DesignFinishing.borderWidthMM, threadColor: body.threadColor) else {
+                throw Abort(.unprocessableEntity, reason: "Couldn't build a border round this design.")
+            }
+            current.objects.append(border)
+            return EditResponse(document: current, selectedIDs: [border.id], status: "Added a \(String(format: "%.1f", body.widthMM ?? DesignFinishing.borderWidthMM)) mm border.")
+        }
+    }
+
     /// AppState.eraseStroke
     edit.post("erase") { req -> EditResponse in
         struct In: Content { var document: StitchDocument; var points: [Point2D]; var radiusMM: Double; var selectedIDs: [UUID]? }

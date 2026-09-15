@@ -307,6 +307,8 @@ export default function App() {
       : o.stitchType === "tatamiFill" ? { ...o, parameters: { ...o.parameters, fillSpacingMM: clamp(o.parameters.fillSpacingMM * scale) } } : o) },
       { status: `Aiming for about ${target.toLocaleString()} stitches.` });
   };
+  const onAddOutlines = () => withBusy("Adding outlines…", async () => { if (!document) return; applyEdit(await api.outlines(document)); });
+  const onAddBorder = (threadColor: ThreadColor, widthMM: number) => withBusy("Adding border…", async () => { if (!document) return; applyEdit(await api.border(document, threadColor, widthMM)); });
   const onThreadWeight = (threadWeight: ThreadWeight) => {
     if (!document) return;
     if (answers) setAnswers({ ...answers, threadWeight });
@@ -449,7 +451,7 @@ export default function App() {
           onTool={setTool} onPrefs={setPrefs} onSelect={onSelect} onTranslate={onTranslate} onScale={onScale} onStroke={onStroke}
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}
-          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onLaydown={onLaydown} onThreadWeight={onThreadWeight} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
+          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onLaydown={onLaydown} onThreadWeight={onThreadWeight} onAddOutlines={onAddOutlines} onAddBorder={onAddBorder} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
           onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} onOpenProjects={onOpenProjectsSheet} />
         {sheets}
       </>
