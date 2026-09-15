@@ -237,19 +237,13 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// letter like "A," "B," "R," "H") into stroke segments and rail-
     /// fitting each independently, rather than falling back to tatami
     /// fill the moment `canRepresentAsSingleSatinColumn` rejects the whole
-    /// shape as one column. Defaults to `true`: real-file verification
-    /// (Amerus, LIBBi, the Boston Red Sox "B") and a visual review of the
-    /// rendered output were the gate for this, not a code change alone —
-    /// see DIGITIZING_ENGINE.md's branching-letter satin entries. Purely
-    /// additive regardless: a shape that can't be rail-fit as branching
-    /// satin (`SatinColumnGenerator.canRepresentAsBranchingSatinColumn`
-    /// returning `false`) falls straight through to the exact same
-    /// tatami-fill behavior this engine always had, so turning this on
-    /// can only add real satin coverage somewhere it wasn't possible
-    /// before, never take away working output. See
+    /// shape as one column. Defaults to `false`: this is stage 3 of the
+    /// branching-letter satin work (see DIGITIZING_ENGINE.md) — real-file
+    /// verification and a visual review are the gate before this becomes
+    /// the default, not a code change alone. See
     /// `StitchTypeClassifier.classify` and `DigitizePipeline`'s `.satin`
     /// case for where this is actually consulted.
-    public var allowBranchingSatin: Bool = true
+    public var allowBranchingSatin: Bool = false
 
     // Phase 3 — reserved for object overlap / inset-outset (next).
 

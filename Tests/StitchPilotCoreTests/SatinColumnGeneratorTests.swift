@@ -74,14 +74,10 @@ struct SatinColumnGeneratorTests {
             _ = try SatinColumnGenerator.generatePartial(for: hShape, parameters: params())
         }
 
-        // The pipeline must still produce real output for this object
-        // even though the single-column path above rejects it -- either
-        // via the branching decomposition (`allowBranchingSatin` defaults
-        // to `true`; this exact shape is representable that way, see
-        // `BranchingSatinGeneratorTests`), or, if that weren't available,
-        // falling back to tatami fill the same way any other
-        // geometrically-unsuitable satin shape already does. Either way,
-        // this must never abort the whole document's digitize.
+        // The pipeline must still produce real output for this object --
+        // falling back to tatami fill (the same fallback any other
+        // geometrically-unsuitable satin shape already gets), not
+        // aborting the whole document's digitize.
         let object = EmbroideryObject(name: "H", shape: hShape, stitchType: .satin,
                                        threadColor: .generic(RGBColor(hex: 0x000000)), parameters: params())
         let doc = StitchDocument(name: "BranchingH", physicalWidthMM: 15, physicalHeightMM: 20, objects: [object])
