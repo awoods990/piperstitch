@@ -18,17 +18,28 @@ public enum DigitizePipelineError: Error, LocalizedError {
 /// underlay, compensation, and quality analysis are separate modules added
 /// in later phases; this is intentionally the minimal Phase 1/2 slice.
 public enum DigitizePipeline {
-    /// A same-color jump longer than this gets a trim inserted before it
-    /// (spec §26: "insert trim commands where supported... maximum jump
-    /// without trim"). A jump this long would otherwise drag a visible
-    /// strand of thread across the gap between two same-color objects that
-    /// happen to be far apart — trimming there costs a little production
-    /// time but avoids thread carry across exposed fabric (spec §25: "Never
-    /// place obvious travel stitches across exposed design areas"). This
-    /// doesn't shorten the physical travel itself, only whether the thread
-    /// stays attached across it — `QualityAnalyzer` separately flags long
-    /// jumps regardless of whether they got trimmed, since the machine
-    /// still has to travel there either way.
+    /// The longest same-color connector between two *objects* that can be
+    /// left as an untrimmed thread carry. Industry practice (Wilcom's
+    /// reference manual, Connectors chapter: "usually, connectors shorter
+    /// than 3 mm are not visible on the final embroidery") -- anything
+    /// longer lies on top of the finished piece as a loose strand unless
+    /// stitching sewn *afterwards* covers it. So a gap above this is first
+    /// offered to `HiddenTravelRouter` (buried running stitch under later
+    /// satin coverage, no trim) and, failing that, trimmed (spec §26/§25).
+    /// This used to be 15 mm on the assumption a short carry "ends up
+    /// buried once something covers it" -- which is only true when
+    /// something does; see docs/WILCOM_MANUAL_REVIEW.md A1.
+    public static let visibleConnectorMM = 3.0
+
+    /// The longest connector *inside* one object (a tatami fill's chains on
+    /// either side of a wide hole -- see `TatamiFillGenerator.generateRuns`)
+    /// that is sewn as a plain stitch rather than broken into a real
+    /// trim+jump. Kept separate from `visibleConnectorMM`: an intra-fill
+    /// connector that stays inside the shape is sewn over by the rows that
+    /// follow it, and a trim is real production cost (a stop, a cut, a
+    /// re-anchor) -- finely detailed fills can have dozens of such short
+    /// connectors. `TatamiFillGenerator` additionally breaks any connector
+    /// over 8 mm whose path leaves the shape, regardless of this value.
     public static let defaultMaxJumpWithoutTrimMM = 15.0
 
     /// The distinct thread colors in sewing order, one per color *run*
@@ -49,7 +60,10 @@ public enum DigitizePipeline {
         return colors
     }
 
-    public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> StitchPlan {
+    /// `maxJumpWithoutTrimMM` is the inter-object connector threshold (see
+    /// `visibleConnectorMM`, its default); intra-object breaks always use
+    /// `defaultMaxJumpWithoutTrimMM`.
+    public static func flatten(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = visibleConnectorMM) throws -> StitchPlan {
         try flattenWithColors(document, maxJumpWithoutTrimMM: maxJumpWithoutTrimMM).plan
     }
 
@@ -60,15 +74,15 @@ public enum DigitizePipeline {
     /// hundreds of small objects (a detailed raster import especially) is a
     /// real, user-visible slowdown, not just wasted CPU cycles. Callers that
     /// need both should prefer this over `flatten(_:)` + `colorSequence(for:)`.
-    public static func flattenWithColors(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = defaultMaxJumpWithoutTrimMM) throws -> (plan: StitchPlan, colors: [ThreadColor]) {
+    public static func flattenWithColors(_ document: StitchDocument, maxJumpWithoutTrimMM: Double = visibleConnectorMM) throws -> (plan: StitchPlan, colors: [ThreadColor]) {
         // Hidden travel routing (spec §25/§26): a same-color gap long
         // enough to otherwise need a trim gets routed as buried running
-        // stitch instead, when the path is entirely covered by the next
+        // stitch instead, when the path is entirely covered by a later
         // object's own upcoming stitching — see `HiddenTravelRouter`. Uses
         // the *actual* trim threshold this call is using, since bridging a
         // gap that wouldn't have been trimmed anyway just adds stitches
         // for no benefit.
-        let bridged = HiddenTravelRouter.bridgeSameColorGaps(try sequencedGeneratedObjects(document, maxJumpWithoutTrimMM: maxJumpWithoutTrimMM), thresholdMM: maxJumpWithoutTrimMM)
+        let bridged = HiddenTravelRouter.bridgeSameColorGaps(try sequencedGeneratedObjects(document, maxJumpWithoutTrimMM: defaultMaxJumpWithoutTrimMM), thresholdMM: maxJumpWithoutTrimMM)
         let generated = bridged.map { (color: $0.object.threadColor, runs: $0.runs) }
 
         var colors: [ThreadColor] = []

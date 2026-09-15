@@ -9,8 +9,9 @@ struct SequencingTests {
 
     @Test func shortSameColorJumpGetsNoTrim() throws {
         let color = RGBColor(hex: 0xFF0000)
+        // A 2mm gap -- under the 3mm visible-connector rule.
         let doc = StitchDocument(name: "Close", physicalWidthMM: 20, physicalHeightMM: 5,
-                                  objects: [makeObject(offsetX: 0, color: color), makeObject(offsetX: 10, color: color)])
+                                  objects: [makeObject(offsetX: 0, color: color), makeObject(offsetX: 7, color: color)])
         let plan = try DigitizePipeline.flatten(doc)
         // Just the final trim at the end of the design -- no color change, gap is short.
         #expect(plan.trimCount == 1)
@@ -32,9 +33,12 @@ struct SequencingTests {
                                   objects: [makeObject(offsetX: 0, color: color), makeObject(offsetX: 10, color: color)])
 
         let withDefaultThreshold = try DigitizePipeline.flatten(doc)
-        #expect(withDefaultThreshold.trimCount == 1) // ~5mm gap, under the 15mm default
+        // A 5mm same-color carry with nothing sewn over it afterwards would
+        // lie on the surface as a loose strand -- over the 3mm visible-
+        // connector rule, so it's trimmed (docs/WILCOM_MANUAL_REVIEW.md A1).
+        #expect(withDefaultThreshold.trimCount == 2)
 
-        let withTightThreshold = try DigitizePipeline.flatten(doc, maxJumpWithoutTrimMM: 2.0)
-        #expect(withTightThreshold.trimCount == 2) // same gap now exceeds a 2mm threshold
+        let withLooseThreshold = try DigitizePipeline.flatten(doc, maxJumpWithoutTrimMM: 8.0)
+        #expect(withLooseThreshold.trimCount == 1) // same gap is under an explicit 8mm threshold
     }
 }
