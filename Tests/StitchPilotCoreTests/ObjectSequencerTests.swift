@@ -217,4 +217,57 @@ struct ObjectSequencerTests {
         // Whatever order flatten actually sews in, colorSequence must agree exactly.
         #expect(colors.count == plan.colorChangeCount + 1)
     }
+
+    // MARK: - details last, cap ordering (docs/WILCOM_MANUAL_REVIEW.md B7)
+
+    private func box(_ minX: Double, _ minY: Double, w: Double, h: Double, name: String, type: StitchType, color: UInt32, fabric: FabricType = .standard) -> EmbroideryObject {
+        let shape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(minX, minY), Point2D(minX + w, minY), Point2D(minX + w, minY + h), Point2D(minX, minY + h),
+        ], closed: true)])
+        var p = StitchGenerationParameters()
+        p.fabricType = fabric
+        return EmbroideryObject(name: name, shape: shape, stitchType: type, threadColor: .generic(RGBColor(hex: color)), parameters: p)
+    }
+
+    @Test func detailsSewAfterTheBulkOfTheirOwnColour() {
+        // A red outline authored first and sitting nearest the start,
+        // two red fills, then a blue fill. The outline must sew after
+        // both red fills but still before blue.
+        let outline = box(0, 0, w: 3, h: 3, name: "outline", type: .runningStitch, color: 0xFF0000)
+        let fillA = box(10, 0, w: 30, h: 30, name: "fillA", type: .tatamiFill, color: 0xFF0000)
+        let fillB = box(50, 0, w: 30, h: 30, name: "fillB", type: .tatamiFill, color: 0xFF0000)
+        let blue = box(90, 0, w: 30, h: 30, name: "blue", type: .tatamiFill, color: 0x0000FF)
+        let names = ObjectSequencer.sequence([outline, fillA, fillB, blue]).map { $0.name }
+        // (The two fills may swap -- 2-opt is free to shorten the jump to blue.)
+        #expect(Set(names.prefix(2)) == ["fillA", "fillB"] && names[2] == "outline" && names[3] == "blue", "\(names)")
+        // A tiny same-colour accent (well under 2% of the design) is a detail too.
+        let accent = box(5, 5, w: 2, h: 2, name: "accent", type: .tatamiFill, color: 0xFF0000)
+        let names2 = ObjectSequencer.sequence([accent, fillA, fillB]).map { $0.name }
+        #expect(names2.last == "accent", "\(names2)")
+    }
+
+    @Test func capsSewBottomRowFirstAndCentreOut() {
+        // Two rows of five "letters" on a structured cap, design centre x = 50.
+        func row(_ y: Double, prefix: String) -> [EmbroideryObject] {
+            (0..<5).map { i in box(Double(i) * 20 + 2, y, w: 16, h: 12, name: "\(prefix)\(i)", type: .satin, color: 0x000000, fabric: .structuredCap) }
+        }
+        let top = row(0, prefix: "T"), bottom = row(30, prefix: "B")
+        let names = ObjectSequencer.sequence(top + bottom).map { $0.name }
+        // Bottom row first (larger y is lower on the design), centre letter
+        // (index 2) first, then out to the right, then left from the centre.
+        #expect(names == ["B2", "B3", "B4", "B1", "B0", "T2", "T3", "T4", "T1", "T0"], "\(names)")
+        // Not a cap: the plain nearest-neighbour order reads left to right.
+        let flat = ObjectSequencer.sequence(row(0, prefix: "F").map { var o = $0; o.parameters.fabricType = .knit; return o }).map { $0.name }
+        #expect(flat == ["F0", "F1", "F2", "F3", "F4"], "\(flat)")
+    }
+
+    @Test func capOrderingStillGroupsColoursAndRespectsContainment() {
+        let background = box(0, 0, w: 100, h: 60, name: "bg", type: .tatamiFill, color: 0x0000FF, fabric: .unstructuredCap)
+        let letterA = box(10, 20, w: 20, h: 20, name: "A", type: .satin, color: 0xFFFFFF, fabric: .unstructuredCap)
+        let letterB = box(40, 20, w: 20, h: 20, name: "B", type: .satin, color: 0xFFFFFF, fabric: .unstructuredCap)
+        let letterC = box(70, 20, w: 20, h: 20, name: "C", type: .satin, color: 0xFFFFFF, fabric: .unstructuredCap)
+        let names = ObjectSequencer.sequence([letterC, letterA, background, letterB]).map { $0.name }
+        #expect(names.first == "bg")
+        #expect(names.dropFirst() == ["B", "C", "A"], "\(names)")
+    }
 }

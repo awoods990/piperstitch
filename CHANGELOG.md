@@ -4,6 +4,24 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: sequencing — details last, caps bottom-up and centre-out (B7)
+
+- **Details last.** Within each colour block, running-stitch outlines
+  and small accents (under 2% of the design's area) now sew after the
+  block's bulk shapes, so a fine line lands on settled fabric instead of
+  being pushed by a fill sewn later. Colour grouping still wins, and
+  2-opt is costed so it never moves a detail back ahead of bulk.
+- **Caps.** When the fabric is headwear, objects sew from the row nearest
+  the sweatband upward and each row from the centre out (centre object,
+  that side to its end, back to the centre, the other side) — the panel
+  is held at the sweatband and pushes up and out as it sews. Distance
+  optimisation is skipped on caps; containment and colour grouping
+  still apply.
+- Not done: Wilcom's "bottom join" for towelling (joins hidden in the
+  pile) — the entry/exit points of a letter are set by its rails, not a
+  sequencing choice.
+- Trims on the test corpus unchanged or lower (Sigma Chi 35 → 34).
+
 ## Added: run-time estimate, target stitch count, stabiliser advice, start/end at hoop centre
 
 Shop-facing features from the Wilcom review (`docs/WILCOM_MANUAL_REVIEW.md`
