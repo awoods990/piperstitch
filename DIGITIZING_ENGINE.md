@@ -767,6 +767,90 @@ classification and coverage -- none of the synthetic P/B fixtures above
 are sensitive to any of the three effects fixed here, so this is the
 only test that actually exercises them.
 
+## Phase 2 (continued) — briefly defaulted on, reverted, then a real junction fix
+
+`allowBranchingSatin` was briefly flipped to default `true` (the entry
+above's own reasoning: purely additive, a shape that can't branch just
+falls back to tatami as always). Reverted the same day: a HIGH-resolution
+render of the real Red Sox "B" (only ever eyeballed at a lower preview
+resolution before) showed a real, visible defect at every point where
+branch segments meet -- `generateBranching`'s own doc comment had
+already flagged "no dedicated fan/patch" as a known simplification, but
+its actual visual severity (a sharp diagonal crease where the stitch
+direction jumps, not a subtle rough edge) hadn't been checked. Reverted
+via `git revert` (cleanly restores both the source and the tests that
+depended on the old default together); confirmed real files
+byte-identical to before the flip.
+
+**The junction fix took four attempts, each fixing what it targeted while
+exposing the next real problem:**
+
+1. **Pairwise blend between consecutive segments** (interpolate new
+   crossings between one segment's last crossing and the next's first,
+   picking whichever point correspondence stays spatially closest to
+   recover the two segments' own otherwise-unrelated rail-side labeling)
+   — had no visible effect. Diagnosed why via `topology.nodes` dump: the
+   Red Sox "B"'s own waist is a genuine 3-WAY meeting (the stem, the
+   upper bowl's arc, and the lower bowl's arc all share one node), not a
+   2-way seam -- a flat stitch list necessarily visits the three segments
+   in SOME linear order, so at most two of the three meetings ever end up
+   adjacent in it. Confirmed directly by zooming a high-res render on the
+   exact node position: three visibly different stitch directions
+   pinwheeling into one point.
+2. **Small local fill patch**, built by collecting each incident
+   segment's own single nearest-to-the-node rail point pair and sorting
+   ALL of them by raw angle around the node -- patch existed but was
+   invisible (too small: only the exact node-adjacent crossing
+   contributed, no real reach into any arm).
+3. **Larger version of the same patch** (pull in the last several
+   crossings from each arm, not just one) -- made the self-intersection
+   problem `nearNodePoints.sorted(by: angle)` has whenever a segment's
+   own A/B rails sit far apart in angle (the ordinary case for a real
+   stroke width) much worse: confirmed directly by rendering it, a
+   sparse, gap-riddled zigzag instead of a solid fill, since the "polygon"
+   crossed itself.
+4. **Radial-sweep patch** — abandoned synthesizing a polygon from rail
+   samples entirely; instead traced the shape's own REAL boundary around
+   the node via the same proven radial-ray-cast-from-one-center technique
+   `computeRingRails`/`computeSegmentRingRails` already use (star-shaped
+   from a center by construction, so it can never self-intersect). First
+   attempt sized the radius from the node's own `widthMM` directly (1.3x)
+   -- catastrophically wrong, because a junction NODE's own width is the
+   local stroke width where MULTIPLE arms' material overlaps (7.7-10.6mm
+   at the Red Sox "B"'s own waist), not any one arm's ordinary width away
+   from the junction; trimmed away most of a short connecting arm's own
+   length, leaving huge visible gaps. Capping the radius (`0.4x` node
+   width, hard ceiling 3mm) fixed the gaps, but handing the resulting
+   small polygon to `TatamiFillGenerator` (a ROW-based fill) produced a
+   dense, spiky, disconnected scribble -- confirmed directly by rendering
+   it: a small region with real concave notches between arms routinely
+   gets crossed more than twice by a single fixed-direction scanline row,
+   splitting it into several disconnected pieces.
+
+**What actually worked:** stitching the same radially-traced small
+region as a radial FAN instead -- alternating between the node's own
+center point and each boundary point in turn, all the way around
+(`junctionPatchFill`'s final form). Every single stitch is a straight
+line from a known-good center to a point already confirmed to be on the
+real boundary, so it can never partially miss the shape the way a fixed
+scanline can; this is also the standard real-world embroidery technique
+for a small round/star patch (a "wheel"/rosette stitch), not a
+workaround invented for this engine. Each arm's own crossings within the
+same patch radius are trimmed off (the crease-causing crossings
+themselves), so the fan fully replaces them rather than sitting
+alongside them. Visually confirmed via high-resolution renders zoomed on
+all three of the real Red Sox "B"'s junctions (the top hook/bowl meeting,
+and both waist nodes): clean round rosettes bridging the different
+stitch directions, not sharp creases -- a genuine, visible fix, not just
+"no longer throws."
+
+Verified: 346 tests pass; Amerus and LIBBi re-measured unaffected
+(byte-identical stitch counts to before this fix); `allowBranchingSatin`
+remains default `false` (this fix hasn't yet been through the same
+"flip the default" gate the earlier entry's flip-and-revert was about --
+a second, deliberate default flip is a separate future decision, not
+automatic just because this specific defect is fixed).
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster

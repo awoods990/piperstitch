@@ -813,16 +813,15 @@ public enum SatinColumnGenerator {
     /// every export format) needs to know a shape's satin came from one
     /// column or several stitched together.
     ///
-    /// Junctions themselves get no dedicated fan/patch yet — consecutive
-    /// segments' near-junction crossings simply follow each other in the
-    /// flat stitch list, the same way `generate` already transitions
-    /// between ordinary adjacent crossings. This can under- or over-cover
-    /// the small junction area compared to a proper radial patch; treated
-    /// here as an acceptable first approximation to prove the segment-
-    /// decomposition and sequencing mechanism end-to-end, with dedicated
-    /// junction stitching (`SATIN_JUNCTION_OVERLAP_MM` from the original
-    /// spec) as a follow-up refinement once this stage is verified against
-    /// real files.
+    /// Every node where two or more segments meet gets a dedicated radial
+    /// fan patch (`junctionPatchFill`) in place of each incident segment's
+    /// own crossings within that patch's radius — see that function's
+    /// own doc comment for why simply letting consecutive segments'
+    /// near-junction crossings follow each other in the flat list (this
+    /// function's original form, an acceptable first approximation while
+    /// the decomposition mechanism itself was being proven) turned out to
+    /// leave a real, visible crease at every junction once checked
+    /// against a real letterform at high resolution.
     public static func generateBranching(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
         guard !shape.subPaths.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("no outline was provided")
@@ -832,19 +831,180 @@ public enum SatinColumnGenerator {
             throw SatinGenerationError.shapeNotSuitable("couldn't derive a stroke topology for this shape")
         }
 
-        var stitches: [Point2D] = []
+        var edgeCrossings: [(edge: StrokeTopologyAnalyzer.Edge, expandedA: [Point2D], expandedB: [Point2D])] = []
         for edge in orderedEdges(topology) {
             let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons)
             guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters) else {
                 throw SatinGenerationError.shapeNotSuitable("a branch segment couldn't be rail-fit as satin")
             }
-            for i in 0..<crossings.expandedA.count {
-                stitches.append(crossings.expandedA[i])
-                stitches.append(crossings.expandedB[i])
+            guard !crossings.expandedA.isEmpty else { continue }
+            edgeCrossings.append((edge, crossings.expandedA, crossings.expandedB))
+        }
+        guard !edgeCrossings.isEmpty else {
+            throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
+        }
+
+        let nodesByID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
+        var incidentEdgeCount: [Int: Int] = [:]
+        for entry in edgeCrossings where entry.edge.startNodeID != entry.edge.endNodeID {
+            incidentEdgeCount[entry.edge.startNodeID, default: 0] += 1
+            incidentEdgeCount[entry.edge.endNodeID, default: 0] += 1
+        }
+        let patchedNodeIDs = Set(incidentEdgeCount.filter { $0.value >= minimumJunctionEdgeCount }.map { $0.key })
+
+        var patchByNode: [Int: [Point2D]] = [:]
+        for nodeID in patchedNodeIDs {
+            guard let node = nodesByID[nodeID] else { continue }
+            if let patch = junctionPatchFill(node: node, shapePolygons: polygons, parameters: parameters) {
+                patchByNode[nodeID] = patch
+            }
+        }
+
+        // Trim off whichever of each incident edge's own crossings near a
+        // patched node fall within that node's own patch radius -- those
+        // are exactly the crossings whose own direction never accounted
+        // for the OTHER edges meeting at the same point (the crease
+        // itself), now covered by the patch instead. Matching the same
+        // radius the patch itself was built from keeps the two exactly
+        // in sync: the patch's own boundary is where each arm's kept
+        // crossings pick back up.
+        var stitches: [Point2D] = []
+        var emittedPatchNodes = Set<Int>()
+        for entry in edgeCrossings {
+            let count = entry.expandedA.count
+            var lo = 0, hi = count
+            if entry.edge.startNodeID != entry.edge.endNodeID {
+                if let node = nodesByID[entry.edge.startNodeID], patchedNodeIDs.contains(entry.edge.startNodeID) {
+                    let radius = junctionPatchRadius(for: node)
+                    while lo < hi - 1, node.position.distance(to: midpoint(entry.expandedA[lo], entry.expandedB[lo])) <= radius { lo += 1 }
+                }
+                if let node = nodesByID[entry.edge.endNodeID], patchedNodeIDs.contains(entry.edge.endNodeID) {
+                    let radius = junctionPatchRadius(for: node)
+                    while hi > lo + 1, node.position.distance(to: midpoint(entry.expandedA[hi - 1], entry.expandedB[hi - 1])) <= radius { hi -= 1 }
+                }
+            }
+            if lo < hi {
+                for i in lo..<hi {
+                    stitches.append(entry.expandedA[i])
+                    stitches.append(entry.expandedB[i])
+                }
+            }
+            for nodeID in [entry.edge.startNodeID, entry.edge.endNodeID] where !emittedPatchNodes.contains(nodeID) {
+                if let patch = patchByNode[nodeID] {
+                    stitches.append(contentsOf: patch)
+                    emittedPatchNodes.insert(nodeID)
+                }
             }
         }
         guard !stitches.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
+        }
+        return stitches
+    }
+
+    /// A junction node needs a patch only once at least two DISTINCT
+    /// non-self-loop edges actually meet there (a self-loop's own
+    /// first/last crossing isn't at the node at all -- see
+    /// `computeSegmentRingRails`'s own doc comment -- so it can't
+    /// contribute a meaningful boundary point here); below that, there's
+    /// nothing for a patch to bridge.
+    private static let minimumJunctionEdgeCount = 2
+
+    /// How many samples `junctionPatchFill`'s radial sweep casts around a
+    /// full circle -- dense enough to trace a typical junction's own real
+    /// boundary shape (including a concave corner where two arms meet)
+    /// before `TatamiFillGenerator`'s own row spacing reduces it to the
+    /// actual stitch density, matching `ringRailSampleCount`'s identical
+    /// reasoning for the same tradeoff.
+    private static let junctionPatchSampleCount = 60
+
+    /// How far out from a junction node its own patch reaches, as a
+    /// multiple of the node's own local stroke width -- wide enough to
+    /// cover the real junction area (where multiple arms' own boundaries
+    /// genuinely diverge) without reaching so far that it eats into an
+    /// arm's own straight, already-smooth satin run. Deliberately
+    /// conservative (well under 1x the node's own width, and capped
+    /// absolutely besides): a junction NODE's own `widthMM` is the local
+    /// stroke width AT the point several arms' own material overlaps,
+    /// not any one arm's ordinary width away from the junction -- using
+    /// it directly and generously (`1.3x`, uncapped, tried first)
+    /// overestimated badly at exactly the nodes that need a patch most
+    /// (the real Red Sox "B"'s own waist nodes measured 7.7-10.6mm wide),
+    /// trimming away most of a short connecting arm's own length and
+    /// leaving huge gaps -- confirmed directly by rendering it.
+    private static let junctionPatchRadiusFactor = 0.4
+
+    /// Absolute ceiling on the radius above, regardless of the node's own
+    /// width -- the visible crease this patch fixes was itself only a
+    /// few mm across on the real file that motivated it; nothing this
+    /// large-scale needs a patch reaching further than that.
+    private static let junctionPatchMaxRadiusMM = 3.0
+
+    private static func junctionPatchRadius(for node: StrokeTopologyAnalyzer.Node) -> Double {
+        min(max(node.widthMM, 1.0) * junctionPatchRadiusFactor, junctionPatchMaxRadiusMM)
+    }
+
+    /// Traces the shape's own real boundary around `node` via the same
+    /// radial-sweep-from-one-center technique `computeRingRails`/
+    /// `computeSegmentRingRails` already use, rather than synthesizing a
+    /// polygon from disparate rail samples (tried first: sorting each
+    /// incident edge's own near-node rail points by raw angle around the
+    /// node produced a self-intersecting polygon whenever an edge's own A
+    /// and B rails sat far apart in angle, which is the ordinary case for
+    /// a real stroke width -- confirmed directly by rendering it: a
+    /// sparse, gap-riddled zigzag instead of a solid fill). A ray cast
+    /// from the node's own position, in any direction, always finds a
+    /// real, physically-meaningful boundary point -- clamped to
+    /// `junctionPatchRadius`, so a direction that runs straight down one
+    /// of the arms (where the nearest boundary is actually far away,
+    /// along that arm's own length) gets a point at the radius limit
+    /// instead of one arbitrarily far out.
+    ///
+    /// Stitches the resulting small, roughly star-shaped region as a
+    /// radial FAN -- alternating between the node's own center and each
+    /// boundary point in turn, all the way around -- rather than handing
+    /// it to `TatamiFillGenerator` as a row-based fill (tried first: rows
+    /// scanning across a small region with real concave notches between
+    /// arms routinely cross the boundary more than twice, splitting one
+    /// row into several disconnected pieces -- confirmed directly by
+    /// rendering it, a dense, spiky, disconnected scribble rather than a
+    /// clean fill, distinctly worse than the crease it was meant to
+    /// replace). A fan has no such problem: every single stitch is a
+    /// straight line from the center to a point already known to be on
+    /// the real boundary, so it can never partially miss the shape the
+    /// way a fixed-direction horizontal scanline can. This is also the
+    /// standard real-world embroidery technique for a small round/star
+    /// patch (a "wheel" or rosette stitch), not a workaround specific to
+    /// this engine. The boundary is resampled to `satinDensityMM`-spaced
+    /// points first (`junctionPatchSampleCount`'s own finer angular sweep
+    /// is for tracing the true boundary SHAPE accurately, including a
+    /// concave notch -- using all of it as spokes directly would sew far
+    /// more stitches, all piling onto the same center point, than the
+    /// small patch's own size calls for).
+    private static func junctionPatchFill(node: StrokeTopologyAnalyzer.Node, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> [Point2D]? {
+        let radius = junctionPatchRadius(for: node)
+        var boundary: [Point2D] = []
+        for i in 0..<junctionPatchSampleCount {
+            let theta = 2 * Double.pi * Double(i) / Double(junctionPatchSampleCount)
+            let direction = Point2D(cos(theta), sin(theta))
+            let hit = rayPolygonsIntersection(origin: node.position, direction: direction, polygons: shapePolygons)
+            let distance = hit.map { node.position.distance(to: $0) } ?? radius
+            let clamped = min(distance, radius)
+            boundary.append(Point2D(node.position.x + direction.x * clamped, node.position.y + direction.y * clamped))
+        }
+        guard boundary.count >= 3 else { return nil }
+        boundary.append(boundary[0])
+
+        let density = max(parameters.satinDensityMM, 0.1)
+        let perimeter = PolygonGeometry.pathLength(boundary)
+        guard perimeter > 0 else { return nil }
+        let spokeCount = max(6, Int((perimeter / density).rounded()))
+        let spokes = PolygonGeometry.resampleByCount(boundary, count: spokeCount)
+
+        var stitches: [Point2D] = []
+        for spoke in spokes {
+            stitches.append(node.position)
+            stitches.append(spoke)
         }
         return stitches
     }
