@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { ProjectSummary } from "../types";
 import { cm } from "../format";
+import { COARSE_QUERY, useMediaQuery } from "../useMediaQuery";
 
 interface Props {
   onFile: (file: File) => void;
@@ -14,6 +15,9 @@ interface Props {
 export default function DropZone({ onFile, busy, projects, onOpenProject, onDeleteProject }: Props) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  // A phone or tablet: no drag-and-drop to speak of, but a camera.
+  const touch = useMediaQuery(COARSE_QUERY);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -42,6 +46,11 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
         <input ref={input} type="file" accept="image/*,.svg" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
         {busy ? (
           <><div className="spinner" /><div className="drop-title">{busy}</div></>
+        ) : touch ? (
+          <>
+            <div className="drop-title">Tap to choose an image</div>
+            <div className="drop-sub">from your photos or files · PNG, JPEG, SVG, WebP and more</div>
+          </>
         ) : (
           <>
             <div className="drop-title">Drop an image or SVG here</div>
@@ -49,6 +58,14 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
           </>
         )}
       </div>
+      {touch && !busy && (
+        <>
+          {/* `capture` opens the camera directly on phones; a tablet or
+              laptop without one falls back to the normal picker. */}
+          <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
+          <button className="btn" onClick={() => camera.current?.click()}>📷 Take a photo of the artwork</button>
+        </>
+      )}
       {projects && projects.length > 0 && (
         <div className="projects">
           <div className="section-label">Your saved projects</div>
@@ -67,7 +84,7 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
       )}
       <div className="start-hints">
         <div><strong>Best results:</strong> clean logos with flat colours on a plain background.</div>
-        <div><strong>Your files stay yours:</strong> the finished DST/PES/JEF file downloads straight to your computer.</div>
+        <div><strong>Your files stay yours:</strong> the finished DST/PES/JEF file downloads straight to your device.</div>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import StitchCanvas, { type Tool } from "./StitchCanvas";
 import Inspector, { type InspectorProps } from "./Inspector";
 import type { Point2D } from "../types";
 import { HoopSelect } from "./HoopSelect";
+import { COARSE_QUERY, PHONE_QUERY, useMediaQuery } from "../useMediaQuery";
 
 
 export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "allowExtendedDensity"> {
@@ -48,7 +49,14 @@ export default function Editor(p: EditorProps) {
   const { document: doc, digitized, catalog } = p;
   const [showOriginal, setShowOriginal] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  // Phone layout: the inspector becomes a bottom sheet over the canvas
+  // instead of a side column, so the design gets the whole screen until the
+  // user asks for the controls.
+  const phone = useMediaQuery(PHONE_QUERY);
+  const touch = useMediaQuery(COARSE_QUERY);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const report = digitized?.report;
+  const selectedCount = p.selectedIDs.size;
   const brushCM = p.prefs.paintBrushRadiusMM / 10;
 
   return (
@@ -112,7 +120,7 @@ export default function Editor(p: EditorProps) {
 
       {p.error && <div className="error-bar">{p.error}</div>}
 
-      <div className="workspace">
+      <div className={"workspace" + (phone ? " phone" : "")}>
         <main className="canvas-area">
           {showOriginal && p.previewURL ? (
             <div className="original"><img src={p.previewURL} alt="Original artwork" /></div>
@@ -125,12 +133,25 @@ export default function Editor(p: EditorProps) {
             <span className="status-msg">{p.status}</span>
             <span className="grow" />
             {p.previewURL && <label className="check"><input type="checkbox" checked={showOriginal} onChange={(e) => setShowOriginal(e.target.checked)} /> Show original</label>}
-            <span className="hint">Scroll to zoom · Space+drag or Pan to move · double-click to fit</span>
+            <span className="hint">{touch ? "Pinch to zoom · drag to move · double-tap to fit" : "Scroll to zoom · Space+drag or Pan to move · double-click to fit"}</span>
             {report && <span className={"readiness-badge " + (report.isReadyToSew ? "ready" : "review")} title={report.issues.map((i) => `${i.severity}: ${i.message}`).join("\n")}>{report.score}/100 · {report.isReadyToSew ? "Ready to sew" : "Review recommended"}</span>}
           </div>
         </main>
 
-        <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} />
+        {phone ? (
+          <div className={"sheet-panel" + (sheetOpen ? " open" : "")}>
+            <button className="sheet-toggle" onClick={() => setSheetOpen((o) => !o)} aria-expanded={sheetOpen}>
+              <span className="sheet-grip" aria-hidden="true" />
+              <span>{selectedCount > 0 ? `${selectedCount} selected · ${sheetOpen ? "hide" : "edit"}` : sheetOpen ? "Hide details" : "Details & adjustments"}</span>
+              <span className="sheet-chevron" aria-hidden="true">{sheetOpen ? "▾" : "▴"}</span>
+            </button>
+            <div className="sheet-scroll">
+              <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} />
+            </div>
+          </div>
+        ) : (
+          <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} />
+        )}
       </div>
     </div>
   );

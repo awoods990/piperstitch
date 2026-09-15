@@ -172,9 +172,14 @@ button, input, select { font: inherit; color: inherit; }
 .obj-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
 .objects select { width: 118px; padding: 3px 6px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 
-@media (max-width: 860px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; }
+/* Tablet portrait (iPad 768-834px wide): a 340px side column would leave
+   the canvas cramped, so the inspector stacks under it instead. */
+@media (max-width: 1000px) and (min-width: 761px) {
+  .workspace { grid-template-columns: 1fr; grid-template-rows: 55% 1fr; }
   .sidebar { border-left: none; border-top: 1px solid var(--line); }
+  .status-bar .hint { display: none; }
+  .status-msg { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status-bar .check, .readiness-badge { white-space: nowrap; flex-shrink: 0; }
 }
 
 /* --- accounts --- */
@@ -302,3 +307,126 @@ button, input, select { font: inherit; color: inherit; }
 .promo-box { display: flex; flex-direction: column; gap: 4px; }
 .promo-box input { flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; text-transform: uppercase; letter-spacing: .04em; }
 .promo-ok { color: var(--readyText); font-size: 13px; }
+
+/* =====================================================================
+   Small screens and touch
+   One responsive app, not a separate mobile build: phones get the canvas
+   full-screen with the inspector as a bottom sheet, tablets stack, and any
+   touch device gets finger-sized targets. `PHONE_QUERY` in useMediaQuery.ts
+   must match the 760px breakpoint here.
+   ===================================================================== */
+
+/* iOS Safari's toolbars shrink the viewport as you scroll; dvh tracks that
+   so the editor never sits behind them or leaves a gap. */
+@supports (height: 100dvh) {
+  html, body, #root { height: 100dvh; }
+}
+
+/* Finger-sized targets wherever the pointer is a finger (phone OR tablet,
+   any width), and 16px inputs so iOS doesn't zoom the page on focus. */
+@media (pointer: coarse) {
+  .pill, .btn, .chip { min-height: 40px; }
+  .btn.small { min-height: 34px; }
+  .icon-btn { min-width: 36px; min-height: 36px; font-size: 18px; }
+  .choice { padding: 14px 16px; min-height: 56px; }
+  .font-choice { min-height: 48px; }
+  input[type=text], input[type=number], input[type=email], input:not([type]), select, textarea, .search { font-size: 16px; }
+  .row select, .row input[type=number], .row input[type=text], .panel select { padding: 9px 10px; }
+  .objects select { width: 130px; padding: 6px 8px; font-size: 14px; }
+  input[type=range] { height: 32px; }
+  .menu > button { padding: 12px 12px; font-size: 15px; }
+  .pill.select-pill select { min-height: 0; }
+  .canvas-hint { top: 10px; }
+}
+
+@media (max-width: 760px) {
+  body { overscroll-behavior: none; }
+
+  /* --- start screen --- */
+  .start { padding: max(56px, env(safe-area-inset-top) + 48px) 16px max(24px, env(safe-area-inset-bottom)); gap: 20px; }
+  .start-brand h1 { font-size: 26px; }
+  .start-brand p { font-size: 14px; }
+  .dropzone { min-height: 160px; padding: 16px; text-align: center; }
+  .drop-title { font-size: 17px; }
+  .start-hints { flex-direction: column; gap: 8px; text-align: center; }
+  .start-account { top: max(8px, env(safe-area-inset-top)); right: 10px; }
+
+  /* --- setup flow: the card is the screen --- */
+  .setup { padding: 0; align-items: stretch; }
+  .setup-card { width: 100%; height: 100%; max-height: none; border-radius: 0; border: none; box-shadow: none; padding: max(14px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); }
+  .setup-card h2 { font-size: 20px; }
+  .choices, .choices.two { grid-template-columns: 1fr; }
+  .setup-foot { padding-bottom: 0; }
+  .setup-foot .btn { min-height: 44px; }
+  .setup-foot .btn.primary { padding-left: 22px; padding-right: 22px; }
+  .step-count { display: none; }
+
+  /* --- editor chrome --- */
+  .topbar { padding: 6px 10px; padding-top: max(6px, env(safe-area-inset-top)); gap: 8px; }
+  .doc-name { max-width: 34vw; font-size: 13px; }
+  .brand span { display: none; }
+  /* Toolbars scroll sideways as one line instead of wrapping into a
+     three-deep stack that would eat half the screen. */
+  .toolbar { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding: 6px 10px; gap: 6px; }
+  .toolbar::-webkit-scrollbar { display: none; }
+  /* Fade the right edge so it's clear there's more to swipe to. */
+  .toolbar { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .toolbar .grow { display: none; }
+  .toolbar .sep { flex-shrink: 0; }
+  .pill { flex-shrink: 0; }
+  .menu-anchor .menu { position: fixed; left: 10px; right: 10px; top: auto; bottom: max(12px, env(safe-area-inset-bottom)); min-width: 0; }
+  .brush input[type=range] { width: 80px; }
+
+  /* --- workspace: canvas fills, inspector is a bottom sheet --- */
+  .workspace.phone { display: block; position: relative; }
+  /* The canvas stops above the collapsed sheet's handle; an open sheet
+     slides up over the canvas rather than squeezing it. */
+  .workspace.phone .canvas-area { position: absolute; inset: 0 0 calc(52px + env(safe-area-inset-bottom)) 0; }
+  /* Two rows: message | readiness badge, then the show-original checkbox.
+     The gesture hint moves onto the canvas (StitchCanvas draws it as a
+     pill until the first touch) so it doesn't crowd this bar. */
+  .workspace.phone .status-bar { display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 4px 10px; align-items: center; }
+  .workspace.phone .status-msg { grid-area: 1 / 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace.phone .readiness-badge { grid-area: 1 / 2; }
+  .workspace.phone .status-bar .check { grid-area: 2 / 1 / 3 / 3; }
+  .workspace.phone .status-bar .hint { display: none; }
+  .sheet-panel {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+    height: 52px; display: flex; flex-direction: column;
+    background: var(--panel); border-top: 1px solid var(--line); border-radius: 14px 14px 0 0;
+    box-shadow: 0 -6px 24px rgba(8,26,51,0.10);
+    transition: height .22s ease;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sheet-panel.open { height: min(72%, calc(100% - 60px)); }
+  .sheet-toggle {
+    flex-shrink: 0; height: 52px; display: flex; align-items: center; justify-content: center; gap: 10px;
+    background: none; border: none; cursor: pointer; font-weight: 600; color: var(--navy800); position: relative;
+  }
+  .sheet-grip { position: absolute; top: 6px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line); }
+  .sheet-chevron { color: var(--label); }
+  .sheet-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .sheet-scroll .sidebar { border: none; padding: 4px 12px 16px; }
+
+  /* --- modals become full-height sheets --- */
+  .modal-backdrop { padding: 0; align-items: flex-end; }
+  .modal, .modal.wide { width: 100%; max-height: 94%; border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  .modal-head { padding: 12px 16px; }
+  .modal-body { padding: 14px 16px; }
+  .modal-foot .btn { min-height: 44px; }
+  .feedback-previews { grid-template-columns: 1fr; }
+  .font-picker { max-height: 40vh; }
+  .export-grid { grid-template-columns: 1fr 1fr; }
+
+  /* --- accounts --- */
+  .auth-card { border-radius: 14px; }
+}
+
+/* Short landscape phones: the setup card's fixed header/footer leaves no
+   room for choices, so trim the chrome. */
+@media (max-width: 900px) and (max-height: 480px) {
+  .setup-card { padding-top: 8px; padding-bottom: 8px; gap: 6px; }
+  .setup-card h2 { font-size: 17px; margin-top: 2px; }
+  .setup-sub { font-size: 13px; }
+  .setup-note { display: none; }
+}

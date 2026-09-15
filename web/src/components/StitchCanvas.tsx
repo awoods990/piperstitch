@@ -4,6 +4,7 @@ import { PAPER, drawFabric, drawPlan, fitView, type View } from "../render";
 import { boxContains, boxIsEmpty, objectAt, selectionBounds, shapeBounds } from "../geometry";
 import { rgbCSS } from "../prefs";
 import type { RGBColor } from "../types";
+import { COARSE_QUERY, useMediaQuery } from "../useMediaQuery";
 
 export type Tool = "select" | "pan" | "paint" | "erase";
 
@@ -29,9 +30,14 @@ type Drag =
   | { kind: "band"; start: Point2D; end: Point2D; additive: boolean }
   | { kind: "move"; start: Point2D; last: Point2D; moved: boolean }
   | { kind: "scale"; anchor: Point2D; corner: Point2D; scale: number }
-  | { kind: "stroke"; points: Point2D[] };
+  | { kind: "stroke"; points: Point2D[] }
+  /** Two fingers down: zoom about their midpoint and pan with it. */
+  | { kind: "pinch"; dist: number; midX: number; midY: number; scale: number; ox: number; oy: number };
 
 const HANDLE_PX = 8;
+/** Fingers are wider than a cursor; a resize handle has to be findable by one. */
+const TOUCH_HANDLE_PX = 16;
+const DOUBLE_TAP_MS = 320;
 
 /** The design view: stitches, selection, and every canvas tool. */
 export default function StitchCanvas(p: Props) {
@@ -45,6 +51,13 @@ export default function StitchCanvas(p: Props) {
   const [spaceHeld, setSpaceHeld] = useState(false);
   const dragRef = useRef<Drag | null>(null);
   dragRef.current = drag;
+  // Touch devices get the gesture hint on the canvas itself, until the
+  // first touch shows they've found it.
+  const touchDevice = useMediaQuery(COARSE_QUERY);
+  const [gestureHintSeen, setGestureHintSeen] = useState(false);
+  /** Every finger/pointer currently down, for pinch detection. */
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -161,16 +174,22 @@ export default function StitchCanvas(p: Props) {
   }, [view, size, digitized, hoop, doc, selectedIDs, drag, tool, p.showJumps, p.brushRadiusMM, p.paintColor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- interaction --------------------------------------------------------
-  const handleAt = (px: number, py: number): { anchor: Point2D; corner: Point2D } | null => {
+  const handleAt = (px: number, py: number, touch: boolean): { anchor: Point2D; corner: Point2D } | null => {
     if (tool !== "select" || selectedIDs.size === 0) return null;
+    const reach = touch ? TOUCH_HANDLE_PX : HANDLE_PX;
     const b = selectionBounds(doc.objects, selectedIDs);
     if (boxIsEmpty(b)) return null;
     const corners = [[b.minX, b.minY, b.maxX, b.maxY], [b.maxX, b.minY, b.minX, b.maxY], [b.minX, b.maxY, b.maxX, b.minY], [b.maxX, b.maxY, b.minX, b.minY]];
     for (const [cx, cy, ax, ay] of corners) {
       const q = toPx({ x: cx, y: cy });
-      if (Math.abs(q.x - px) <= HANDLE_PX && Math.abs(q.y - py) <= HANDLE_PX) return { corner: { x: cx, y: cy }, anchor: { x: ax, y: ay } };
+      if (Math.abs(q.x - px) <= reach && Math.abs(q.y - py) <= reach) return { corner: { x: cx, y: cy }, anchor: { x: ax, y: ay } };
     }
     return null;
+  };
+
+  const pinchFrom = (v: View): Drag => {
+    const [a, b] = [...pointers.current.values()];
+    return { kind: "pinch", dist: Math.hypot(b.x - a.x, b.y - a.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, scale: v.scale, ox: v.offsetX, oy: v.offsetY };
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -178,11 +197,19 @@ export default function StitchCanvas(p: Props) {
     try { (e.target as Element).setPointerCapture(e.pointerId); } catch { /* synthetic events have no capture */ }
     const rect = wrapRef.current!.getBoundingClientRect();
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const touch = e.pointerType === "touch";
+    if (touch && !gestureHintSeen) setGestureHintSeen(true);
+    pointers.current.set(e.pointerId, { x: px, y: py });
+    // A second finger turns whatever was happening into a pinch. Any
+    // half-done move/stroke is dropped rather than committed -- the first
+    // finger was on its way to a zoom, not an edit.
+    if (pointers.current.size === 2) { setDrag(pinchFrom(view)); return; }
+    if (pointers.current.size > 2) return;
     const m = toMM(e.clientX, e.clientY);
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
     if (tool === "pan" || spaceHeld || e.button === 1 || e.button === 2) { setDrag({ kind: "pan", x: e.clientX, y: e.clientY, ox: view.offsetX, oy: view.offsetY }); return; }
     if (tool === "paint" || tool === "erase") { setDrag({ kind: "stroke", points: [m] }); return; }
-    const handle = handleAt(px, py);
+    const handle = handleAt(px, py, touch);
     if (handle) { setDrag({ kind: "scale", anchor: handle.anchor, corner: handle.corner, scale: 1 }); return; }
     const hit = objectAt(doc.objects, m);
     if (hit) {
@@ -191,12 +218,31 @@ export default function StitchCanvas(p: Props) {
       setDrag({ kind: "move", start: m, last: m, moved: false });
       return;
     }
+    // A finger on empty canvas pans -- that's what every touch app does,
+    // and a rubberband needs a modifier key a phone doesn't have. A plain
+    // tap still clears the selection (see onPointerUp).
+    if (touch) { setDrag({ kind: "pan", x: e.clientX, y: e.clientY, ox: view.offsetX, oy: view.offsetY }); return; }
     setDrag({ kind: "band", start: m, end: m, additive });
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const d = dragRef.current;
     if (!d || !view) return;
+    if (pointers.current.has(e.pointerId)) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      pointers.current.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    }
+    if (d.kind === "pinch") {
+      if (pointers.current.size < 2) return;
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      const scale = Math.min(Math.max(d.scale * (d.dist > 0 ? dist / d.dist : 1), 0.2), 200);
+      const k = scale / d.scale;
+      const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+      // Keep the point under the original midpoint under the new midpoint.
+      setView({ scale, offsetX: midX - (d.midX - d.ox) * k, offsetY: midY - (d.midY - d.oy) * k });
+      return;
+    }
     const m = toMM(e.clientX, e.clientY);
     switch (d.kind) {
       case "pan": setView({ ...view, offsetX: d.ox + e.clientX - d.x, offsetY: d.oy + e.clientY - d.y }); break;
@@ -216,10 +262,32 @@ export default function StitchCanvas(p: Props) {
     }
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
     const d = dragRef.current;
+    pointers.current.delete(e.pointerId);
+    if (d?.kind === "pinch") {
+      // Lifting one finger ends the pinch; the remaining finger starts
+      // nothing new (it'd be a surprise pan from a stale origin).
+      if (pointers.current.size === 0) setDrag(null);
+      return;
+    }
     setDrag(null);
     if (!d) return;
+    if (e.pointerType === "touch") {
+      // Double-tap to fit, and a plain tap on empty canvas clears the
+      // selection -- the touch pan above replaced the band that used to.
+      const rect = wrapRef.current!.getBoundingClientRect();
+      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      const now = performance.now(), prev = lastTap.current;
+      const stationary = d.kind === "pan" && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 8;
+      if (prev && now - prev.t < DOUBLE_TAP_MS && Math.hypot(px - prev.x, py - prev.y) < 30) {
+        lastTap.current = null;
+        setFitNonce((n) => n + 1);
+        return;
+      }
+      lastTap.current = { t: now, x: px, y: py };
+      if (stationary && tool === "select" && !spaceHeld) { p.onSelect([], false); return; }
+    }
     switch (d.kind) {
       case "band": {
         const box = { minX: Math.min(d.start.x, d.end.x), minY: Math.min(d.start.y, d.end.y), maxX: Math.max(d.start.x, d.end.x), maxY: Math.max(d.start.y, d.end.y) };
@@ -246,15 +314,18 @@ export default function StitchCanvas(p: Props) {
     setView({ scale, offsetX: mx - (mx - view.offsetX) * k, offsetY: my - (my - view.offsetY) * k });
   };
 
-  const cursor = drag?.kind === "pan" ? "grabbing" : tool === "pan" || spaceHeld ? "grab" : tool === "paint" || tool === "erase" ? "crosshair" : "default";
+  const onPointerCancel = (e: React.PointerEvent) => { pointers.current.delete(e.pointerId); if (pointers.current.size === 0) setDrag(null); };
+
+  const cursor = drag?.kind === "pan" || drag?.kind === "pinch" ? "grabbing" : tool === "pan" || spaceHeld ? "grab" : tool === "paint" || tool === "erase" ? "crosshair" : "default";
 
   return (
     <div ref={wrapRef} className={"canvas-wrap" + (p.stale ? " stale" : "")} style={{ cursor }}
-      onWheel={onWheel} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+      onWheel={onWheel} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}
       onContextMenu={(e) => e.preventDefault()} onDoubleClick={() => setFitNonce((n) => n + 1)}>
       <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
       {p.stale && <div className="canvas-hint">Refreshing preview…</div>}
       {!digitized && !p.stale && <div className="canvas-hint">No stitches yet</div>}
+      {digitized && !p.stale && touchDevice && !gestureHintSeen && <div className="canvas-hint">Pinch to zoom · drag to move · double-tap to fit</div>}
     </div>
   );
 }
