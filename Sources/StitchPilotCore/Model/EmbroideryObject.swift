@@ -188,6 +188,10 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// the machine's comfortable maximum without the split points forming
     /// a line. 0 disables; `maxStitchLengthMM` still applies afterwards.
     public var satinAutoSplitMM: Double = 7.0
+    /// Replace the fan of converging stitches at a sharp corner with a
+    /// mitre (two legs of parallel crossings meeting on the diagonal) --
+    /// see `SatinCorners`. Off leaves corners to the fan + shortening.
+    public var satinMitreCorners: Bool = true
     /// Below this, a section of a column is too narrow to zigzag reliably
     /// (thread bunching, not enough fabric width for a stable satin
     /// crossing) and sews as a triple-run (bean-stitch) line instead — the
@@ -283,7 +287,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case stitchLengthMM, minStitchLengthMM, maxStitchLengthMM
         case satinDensityMM, maxSatinWidthMM, minSatinWidthMM
-        case satinAutoSpacing, satinSpacingOffsetFraction, satinShortenBelowFraction, satinAutoSplitMM
+        case satinAutoSpacing, satinSpacingOffsetFraction, satinShortenBelowFraction, satinAutoSplitMM, satinMitreCorners
         case fillSpacingMM, fillAngleDegrees, fillRowStaggerMM, fillPattern
         case underlayType, underlayStitchLengthMM, underlayInsetMM, zigzagUnderlaySpacingMM, zigzagUnderlayWidthThresholdMM
         case secondUnderlayType, tatamiUnderlaySpacingMM
@@ -316,6 +320,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         satinSpacingOffsetFraction = try c.decodeIfPresent(Double.self, forKey: .satinSpacingOffsetFraction) ?? defaults.satinSpacingOffsetFraction
         satinShortenBelowFraction = try c.decodeIfPresent(Double.self, forKey: .satinShortenBelowFraction) ?? defaults.satinShortenBelowFraction
         satinAutoSplitMM = try c.decodeIfPresent(Double.self, forKey: .satinAutoSplitMM) ?? defaults.satinAutoSplitMM
+        satinMitreCorners = try c.decodeIfPresent(Bool.self, forKey: .satinMitreCorners) ?? defaults.satinMitreCorners
         fillSpacingMM = try c.decodeIfPresent(Double.self, forKey: .fillSpacingMM) ?? defaults.fillSpacingMM
         fillAngleDegrees = try c.decodeIfPresent(Double.self, forKey: .fillAngleDegrees)
         fillRowStaggerMM = try c.decodeIfPresent(Double.self, forKey: .fillRowStaggerMM) ?? defaults.fillRowStaggerMM

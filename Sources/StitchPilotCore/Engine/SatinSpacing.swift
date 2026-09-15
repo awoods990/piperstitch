@@ -77,11 +77,16 @@ enum SatinSpacing {
     /// (same fraction on both rails), so the resulting spacing is the
     /// target itself, not the nearest multiple of the fine grid. Works
     /// purely on distances, so it's indifferent to how the grid was made.
-    static func decimate(railA: [Point2D], railB: [Point2D], parameters: StitchGenerationParameters) -> (a: [Point2D], b: [Point2D]) {
+    static func decimate(railA: [Point2D], railB: [Point2D], parameters: StitchGenerationParameters,
+                         flags: [Bool]? = nil) -> (a: [Point2D], b: [Point2D], flags: [Bool]) {
         let count = min(railA.count, railB.count)
-        guard count > 2 else { return (Array(railA.prefix(count)), Array(railB.prefix(count))) }
+        // Each kept crossing carries the flag of the fine crossing it was
+        // placed before (mitre crossings, `SatinCorners`), so the flag
+        // survives thinning without the caller re-deriving it.
+        func flag(_ i: Int) -> Bool { flags.map { i < $0.count && $0[i] } ?? false }
+        guard count > 2 else { return (Array(railA.prefix(count)), Array(railB.prefix(count)), (0..<count).map(flag)) }
         let fraction = min(max(parameters.satinSpacingOffsetFraction, 0), 1)
-        var keptA = [railA[0]], keptB = [railB[0]]
+        var keptA = [railA[0]], keptB = [railB[0]], keptFlags = [flag(0)]
         var walked = 0.0
         for i in 1..<count {
             let stepA = railA[i].distance(to: railA[i - 1])
@@ -97,6 +102,7 @@ enum SatinSpacing {
                 let f = min(1, max(0, (target - walked) / step))
                 keptA.append(railA[i - 1] + (railA[i] - railA[i - 1]) * f)
                 keptB.append(railB[i - 1] + (railB[i] - railB[i - 1]) * f)
+                keptFlags.append(flag(i))
                 walked = step * (1 - f)
                 // A step longer than a whole target (coarse fine grid on a
                 // long straight) may need more than one crossing.
@@ -104,6 +110,7 @@ enum SatinSpacing {
                     let f2 = min(1, (1 - walked / step) + target / step)
                     keptA.append(railA[i - 1] + (railA[i] - railA[i - 1]) * f2)
                     keptB.append(railB[i - 1] + (railB[i] - railB[i - 1]) * f2)
+                    keptFlags.append(flag(i))
                     walked -= target
                     if f2 >= 1 { break }
                 }
@@ -120,11 +127,13 @@ enum SatinSpacing {
         if keptA.count > 1, tail < targetSpacing(forWidthMM: width, parameters: parameters) / 2 {
             keptA[keptA.count - 1] = endA
             keptB[keptB.count - 1] = endB
+            keptFlags[keptFlags.count - 1] = flag(count - 1)
         } else if tail > 1e-9 {
             keptA.append(endA)
             keptB.append(endB)
+            keptFlags.append(flag(count - 1))
         }
-        return (keptA, keptB)
+        return (keptA, keptB, keptFlags)
     }
 
     /// Wilcom's own shortening tables ("Row 1..5" of consecutive short

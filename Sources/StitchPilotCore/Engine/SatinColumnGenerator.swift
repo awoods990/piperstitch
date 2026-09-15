@@ -387,7 +387,9 @@ public enum SatinColumnGenerator {
         // which isn't the same thing as being impractically narrow
         // throughout a real section of the column.
         let interior = interiorRange(count: crossings.widths.count)
-        if let minWidth = crossings.widths[interior].min(), minWidth < parameters.minSatinWidthMM {
+        // A mitred corner's crossings taper to the tip by design (see
+        // `SatinCorners`), the same way the end caps do.
+        if let minWidth = interior.filter({ !crossings.mitre[$0] }).map({ crossings.widths[$0] }).min(), minWidth < parameters.minSatinWidthMM {
             throw SatinGenerationError.columnTooNarrow(minWidthMM: minWidth, limitMM: parameters.minSatinWidthMM)
         }
 
@@ -536,30 +538,71 @@ public enum SatinColumnGenerator {
     /// thinned by `SatinSpacing.decimate` to width-dependent spacing.
     /// Returns the rails and `count` such that valid indices are
     /// `0...count`, matching what the former direct resample produced.
-    private static func fineThenDecimatedRails(railA: [Point2D], railB: [Point2D], density: Double, parameters: StitchGenerationParameters) -> (railA: [Point2D], railB: [Point2D], count: Int) {
+    private static func fineThenDecimatedRails(railA: [Point2D], railB: [Point2D], density: Double, parameters: StitchGenerationParameters) -> (railA: [Point2D], railB: [Point2D], count: Int, mitre: [Bool]) {
         let fineDensity = density / SatinSpacing.oversampling
-        let weightedLength = max(
-            PolygonGeometry.weightedPathLength(railA, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight),
-            PolygonGeometry.weightedPathLength(railB, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
-        )
-        let fineCount = max(2, Int((weightedLength / fineDensity).rounded()))
-        let fineA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: fineCount, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
-        let fineB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: fineCount, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
-        let kept = SatinSpacing.decimate(railA: fineA, railB: fineB, parameters: parameters)
+        let (fineA, fineB, fineMitre) = fineRails(railA: railA, railB: railB, fineDensity: fineDensity, parameters: parameters)
+        let kept = SatinSpacing.decimate(railA: fineA, railB: fineB, parameters: parameters, flags: fineMitre)
         // Never fewer than three crossings (two for a degenerate stub):
         // `interiorRange` and the twist checks assume a real column.
         if kept.a.count < 3, fineA.count >= 3 {
             let mid = fineA.count / 2
-            return ([fineA[0], fineA[mid], fineA[fineA.count - 1]], [fineB[0], fineB[mid], fineB[fineB.count - 1]], 2)
+            return ([fineA[0], fineA[mid], fineA[fineA.count - 1]], [fineB[0], fineB[mid], fineB[fineB.count - 1]], 2, [false, false, false])
         }
-        return (kept.a, kept.b, kept.a.count - 1)
+        return (kept.a, kept.b, kept.a.count - 1, kept.flags)
+    }
+
+    /// Both rails on the fine grid, proportionally matched piece by piece
+    /// between mitred corners (`SatinCorners`), with each corner square's
+    /// own mitre crossings in between. Without corners this is one
+    /// proportional match of the whole rails, as it always was.
+    private static func fineRails(railA: [Point2D], railB: [Point2D], fineDensity: Double, parameters: StitchGenerationParameters) -> (a: [Point2D], b: [Point2D], mitre: [Bool]) {
+        func proportional(_ a: [Point2D], _ b: [Point2D]) -> (a: [Point2D], b: [Point2D]) {
+            guard a.count > 1, b.count > 1 else { return (a, b) }
+            let weightedLength = max(
+                PolygonGeometry.weightedPathLength(a, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight),
+                PolygonGeometry.weightedPathLength(b, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
+            )
+            let count = max(2, Int((weightedLength / fineDensity).rounded()))
+            return (PolygonGeometry.resampleByCountCurvatureWeighted(a, count: count, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight),
+                    PolygonGeometry.resampleByCountCurvatureWeighted(b, count: count, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight))
+        }
+        func plain() -> (a: [Point2D], b: [Point2D], mitre: [Bool]) {
+            let (a, b) = proportional(railA, railB)
+            return (a, b, Array(repeating: false, count: a.count))
+        }
+        // Ring columns (closed rails) and columns with no sharp corner
+        // take the plain proportional path.
+        let isClosedRing = railA.count > 1 && railA.first == railA.last
+        let corners = (parameters.satinMitreCorners && !isClosedRing) ? SatinCorners.findCorners(railA: railA, railB: railB) : []
+        guard !corners.isEmpty else { return plain() }
+
+        var fineA: [Point2D] = [], fineB: [Point2D] = [], mitre: [Bool] = []
+        var cursorA = 0.0, cursorB = 0.0
+        func append(_ piece: (a: [Point2D], b: [Point2D]), isMitre: Bool) {
+            // Drop a duplicated seam point between consecutive pieces.
+            var a = piece.a, b = piece.b
+            if let la = fineA.last, let lb = fineB.last, let fa = a.first, let fb = b.first, la.distance(to: fa) < 1e-6, lb.distance(to: fb) < 1e-6 {
+                a.removeFirst(); b.removeFirst()
+            }
+            fineA.append(contentsOf: a); fineB.append(contentsOf: b)
+            mitre.append(contentsOf: Array(repeating: isMitre, count: a.count))
+        }
+        for corner in corners {
+            let (endA, endB) = corner.outerIsA ? (corner.sOuterIn, corner.sInner) : (corner.sInner, corner.sOuterIn)
+            append(proportional(SatinCorners.subPolyline(railA, from: cursorA, to: endA), SatinCorners.subPolyline(railB, from: cursorB, to: endB)), isMitre: false)
+            append(SatinCorners.mitreCrossings(corner, spacingMM: fineDensity), isMitre: true)
+            (cursorA, cursorB) = corner.outerIsA ? (corner.sOuterOut, corner.sInner) : (corner.sInner, corner.sOuterOut)
+        }
+        append(proportional(SatinCorners.subPolyline(railA, from: cursorA, to: .infinity), SatinCorners.subPolyline(railB, from: cursorB, to: .infinity)), isMitre: false)
+        guard fineA.count == fineB.count, fineA.count >= 3 else { return plain() }
+        return (fineA, fineB, mitre)
     }
 
     /// Resampled, compensated rail crossings shared by `generate` and
     /// `generatePartial` — the two differ only in what they do once they
     /// know each crossing's final (post-compensation) width, not in how
     /// that width is computed.
-    private static func computeCrossings(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double]) {
+    private static func computeCrossings(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double], mitre: [Bool]) {
         let (railA, railB) = try computeRails(for: shape)
         // `computeRingRails` closes both rails explicitly (first point
         // repeated at the end) precisely so this check can tell "a ring
@@ -585,7 +628,7 @@ public enum SatinColumnGenerator {
         // WILCOM_MANUAL_REVIEW.md A2/A3). The curvature weighting still
         // matters for *where* candidates sit; the thinning decides how
         // many survive.
-        let (resampledA, resampledB, crossingCount) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
+        let (resampledA, resampledB, crossingCount, mitre) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
 
         // The single-global-axis end-cap algorithm above (see this type's
         // own doc comment) is built for a single "sausage" -- a shape that
@@ -668,7 +711,6 @@ public enum SatinColumnGenerator {
 
         var expandedA: [Point2D] = []
         var expandedB: [Point2D] = []
-        var widths: [Double] = []
         for i in lo...hi {
             let a = resampledA[i], b = resampledB[i]
             // Pull compensation (spec §17): push each rail point outward,
@@ -677,13 +719,11 @@ public enum SatinColumnGenerator {
             // symmetrically about the midpoint keeps the centerline (and
             // therefore the underlay generated from these same rails)
             // exactly where it was digitized.
-            let ea = pushOutward(a, from: b, by: pullCompMM / 2)
-            let eb = pushOutward(b, from: a, by: pullCompMM / 2)
-            expandedA.append(ea)
-            expandedB.append(eb)
-            widths.append(ea.distance(to: eb))
+            expandedA.append(pushOutward(a, from: b, by: pullCompMM / 2))
+            expandedB.append(pushOutward(b, from: a, by: pullCompMM / 2))
         }
-        return (expandedA, expandedB, widths)
+        let widths = zip(expandedA, expandedB).map { $0.distance(to: $1) }
+        return (expandedA, expandedB, widths, Array(mitre[lo...hi]))
     }
 
     private enum CrossingKind { case satin, fill, narrowRun }
@@ -714,7 +754,7 @@ public enum SatinColumnGenerator {
     public static func generatePartial(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
         let crossings = try computeCrossings(for: shape, parameters: parameters)
         return stitchesSplittingByWidth(expandedA: crossings.expandedA, expandedB: crossings.expandedB, widths: crossings.widths,
-                                        overWide: .localFill, parameters: parameters)
+                                        mitre: crossings.mitre, overWide: .localFill, parameters: parameters)
     }
 
     /// What `stitchesSplittingByWidth` does with a run of crossings wider
@@ -746,13 +786,15 @@ public enum SatinColumnGenerator {
     /// `overWide` and stays satin everywhere else, rather than the whole
     /// letter being rejected from the branching path and falling back to
     /// tatami fill outright.
-    private static func stitchesSplittingByWidth(expandedA: [Point2D], expandedB: [Point2D], widths: [Double],
+    private static func stitchesSplittingByWidth(expandedA: [Point2D], expandedB: [Point2D], widths: [Double], mitre: [Bool],
                                                  overWide: OverWideStrategy, parameters: StitchGenerationParameters) -> [Point2D] {
         let interior = interiorRange(count: widths.count)
 
         var kind: [CrossingKind] = widths.enumerated().map { i, width in
             if width > parameters.maxSatinWidthMM { return .fill }
-            if interior.contains(i), width < parameters.minSatinWidthMM { return .narrowRun }
+            // A mitre's crossings taper to the corner's tip on purpose
+            // (`SatinCorners`); they are never a "narrow section".
+            if interior.contains(i), width < parameters.minSatinWidthMM, !(i < mitre.count && mitre[i]) { return .narrowRun }
             return .satin
         }
         for i in 0..<kind.count where kind[i] != .satin {
@@ -1014,7 +1056,8 @@ public enum SatinColumnGenerator {
             if !segment.kept.isEmpty {
                 pieces.append(stitchesSplittingByWidth(
                     expandedA: Array(segment.expandedA[segment.kept]), expandedB: Array(segment.expandedB[segment.kept]),
-                    widths: Array(segment.widths[segment.kept]), overWide: .splitSatin, parameters: parameters))
+                    widths: Array(segment.widths[segment.kept]), mitre: Array(segment.mitre[segment.kept]),
+                    overWide: .splitSatin, parameters: parameters))
             }
             emitPatch(at: segment.edge.endNodeID)
         }
@@ -1042,6 +1085,7 @@ public enum SatinColumnGenerator {
         var expandedA: [Point2D]
         var expandedB: [Point2D]
         var widths: [Double]
+        var mitre: [Bool]
         var kept: Range<Int>
     }
 
@@ -1087,7 +1131,7 @@ public enum SatinColumnGenerator {
                 throw SatinGenerationError.shapeNotSuitable("a branch segment couldn't be rail-fit as satin")
             }
             segments.append(BranchSegment(edge: edge, expandedA: crossings.expandedA, expandedB: crossings.expandedB,
-                                          widths: crossings.widths, kept: 0..<crossings.expandedA.count))
+                                          widths: crossings.widths, mitre: crossings.mitre, kept: 0..<crossings.expandedA.count))
         }
 
         let nodesByID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
@@ -1612,7 +1656,7 @@ public enum SatinColumnGenerator {
     /// axis that can rail-walk a concave bend straight across empty space;
     /// a segment's rails come from the local perpendicular at each
     /// centerline sample, which can't do that).
-    private static func computeSegmentCrossings(railA: [Point2D], railB: [Point2D], parameters: StitchGenerationParameters) -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double])? {
+    private static func computeSegmentCrossings(railA: [Point2D], railB: [Point2D], parameters: StitchGenerationParameters) -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double], mitre: [Bool])? {
         let density = max(parameters.satinDensityMM, 0.1)
         let length = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
         guard length > 0 else { return nil }
@@ -1629,7 +1673,7 @@ public enum SatinColumnGenerator {
         // ruled out as the cause there).
         // Same fine-grid-then-decimate placement as `computeCrossings` --
         // see the comment there.
-        let (resampledA, resampledB, crossingCount) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
+        let (resampledA, resampledB, crossingCount, mitre) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
         // No twist check here: `branchingPlan` applies `isTwisted` to each
         // segment's KEPT crossings after junction trimming (see its own
         // doc comment for why checking the untrimmed segment rejected
@@ -1651,15 +1695,12 @@ public enum SatinColumnGenerator {
 
         var expandedA: [Point2D] = []
         var expandedB: [Point2D] = []
-        var widths: [Double] = []
         for i in 0...crossingCount {
             let a = resampledA[i], b = resampledB[i]
-            let ea = pushOutward(a, from: b, by: pullCompMM / 2)
-            let eb = pushOutward(b, from: a, by: pullCompMM / 2)
-            expandedA.append(ea)
-            expandedB.append(eb)
-            widths.append(ea.distance(to: eb))
+            expandedA.append(pushOutward(a, from: b, by: pullCompMM / 2))
+            expandedB.append(pushOutward(b, from: a, by: pullCompMM / 2))
         }
+        let widths = zip(expandedA, expandedB).map { $0.distance(to: $1) }
         // Width is deliberately NOT a rejection reason here, matching
         // `computeCrossings` for the single-column path: `generateBranching`
         // runs every segment's crossings through the same per-crossing
@@ -1670,7 +1711,7 @@ public enum SatinColumnGenerator {
         // `maxSatinWidthMM` cap used to live here instead; found directly
         // against a real cap-logo "B" at 100mm whose bowls reached ~16mm,
         // which it rejected outright, sending the entire letter to tatami.
-        return (expandedA, expandedB, widths)
+        return (expandedA, expandedB, widths, mitre)
     }
 
     /// Orders a stroke topology's edges into one continuous walk via a

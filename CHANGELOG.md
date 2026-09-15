@@ -4,6 +4,62 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: digitizing engine — seven rules from the Wilcom reference manual (A1–A7)
+
+Reviewed against the Wilcom Reference Manual (`docs/WILCOM_MANUAL_REVIEW.md`
+has the rule-by-rule comparison); the seven highest-value rules are now
+in the engine. Every real test file still scores as before or better
+(cap logo: 10 trims, readiness 100).
+
+- **A1 Visible connectors.** Any same-colour connector over **3 mm**
+  (`DigitizePipeline.visibleConnectorMM`) is now trimmed or buried by the
+  hidden-travel router; the old 15 mm rule only applies inside an object
+  (`defaultMaxJumpWithoutTrimMM`). Fragment-heavy imports gain trims
+  (Oholi.png 109) — the readiness report already flags that as an
+  import problem rather than a sewing one.
+- **A2 Width-based satin spacing** (`SatinSpacing`, on by default via
+  `satinAutoSpacing`). Crossings are laid on a fine grid (4× the
+  nominal density, curvature weighted) and thinned to a spacing chosen
+  from each crossing's own width — narrow columns space wider (1 mm →
+  ×1.45), wide columns tighter (12 mm → ×0.84) — measured along the
+  outer edge of a bend blended toward the inner edge by
+  `satinSpacingOffsetFraction` (0.25). Crossings land exactly, not on
+  the grid.
+- **A3 Inside-of-bend stitch shortening.** Where the inner rail packs
+  tighter than `satinShortenBelowFraction` (0.6) of the outer, alternate
+  stitches are pulled off the inner rail using Wilcom's jagged
+  shortening tables so the short penetrations never line up.
+- **A4 Mitred corners** (`SatinCorners`, `satinMitreCorners`, on by
+  default). A sharp corner (40–140°) on a column used to be spread
+  proportionally over the whole column, slanting every crossing of an
+  "L" or "T" by up to 45°. The rails are now matched leg by leg
+  (perpendicular crossings) with a true mitre in the corner square:
+  crossings parallel to each leg, ending on the diagonal from the inside
+  vertex to the outside vertex, 0.5 mm overlap at the seam and one
+  stitch into the tip. Mitre crossings taper below `minSatinWidthMM` by
+  design and are never demoted to a running stitch. Verified on a
+  Helvetica-Bold "L" at 15 mm.
+- **A5 Lettering underlay by size** (`UnderlayGenerator.plan`). Nothing
+  under 5 mm tall or 1.2 mm wide; centre run to 2.5 mm; edge run above;
+  a second (zigzag) layer above 6 mm; tatami underlay above 400 mm² and
+  double tatami (cross-hatched) on knits, terry and unstructured caps.
+  New `secondUnderlayType` and `tatamiUnderlaySpacingMM`, and
+  `UnderlayType` gains `.tatami` / `.doubleTatami`.
+- **A6 Randomised auto split.** Satin stitches over `satinAutoSplitMM`
+  (7 mm) are split at jittered positions (±0.2 of a slot, deterministic
+  per column) so the extra needle penetrations don't form a line.
+- **A7 Tatami and second underlay layers**, sewn as separate layers with
+  hole-aware joins: a run joins the next when the connector is ≤ the
+  break threshold and stays inside the shape, else it is routed along
+  the boundary 1 mm in (up to 120 mm, corner vertices kept), else a new
+  run. The same in-chain connector check was missing from the tatami
+  fill itself — a latent bug that bridged holes.
+- Pull compensation re-based to Wilcom's fabric table (drill 0.20,
+  T-shirt 0.35, fleece 0.40); narrow satin under 3 mm capped at 0.30 mm.
+- Tests: `SatinSpacingTests`, `SatinCornersTests`, extended
+  `UnderlayGeneratorTests` (including "underlay never bridges a hole") —
+  363 tests pass.
+
 ## Added: support view of a customer's saved project (within the Privacy Policy)
 
 - On a customer's page, each **saved project** opens for support: the
