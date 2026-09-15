@@ -9,6 +9,24 @@ struct ObjectSequencerTests {
         return EmbroideryObject(name: name, shape: shape, stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: color)))
     }
 
+    /// A letter inside its own thin halo: the two are traced from
+    /// adjacent pixels, so the letter's outline touches the halo's outline
+    /// where the halo is thinnest, and one shared vertex can land a
+    /// rounding error OUTSIDE the halo after a size fit. That still has
+    /// to read as "halo contains letter" -- otherwise nothing forces the
+    /// halo to sew first, and it buries the letter. Found directly against
+    /// a real "B" logo that came out solid white at 101.6mm and fine at
+    /// 100mm. The inner square here pokes 0.01mm past the outer's edge.
+    @Test func aContainedObjectTouchingTheContainerEdgeStillSewsAfterIt() {
+        let halo = square(0, 0, 100, name: "halo", color: 0xFFFFFF)
+        let letter = EmbroideryObject(name: "letter", shape: VectorShape(subPaths: [SubPath(points: [
+            Point2D(-0.01, 20), Point2D(60, 20), Point2D(60, 80), Point2D(-0.01, 80),
+        ], closed: true)]), stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: 0xC02020)))
+
+        let sequenced = ObjectSequencer.sequence([letter, halo])
+        #expect(sequenced.map { $0.name } == ["halo", "letter"])
+    }
+
     @Test func movesContainingObjectBeforeTheObjectItContains() {
         // Small foreground square authored first, large background square second -- backwards.
         let inner = square(45, 45, 10, name: "inner") // 45...55

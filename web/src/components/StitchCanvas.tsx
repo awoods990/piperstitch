@@ -110,7 +110,12 @@ export default function StitchCanvas(p: Props) {
       const hx = offsetX + ((doc.physicalWidthMM - hoop.widthMM) / 2) * scale, hy = offsetY + ((doc.physicalHeightMM - hoop.heightMM) / 2) * scale;
       ctx.strokeStyle = "rgba(26,111,209,0.35)"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 5]);
       ctx.strokeRect(hx, hy, hoop.widthMM * scale, hoop.heightMM * scale); ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(26,111,209,0.7)"; ctx.font = "12px system-ui, sans-serif"; ctx.fillText(hoop.name, hx + 6, hy - 6);
+      // Label inside the top-left corner, not above it: fit-to-window puts
+      // the hoop's top edge at the canvas margin, where a label above the
+      // line is clipped (the longer Mighty Hoop / Durkee names made this
+      // obvious).
+      ctx.fillStyle = "rgba(26,111,209,0.7)"; ctx.font = "12px system-ui, sans-serif"; ctx.textBaseline = "top";
+      ctx.fillText(hoop.name, hx + 6, hy + 5); ctx.textBaseline = "alphabetic";
     }
     ctx.strokeStyle = "rgba(0,0,0,0.12)"; ctx.lineWidth = 1;
     ctx.strokeRect(offsetX, offsetY, doc.physicalWidthMM * scale, doc.physicalHeightMM * scale);

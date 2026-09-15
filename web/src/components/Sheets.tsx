@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import glossary from "../glossary.json";
 import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, ProjectSummary, RGBColor, ThreadColor } from "../types";
-import { LETTERING_FONTS, generateLetteringShapes, type LetteringSpec } from "../lettering";
+import { LETTERING_FONTS, ensureFontFaces, fontFaceFamily, generateLetteringShapes, type LetteringSpec } from "../lettering";
 import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
 import { AccountMenu, PromoBox, price, statusLine } from "./Account";
 import { THREAD_SUPPLIERS, type ThreadSupplier } from "../threadSuppliers";
@@ -93,6 +93,7 @@ export function LetteringSheet({ palette, selectedCount, onClose, onAdd }: {
   const [radiusMM, setRadiusMM] = useState(40);
   const [hex, setHex] = useState("#1144aa");
   const [replace, setReplace] = useState(selectedCount > 0);
+  useEffect(() => { ensureFontFaces().catch(() => { /* picker falls back to the system font */ }); }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -128,11 +129,23 @@ export function LetteringSheet({ palette, selectedCount, onClose, onAdd }: {
     <Modal title="Add lettering" onClose={onClose}>
       <p className="hint">Clean satin letters generated from the font's own outline — sharp at any size or curve, unlike tracing an image of text.</p>
       <label className="field">Text<input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Type the text to add" /></label>
-      <label className="field">Font
-        <select value={fontID} onChange={(e) => setFontID(e.target.value)}>
-          {groups.map((g) => <optgroup key={g} label={g}>{LETTERING_FONTS.filter((f) => f.group === g).map((f) => <option key={f.id} value={f.id}>{f.displayName}</option>)}</optgroup>)}
-        </select>
-      </label>
+      <div className="field">Font
+        <div className="font-picker">
+          {groups.map((g) => (
+            <div key={g} className="font-group">
+              <div className="section-label">{g}</div>
+              <div className="font-choices">
+                {LETTERING_FONTS.filter((f) => f.group === g).map((f) => (
+                  <button key={f.id} type="button" className={"font-choice" + (fontID === f.id ? " selected" : "")}
+                    style={{ fontFamily: `"${fontFaceFamily(f.id)}", sans-serif` }} onClick={() => setFontID(f.id)} title={f.displayName}>
+                    {f.displayName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="slider-row"><div className="slider-head"><span>Letter height</span><b>{(sizeMM / 10).toFixed(2)} cm</b></div><input type="range" min={2} max={60} step={0.5} value={sizeMM} onChange={(e) => setSizeMM(Number(e.target.value))} /></div>
       <div className="slider-row"><div className="slider-head"><span>Letter spacing</span><b>{(spacingMM / 10).toFixed(2)} cm</b></div><input type="range" min={-1} max={10} step={0.1} value={spacingMM} onChange={(e) => setSpacingMM(Number(e.target.value))} /></div>
       <label className="check"><input type="checkbox" checked={curved} onChange={(e) => setCurved(e.target.checked)} /> Curve along a ring</label>

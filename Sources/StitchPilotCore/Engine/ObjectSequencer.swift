@@ -427,19 +427,46 @@ public enum ObjectSequencer {
             return false
         }
 
+        // A point of `other`'s outline that sits ON `candidate`'s outline
+        // (within a hair) still counts as inside. Two raster-traced regions
+        // that abut -- a letter inside its own thin halo, say -- share
+        // boundary pixels, and after fitting to a physical size a shared
+        // vertex can land a rounding error outside the enclosing outline.
+        // Found directly against a real "B" logo whose halo is a pixel or
+        // two thick where the letter's hook meets it: at 100mm every point
+        // was inside, at 101.6mm two were out by ~0.01mm, the containment
+        // edge vanished, and the sequencer -- now free to reorder -- sewed
+        // the halo LAST, burying the letter under solid white. The
+        // tolerance scales with the candidate so it stays a hair at any
+        // design size; a shape sitting in a concave candidate's notch is
+        // still rejected, since most of its outline is well outside.
         let candidateBox = candidate.boundingBox, otherBox = other.boundingBox
-        guard !candidateBox.isEmpty, !otherBox.isEmpty,
-              candidateBox.minX <= otherBox.minX, candidateBox.minY <= otherBox.minY,
-              candidateBox.maxX >= otherBox.maxX, candidateBox.maxY >= otherBox.maxY else {
+        guard !candidateBox.isEmpty, !otherBox.isEmpty else { return false }
+        let tolerance = max(0.2, min(1.5, max(candidateBox.width, candidateBox.height) * 0.01))
+        guard candidateBox.minX - tolerance <= otherBox.minX, candidateBox.minY - tolerance <= otherBox.minY,
+              candidateBox.maxX + tolerance >= otherBox.maxX, candidateBox.maxY + tolerance >= otherBox.maxY else {
             return false
         }
-
-        guard otherOuter.allSatisfy({ PolygonGeometry.pointInPolygon($0, polygon: candidateOuter) }) else {
+        guard otherOuter.allSatisfy({ PolygonGeometry.pointInPolygon($0, polygon: candidateOuter) || distance(from: $0, toBoundaryOf: candidateOuter) <= tolerance }) else {
             return false
         }
 
         let outerArea = abs(PolygonGeometry.signedArea(candidateOuter))
         let innerArea = abs(PolygonGeometry.signedArea(otherOuter))
         return outerArea > innerArea * 1.05
+    }
+
+    private static func distance(from p: Point2D, toBoundaryOf polygon: [Point2D]) -> Double {
+        var best = Double.infinity
+        let n = polygon.count
+        for i in 0..<n {
+            let a = polygon[i], b = polygon[(i + 1) % n]
+            let abx = b.x - a.x, aby = b.y - a.y
+            let lenSq = abx * abx + aby * aby
+            let t = lenSq > 1e-12 ? max(0, min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq)) : 0
+            let d = p.distance(to: Point2D(a.x + t * abx, a.y + t * aby))
+            if d < best { best = d }
+        }
+        return best
     }
 }

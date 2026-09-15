@@ -9,6 +9,7 @@ import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryO
 import { THREAD_WEIGHTS } from "../types";
 import { cm, inches, formatRunTime } from "../format";
 import { PRESET_LABELS } from "./SetupFlow";
+import { HoopSelect } from "./HoopSelect";
 import { rgbCSS } from "../prefs";
 
 export const STITCH_LABELS: Record<StitchType, string> = { runningStitch: "Running stitch", tripleRun: "Triple run", satin: "Satin", tatamiFill: "Fill" };
@@ -66,10 +67,7 @@ export default function Inspector(p: InspectorProps) {
       <DensitySection p={p} />
       <section className="panel">
         <h3>Hoop</h3>
-        <select value={p.hoop?.name ?? ""} onChange={(e) => p.onHoop(catalog.hoops.find((x) => x.name === e.target.value) ?? null)}>
-          <option value="">None (no fit check)</option>
-          {catalog.hoops.map((x) => <option key={x.name} value={x.name}>{x.name} — {cm(x.widthMM)} × {cm(x.heightMM)} cm</option>)}
-        </select>
+        <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} withSizes />
         <label className="check" title="The file begins with the needle at the centre of the design and returns there at the end, so you can line up on the hoop's centre mark before pressing start. Cap frames register on the centre, so it's on for caps.">
           <input type="checkbox" checked={!!doc.startAndEndAtCenter} onChange={(e) => p.onStartAtCenter(e.target.checked)} /> Start and end at hoop centre
         </label>

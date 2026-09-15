@@ -939,6 +939,50 @@ shape). 347 tests pass. `allowBranchingSatin` remains default `false`;
 `DigitizeCLI` gained an `ALLOW_BRANCHING_SATIN=1` diagnostic toggle
 alongside its existing `ONLY_OBJECT`/`DEBUG_SATIN` ones.
 
+## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
+
+The same cap-logo "B" that drove the seven fixes above came out fine from
+DigitizeCLI at 100 mm and looked *empty* in the web app at Left Chest
+(101.6 mm): the white halo sewed **after** the red letter and buried it.
+`ObjectSequencer.isBackground` decides "A contains B, so A sews first" by
+testing every outline point of B with `pointInPolygon` against A's outer
+boundary. At 101.6 mm two of the letter's ~1 000 points landed ~0.01 mm
+outside the halo (the halo's outline is a traced raster edge; the letter's
+outline is the same edge, offset by an importer smoothing pass -- they
+touch, and float rounding decides which side of the line each vertex sits
+on). Two points outside -> "not contained" -> no ordering edge -> the
+sequencer's nearest-neighbour path was free to sew the halo last.
+
+Fix: containment now tolerates a boundary band, `max(0.2 mm, min(1.5 mm,
+1 % of the candidate's larger dimension))`. A point counts as inside if it
+is inside *or* within that distance of the container's boundary
+(`distance(from:toBoundaryOf:)`, nearest point on each edge); the bounding
+box precheck is relaxed by the same amount. Genuinely separate objects are
+unaffected -- a point has to be within a fraction of a millimetre of the
+edge to be forgiven, and only after the bbox test already put the two
+objects on top of each other. Test:
+`aContainedObjectTouchingTheContainerEdgeStillSewsAfterIt`.
+
+Noted, not fixed: the halo has no B-shaped hole (one sub-path) in both the
+old and the new importer, so the letter sews *on top of* solid white rather
+than into a cut-out. Sewing order is the visible problem; stitching a
+letter over a halo is normal practice.
+
+## Hoop catalog — Mighty Hoop and Durkee EZ Frame
+
+`HoopProfile.commonHoops` now carries the Mighty Hoop line (magnet-clamped;
+sizes use HoopMaster's published *sewing field*, roughly an inch under the
+nominal size, since a 5.5" Mighty Hoop does not sew 5.5") and Durkee's EZ
+Frame line (rigid frames named by their sewing field, so the listed size is
+the field, converted straight to mm). Index 2 (6" × 10") is still the Mac
+app's fixed default. `recommended(forDesignWidthMM:heightMM:)` prefers the
+smallest fitting *generic* hoop over any branded one (`isBrandSpecific`) --
+a user who hasn't said they own a Mighty Hoop shouldn't be handed one. The
+web app groups the picker (Standard / Mighty Hoop / Durkee), shows only the
+standard group in the setup flow behind a "More hoops & frames" toggle,
+and lets the hoop be changed from the editor toolbar and inspector after
+digitizing -- the fit check and hoop outline follow the change.
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster

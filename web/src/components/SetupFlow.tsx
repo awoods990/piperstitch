@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { THREAD_WEIGHTS, type ThreadWeight } from "../types";
 import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType } from "../types";
 import { approx, cm } from "../format";
+import { hoopGroups, smallestHoopThatFits } from "../hoops";
 
 
 export interface SetupAnswers {
@@ -79,12 +80,6 @@ export function predictedFabric(preset: CatalogSize): FabricType | null {
   return null;
 }
 
-export function smallestHoopThatFits(hoops: CatalogSize[], widthMM: number, heightMM: number): CatalogSize | null {
-  const fits = hoops.filter((h) => h.widthMM >= widthMM && h.heightMM >= heightMM);
-  fits.sort((a, b) => a.widthMM * a.heightMM - b.widthMM * b.heightMM);
-  return fits[0] ?? null;
-}
-
 export default function SetupFlow(props: Props) {
   const { catalog, recommendedWidthMM, recommendedHeightMM, aspectRatio, isVector, busy } = props;
   const [step, setStep] = useState<Step>("placement");
@@ -93,6 +88,10 @@ export default function SetupFlow(props: Props) {
   // later step (placement -> fabric, size -> hoop) only until the user
   // has chosen that later step themselves; after that their choice sticks.
   const [chosen, setChosen] = useState<{ hoop: boolean; fabric: boolean }>({ hoop: false, fabric: false });
+  // The hoop step shows the standard sizes; the branded lines (Mighty
+  // Hoop, Durkee EZ Frame) sit behind "More" -- opened up front if the
+  // current hoop is already one of them, so it's never hidden.
+  const [moreHoops, setMoreHoops] = useState(() => !!props.initial.hoop && /^(Mighty Hoop|Durkee)/.test(props.initial.hoop.name));
   const stepIndex = STEPS.indexOf(step);
 
   const isCap = a.placement && a.placement !== "custom" && /cap|hat/i.test(a.placement.name);
@@ -230,20 +229,34 @@ export default function SetupFlow(props: Props) {
           )}
 
           {step === "hoop" && (
-            <div className="choices">
-              {catalog.hoops.map((h) => {
-                const fits = h.widthMM >= a.widthMM && h.heightMM >= a.heightMM;
-                return (
-                  <Choice key={h.name} title={h.name}
-                    subtitle={fits ? `${cm(h.widthMM)} × ${cm(h.heightMM)} cm · fits` : `too small for ${cm(a.widthMM)} × ${cm(a.heightMM)} cm`}
-                    warning={!fits} selected={a.hoopMode === "specific" && a.hoop?.name === h.name}
-                    onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "specific", hoop: h }); }} />
-                );
-              })}
-              <Choice title="Choose one for me" subtitle="the smallest that fits" selected={a.hoopMode === "recommend"}
-                onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "recommend" }); }} />
-              <Choice title="Skip for now" subtitle="no fit check" selected={a.hoopMode === "none"}
-                onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "none", hoop: null }); }} />
+            <div className="stack">
+              <div className="choices">
+                <Choice title="Choose one for me" subtitle="the smallest that fits" selected={a.hoopMode === "recommend"}
+                  onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "recommend" }); }} />
+                <Choice title="Skip for now" subtitle="no fit check" selected={a.hoopMode === "none"}
+                  onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "none", hoop: null }); }} />
+              </div>
+              {hoopGroups(catalog.hoops).map(([group, hoops], i) => (i === 0 || moreHoops) && (
+                <div key={group}>
+                  <div className="section-label">{group}</div>
+                  <div className="choices">
+                    {hoops.map((h) => {
+                      const fits = h.widthMM >= a.widthMM && h.heightMM >= a.heightMM;
+                      return (
+                        <Choice key={h.name} title={h.name.replace(/^(Mighty Hoop|Durkee EZ Frame) /, "")}
+                          subtitle={fits ? `${cm(h.widthMM)} × ${cm(h.heightMM)} cm · fits` : `too small for ${cm(a.widthMM)} × ${cm(a.heightMM)} cm`}
+                          warning={!fits} selected={a.hoopMode === "specific" && a.hoop?.name === h.name}
+                          onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "specific", hoop: h }); }} />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {!moreHoops && hoopGroups(catalog.hoops).length > 1 && (
+                <button type="button" className="btn ghost more" onClick={() => setMoreHoops(true)}>
+                  More hoops &amp; frames — Mighty Hoop, Durkee EZ Frame ▾
+                </button>
+              )}
             </div>
           )}
 

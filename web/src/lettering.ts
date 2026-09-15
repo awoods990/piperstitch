@@ -40,6 +40,23 @@ export const LETTERING_FONTS: LetteringFont[] = [
   { id: "dancing-script", displayName: "Dancing Script Bold", group: "Script", url: dancing },
 ];
 
+/** The CSS font-family under which `ensureFontFaces` registers each font,
+ *  so a picker can show a font's own name in its own face. */
+export const fontFaceFamily = (id: string) => `piperstitch-lettering-${id}`;
+
+let faces: Promise<void> | null = null;
+/** Registers every lettering font with the browser as a CSS @font-face
+ *  (same .woff files opentype.js parses for the outlines) -- once. */
+export function ensureFontFaces(): Promise<void> {
+  if (faces) return faces;
+  faces = Promise.all(LETTERING_FONTS.map(async (f) => {
+    const face = new FontFace(fontFaceFamily(f.id), `url(${f.url})`);
+    await face.load();
+    document.fonts.add(face);
+  })).then(() => undefined);
+  return faces;
+}
+
 export interface LetteringSpec {
   text: string;
   fontID: string;

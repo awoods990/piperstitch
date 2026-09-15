@@ -5,6 +5,8 @@ import { rgbHex, hexRGB } from "../prefs";
 import StitchCanvas, { type Tool } from "./StitchCanvas";
 import Inspector, { type InspectorProps } from "./Inspector";
 import type { Point2D } from "../types";
+import { HoopSelect } from "./HoopSelect";
+
 
 export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "allowExtendedDensity"> {
   busy: string | null;
@@ -92,8 +94,11 @@ export default function Editor(p: EditorProps) {
         <label className="pill select-pill" title="Adjusts the automatic pull/push compensation for the fabric this design will be sewn on. Applies to every object; an object's own manually-set compensation always wins.">
           Fabric: <select value={p.fabric} onChange={(e) => p.onFabric(e.target.value as FabricType)}>{catalog.fabrics.map((f) => <option key={f.id} value={f.id}>{f.shortName}</option>)}</select>
         </label>
+        <label className="pill select-pill" title="The hoop or frame this will be sewn in. Changing it re-checks the fit and redraws the hoop outline; the design itself doesn't move.">
+          Hoop: <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} />
+        </label>
         <span className="sep" />
-        <button className="pill" onClick={() => p.onOpenSheet("lettering")} title="Type text and pick a font — clean satin letters generated from the font's own outline.">A Add lettering</button>
+        <button className="pill" onClick={() => p.onOpenSheet("lettering")} title="Type text and pick a font — clean satin letters generated from the font's own outline.">Add lettering</button>
         <button className="pill" onClick={p.onMergeShapes} disabled={p.selectedIDs.size < 2 || !!p.busy} title="Join the selected objects' outlines into one shape. Select several first.">⧉ Merge shapes</button>
         <button className={"pill" + (p.tool === "paint" ? " on" : "")} onClick={() => p.onTool(p.tool === "paint" ? "select" : "paint")} title="Draw in missing coverage by hand — extends the selected object, or draws a new shape if nothing's selected.">🖌 Paint</button>
         <button className={"pill danger" + (p.tool === "erase" ? " on" : "")} onClick={() => p.onTool(p.tool === "erase" ? "select" : "erase")} title="Remove coverage by hand — draw over whatever's wrong.">◌ Erase</button>
