@@ -45,20 +45,37 @@ public enum TatamiFillGenerator {
     /// comment in `TatamiFillGeneratorTests.swift` for why a small residual
     /// crossing is fine and expected for that common case.
     public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double) -> [[Point2D]] {
-        generateRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM, routeConnectorsAlongEdges: false)
+        generateRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM, routing: .edge)
     }
 
-    /// `routeConnectorsAlongEdges`: a connector that can't be sewn
-    /// straight (it would cross a hole, or leave the shape) is routed as a
-    /// travel run along that boundary -- just inside it -- instead of
-    /// becoming a run break. The standard "travel along the edge"
-    /// technique; used for a tatami *underlay*, whose travel is always
-    /// covered by the fill sewn on top of it afterwards, so a few extra
-    /// running stitches cost nothing visible and save a trim each.
-    /// The cover fill itself keeps breaking (a travel run over rows it
-    /// already sewed would show), which is what every existing caller
-    /// gets from the overload above.
+    /// A connector that can't be sewn straight (it would cross a hole, or
+    /// leave the shape) is routed as a travel run instead of becoming a
+    /// run break -- see `ConnectorRouting`. `routeConnectorsAlongEdges`
+    /// true is the underlay/laydown mode (dog-legs allowed); false is the
+    /// cover fill's edge-only mode.
     public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double, routeConnectorsAlongEdges: Bool) -> [[Point2D]] {
+        generateRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM, routing: routeConnectorsAlongEdges ? .edgeOrWaypoints : .edge)
+    }
+
+    /// Holes below this are trace noise, not counters -- see
+    /// `PolygonGeometry.droppingTinyHoles`.
+    public static let minHoleAreaMM2 = 1.5
+
+    /// How a connector that can't be sewn straight is handled.
+    public enum ConnectorRouting {
+        /// Always a run break (trim + jump).
+        case none
+        /// Travel along the crossed boundary, 1 mm inside it, under the
+        /// row ends the fill sews there anyway; else a break. The cover
+        /// fill's own mode.
+        case edge
+        /// `edge`, and when no way round the boundary stays inside, a
+        /// dog-leg through the interior -- only for travel that is
+        /// covered afterwards (underlay, laydown).
+        case edgeOrWaypoints
+    }
+
+    public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double, routing: ConnectorRouting) -> [[Point2D]] {
         guard !shape.subPaths.isEmpty else { return [] }
         if parameters.fillPattern == .crossHatch {
             return generateCrossHatchRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM)
@@ -74,7 +91,7 @@ public enum TatamiFillGenerator {
             Point2D(p.x * c - p.y * s, p.x * s + p.y * c)
         }
 
-        var rotatedPolygons: [[Point2D]] = shape.subPaths.map { sp in sp.points.map { rotate($0, cos: cosA, sin: sinA) } }
+        var rotatedPolygons: [[Point2D]] = PolygonGeometry.droppingTinyHoles(shape.subPaths.map { sp in sp.points.map { rotate($0, cos: cosA, sin: sinA) } }, minAreaMM2: minHoleAreaMM2)
         var box = BoundingBox.empty
         for poly in rotatedPolygons { box = box.union(BoundingBox(points: poly)) }
         guard !box.isEmpty, box.height > 0 else { return [] }
@@ -184,8 +201,8 @@ public enum TatamiFillGenerator {
         // whole shape doesn't get a lap of travel round it.
         let maxRoutedLengthMM = 120.0
         func routedConnector(from a: Point2D, to b: Point2D) -> [Point2D]? {
-            guard routeConnectorsAlongEdges else { return nil }
-            guard let route = routeAlongBoundary(from: a, to: b, polygons: rotatedPolygons, insetMM: 1.0, allowWaypoints: true), PolygonGeometry.pathLength(route) <= maxRoutedLengthMM else { return nil }
+            guard routing != .none else { return nil }
+            guard let route = routeAlongBoundary(from: a, to: b, polygons: rotatedPolygons, insetMM: 1.0, allowWaypoints: routing == .edgeOrWaypoints, maxLengthMM: maxRoutedLengthMM) else { return nil }
             return Array(sampleKeepingVertices(route, stitchLengthMM: max(stitchLength, 1.0)).dropFirst().dropLast())
         }
 
@@ -287,7 +304,10 @@ public enum TatamiFillGenerator {
     /// fall back to a dog-leg through the interior (`routeViaWaypoints`).
     /// Only for travel that is covered afterwards (underlay, laydown) --
     /// a dog-leg across a fill already sewn would show.
-    static func routeAlongBoundary(from a: Point2D, to b: Point2D, polygons: [[Point2D]], insetMM: Double, allowWaypoints: Bool = false) -> [Point2D]? {
+    /// `maxLengthMM`: a route longer than this is discarded at every
+    /// stage (so a long way round the edge doesn't stop a short dog-leg
+    /// from being tried).
+    static func routeAlongBoundary(from a: Point2D, to b: Point2D, polygons: [[Point2D]], insetMM: Double, allowWaypoints: Bool = false, maxLengthMM: Double = .infinity) -> [Point2D]? {
         var crossed: [Int] = []
         for (index, polygon) in polygons.enumerated() where polygon.count >= 3 {
             let n = polygon.count
@@ -296,10 +316,13 @@ public enum TatamiFillGenerator {
                 break
             }
         }
+        // A connector that runs along an edge (both ends on the boundary,
+        // samples a hair outside) crosses nothing; try every boundary then.
+        if crossed.isEmpty { crossed = Array(polygons.indices.filter { polygons[$0].count >= 3 }) }
         guard !crossed.isEmpty else { return nil }
 
         var best: [Point2D]?
-        var bestLength = Double.infinity
+        var bestLength = maxLengthMM
         for index in crossed {
             // Keep the route just inside the *stitched* area: the outer
             // boundary shrinks inward, a hole grows outward.
@@ -310,14 +333,58 @@ public enum TatamiFillGenerator {
             best = route
             bestLength = length
         }
-        if best == nil, allowWaypoints {
+        if best == nil {
             // The inset boundary of a concave shape (a letterform) can
             // self-intersect, so the way round it may leave the shape.
-            // Fall back to a dog-leg through one or two inset vertices
-            // that the straight legs can reach without leaving the shape.
-            best = routeViaWaypoints(from: a, to: b, polygons: polygons, insetMM: insetMM)
+            // Follow the *exact* boundary instead -- which by definition
+            // never leaves the shape -- nudging each vertex inward only
+            // where that is verified to stay inside.
+            for index in crossed {
+                guard let raw = shortestWayRound(polygons[index], from: a, to: b) else { continue }
+                let route = nudgedInward(raw, boundary: polygons[index], isHole: index != 0, insetMM: insetMM, polygons: polygons)
+                let length = PolygonGeometry.pathLength(route)
+                guard length < bestLength, route.count >= 2,
+                      routeStaysInside([route[0], route[1]], polygons: polygons),
+                      routeStaysInside([route[route.count - 2], route[route.count - 1]], polygons: polygons) else { continue }
+                best = route
+                bestLength = length
+            }
+        }
+        if best == nil, allowWaypoints {
+            // Still nothing (the ends can't see the boundary): a dog-leg
+            // through one or two inset vertices that the straight legs
+            // can reach without leaving the shape.
+            if let route = routeViaWaypoints(from: a, to: b, polygons: polygons, insetMM: insetMM), PolygonGeometry.pathLength(route) < maxLengthMM {
+                best = route
+            }
         }
         return best
+    }
+
+    /// `route` (from `shortestWayRound`: `a`, boundary points, `b`) with
+    /// each boundary vertex moved to its inset position when that point
+    /// and the legs to its neighbours stay inside; otherwise the vertex
+    /// stays exactly on the boundary, which is inside by definition.
+    private static func nudgedInward(_ route: [Point2D], boundary: [Point2D], isHole: Bool, insetMM: Double, polygons: [[Point2D]]) -> [Point2D] {
+        guard route.count > 2 else { return route }
+        let inset = PolygonGeometry.offsetPolygon(boundary, by: isHole ? -insetMM : insetMM)
+        guard inset.count == boundary.count else { return route }
+        var lookup: [Point2D: Int] = [:]
+        for (i, p) in boundary.enumerated() { lookup[p] = i }
+        var out = route
+        for k in 1..<(route.count - 1) {
+            guard let i = lookup[route[k]] else { continue }
+            let candidate = inset[i]
+            guard PolygonGeometry.pointInPolygons(candidate, polygons: polygons),
+                  routeStaysInside([out[k - 1], candidate], polygons: polygons) else { continue }
+            out[k] = candidate
+        }
+        // A nudged vertex's leg to its (possibly un-nudged) successor
+        // must hold too; revert any that doesn't.
+        for k in 1..<(route.count - 1) where out[k] != route[k] {
+            if !routeStaysInside([out[k], out[k + 1]], polygons: polygons) { out[k] = route[k] }
+        }
+        return out
     }
 
     /// A one- or two-waypoint route from `a` to `b` whose straight legs

@@ -251,6 +251,15 @@ public enum PolygonGeometry {
         return result
     }
 
+    /// `polygons` (outer first, then holes) without holes smaller than
+    /// `minAreaMM2`. A raster trace leaves pinprick holes of a fraction of
+    /// a square millimetre that no stitching can render (thread is
+    /// ~0.4 mm wide); to a fill they only split rows and break connectors.
+    public static func droppingTinyHoles(_ polygons: [[Point2D]], minAreaMM2: Double) -> [[Point2D]] {
+        guard polygons.count > 1 else { return polygons }
+        return [polygons[0]] + polygons.dropFirst().filter { abs(signedArea($0)) >= minAreaMM2 }
+    }
+
     /// Clips `polygon` against an axis-aligned rectangle via Sutherland-
     /// Hodgman -- clips sequentially against each of the rectangle's four
     /// half-planes, correct for any simple subject polygon (concave

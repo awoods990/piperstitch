@@ -275,13 +275,27 @@ struct TatamiFillGeneratorTests {
         // comment). `generate()` -- which flattens every run back together
         // regardless of this structure -- stays unaffected either way; see
         // the assertion below.
-        let unlimited = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: .infinity)
+        // (`routing: .none` here: with the default edge routing the
+        // connector travels round the hole instead -- checked below.)
+        let unlimited = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: .infinity, routing: .none)
         #expect(unlimited.count > 1, "a connector crossing straight through this wide hole should stay split even with no distance limit at all")
 
         // The hole is 20mm wide -- well above a 5mm break threshold, so its
         // connector must become its own run boundary.
-        let split = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: 5.0)
+        let split = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: 5.0, routing: .none)
         #expect(split.count > 1, "a wide hole's connector should force a separate run once it exceeds the break threshold")
+
+        // With edge routing (the cover fill's default) the same fill is one
+        // run whose travel follows the hole's edge -- and still nothing
+        // crosses the hole.
+        let routed = TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: 5.0)
+        #expect(routed.count == 1, "edge routing should join the fill into one run, got \(routed.count)")
+        for run in routed {
+            for (a, b) in zip(run, run.dropFirst()) {
+                let mid = Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
+                #expect(!(mid.x > 10.3 && mid.x < 29.7 && mid.y > 10.3 && mid.y < 29.7), "stitch \(a)->\(b) crosses the hole")
+            }
+        }
 
         // Within any single run, every consecutive pair must still respect
         // the threshold -- a caller only ever needs to insert a real jump
@@ -294,8 +308,8 @@ struct TatamiFillGeneratorTests {
         }
 
         // Splitting changes structure, not content: flattening the split
-        // runs back together must reproduce `generate`'s own output exactly.
-        #expect(split.flatMap { $0 } == TatamiFillGenerator.generate(for: shape, parameters: params))
+        // runs back together must reproduce the unrouted, unsplit output.
+        #expect(split.flatMap { $0 } == TatamiFillGenerator.generateRuns(for: shape, parameters: params, breakThresholdMM: .infinity, routing: .none).flatMap { $0 })
     }
 
     /// A concave notch open to the shape's own boundary (e.g. a "U", or an
@@ -321,8 +335,20 @@ struct TatamiFillGeneratorTests {
         // `maxJumpWithoutTrimMM`) -- distance alone would happily merge a
         // connector across this notch; only the geometric check should
         // stop it.
-        let runs = TatamiFillGenerator.generateRuns(for: uShape, parameters: params, breakThresholdMM: 15.0)
+        let runs = TatamiFillGenerator.generateRuns(for: uShape, parameters: params, breakThresholdMM: 15.0, routing: .none)
         #expect(runs.count > 1, "the notch-crossing connector should force a separate run even under a generous distance threshold")
+        // With edge routing the notch is travelled round, never across.
+        let routed = TatamiFillGenerator.generateRuns(for: uShape, parameters: params, breakThresholdMM: 15.0)
+        #expect(routed.count == 1)
+        let polygon = uShape.subPaths[0].points
+        for run in routed {
+            for (a, b) in zip(run, run.dropFirst()) where a.distance(to: b) > 0.5 {
+                let mid = Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
+                // The notch is x 4...20 below the bowl (y < 24): nothing may land there.
+                #expect(!(mid.x > 4.6 && mid.x < 19.4 && mid.y < 23), "stitch \(a)->\(b) crosses the notch")
+            }
+        }
+        _ = polygon
         for run in runs {
             guard run.count > 1 else { continue }
             for i in 1..<run.count {
@@ -353,7 +379,10 @@ struct TatamiFillGeneratorTests {
         // split at both its opening and closing row), which is pre-existing
         // behavior this fix doesn't change; what matters here is that at
         // least one real break happened instead of none.
-        #expect(plan.trimCount >= 2)
+        // The hole crossing used to be a trim; since travel can follow the
+        // hole's own edge (`routeAlongBoundary`), the only trim left is
+        // the design's final one. Either way, nothing may bridge the hole.
+        #expect(plan.trimCount >= 1)
 
         // No real *stitch* segment should cross the hole at all -- confirms
         // the long connector became a jump (invisible thread, no needle

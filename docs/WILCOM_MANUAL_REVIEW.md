@@ -174,14 +174,12 @@ recommendation**. Priority is by expected sew-out impact per hour of work.
 **Status (2026-09-15):** every item except B8 (raised satin, low
 priority) is implemented — A1–A7, B1–B3, B5–B7, C1–C7. See CHANGELOG.md.
 
-**Found along the way — next engine item:** on a fill with holes or
-concave notches (any "B"), most trims come from the tatami's own chain
-order: connectors between chains that would cross sewn rows or leave
-the shape become trims. Wilcom sequences the pieces so each connector
-travels *under rows not yet sewn*. A chain sequencer that plans travel
-through unsewn chains (graph of chains, connectors allowed only across
-unsewn area, shortest Hamiltonian-ish walk) would take the cap logo's
-"B" from 7 trims toward 2–3. ~1–2 days.
+**Fill chain breaks — resolved without a new sequencer.** The trims on
+a fill with holes or notches came from four routing failures (see
+CHANGELOG.md "fills travel instead of trimming"); with those fixed the
+cap logo's "B" sews in one thread (7 → 2 trims, the minimum). Remaining
+trims on the corpus are between separate same-colour objects (the 3 mm
+rule); reducing those is a sequencing/bridging question, not a fill one.
 
 Every item lands with tests in `Tests/StitchPilotCoreTests/` and a
 before/after run of `DigitizeCLI` over `TestArtwork/` (the regression

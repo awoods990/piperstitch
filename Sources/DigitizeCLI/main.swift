@@ -183,6 +183,10 @@ do {
         if ProcessInfo.processInfo.environment["ALLOW_BRANCHING_SATIN"] != nil {
             parameters.allowBranchingSatin = true
         }
+        // UNDERLAY=none (any UnderlayType raw value): force every object's underlay.
+        if let raw = ProcessInfo.processInfo.environment["UNDERLAY"], let underlay = UnderlayType(rawValue: raw) {
+            parameters.underlayType = underlay
+        }
         // FABRIC=terry (any FabricType raw value): sew as if on that fabric.
         if let raw = ProcessInfo.processInfo.environment["FABRIC"], let fabric = FabricType(rawValue: raw) {
             parameters.fabricType = fabric

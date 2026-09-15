@@ -63,6 +63,9 @@ public enum DigitizePipeline {
     /// `maxJumpWithoutTrimMM` is the inter-object connector threshold (see
     /// `visibleConnectorMM`, its default); intra-object breaks always use
     /// `defaultMaxJumpWithoutTrimMM`.
+    /// See `appendJoiningIfCovered`.
+    private static let joinToleranceMM = 0.5
+
     /// How far a laydown connector may run inside its own footprint
     /// before it is trimmed instead -- see `flattenWithColors`.
     static let laydownConnectorMM = 80.0
@@ -306,7 +309,7 @@ public enum DigitizePipeline {
             // the connector between them is short and stays inside the
             // shape (a hole counts as outside); otherwise it starts a new
             // run, exactly as the fill's own chains do.
-            let polygons = object.shape.subPaths.map { $0.points }
+            let polygons = PolygonGeometry.droppingTinyHoles(object.shape.subPaths.map { $0.points }, minAreaMM2: TatamiFillGenerator.minHoleAreaMM2)
             var runs: [[Point2D]] = []
             for (index, layer) in layers.enumerated() {
                 let nextStart = index + 1 < layers.count ? layers[index + 1].runs.first?.first : fillRuns.first?.first
@@ -424,17 +427,22 @@ public enum DigitizePipeline {
         let length = last.distance(to: first)
         let sampleCount = 5
         var inside = true
+        // Run ends sit on the pull-compensated outline, a few tenths of a
+        // millimetre outside the digitized one; test against the outline
+        // grown by that much so a connector hugging the edge still counts.
+        let tolerant = polygons.enumerated().map { index, polygon in
+            PolygonGeometry.offsetPolygon(polygon, by: index == 0 ? -joinToleranceMM : joinToleranceMM)
+        }
         if length > 1.0 {
             for step in 1...sampleCount {
                 let t = Double(step) / Double(sampleCount + 1)
                 let sample = Point2D(last.x + (first.x - last.x) * t, last.y + (first.y - last.y) * t)
-                if !PolygonGeometry.pointInPolygons(sample, polygons: polygons) { inside = false; break }
+                if !PolygonGeometry.pointInPolygons(sample, polygons: tolerant) { inside = false; break }
             }
         }
         if length <= breakThresholdMM, inside {
             runs[runs.count - 1].append(contentsOf: run)
-        } else if let route = TatamiFillGenerator.routeAlongBoundary(from: last, to: first, polygons: polygons, insetMM: 1.0, allowWaypoints: allowWaypoints),
-                  PolygonGeometry.pathLength(route) <= 120 {
+        } else if let route = TatamiFillGenerator.routeAlongBoundary(from: last, to: first, polygons: polygons, insetMM: 1.0, allowWaypoints: allowWaypoints, maxLengthMM: 120) {
             // Travel along the crossed edge instead of a trim -- this
             // join precedes the cover fill, so the travel is covered.
             let sampled = TatamiFillGenerator.sampleKeepingVertices(route, stitchLengthMM: 2.0)

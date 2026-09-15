@@ -4,6 +4,45 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: fills travel instead of trimming — the cap "B" sews in one thread
+
+The item the Wilcom review left open: on a fill with holes or concave
+notches, most trims came from the tatami's own chain breaks. The plan
+was a new chain sequencer; it turned out the existing edge routing was
+failing for four separate reasons, and fixing those removed every
+internal break on the test corpus (cap logo 7 → **2 trims**, the
+minimum: one colour change plus the end; knit 15 → 2, terry 26 → 5;
+Oholi 92 → 82). No new sequencer was needed.
+
+- **The cover fill routes its own connectors** along the edge
+  (`TatamiFillGenerator.ConnectorRouting.edge`) inside the generator,
+  where the run ends and the boundary are the same pull-compensated
+  geometry. Before, the fill's chains were left broken and the pipeline
+  tried to join them against the *uncompensated* outline, on which the
+  compensated run ends sit a few tenths of a millimetre outside — so
+  "stays inside" failed at the edge. The pipeline's join test now also
+  tolerates that margin (0.5 mm).
+- **Exact-boundary route.** The 1 mm inset boundary of a concave outline
+  folds over itself at every notch narrower than 2 mm, and the route
+  round it was rejected for leaving the shape. The router now falls back
+  to the exact boundary — inside by definition — nudging each vertex
+  inward only where that is verified.
+- **Along-edge connectors** (both ends on the boundary, samples a hair
+  outside) crossed no edge and so were never routed; every boundary is
+  tried now.
+- **Long edge routes no longer block dog-legs**: `maxLengthMM` is
+  applied at every stage, so an underlay connector whose way round the
+  edge exceeds 120 mm still gets a straight dog-leg through the interior
+  (the red "B"'s tatami underlay: a 91 mm gap that was a trim).
+- **Pinprick holes are ignored** (`TatamiFillGenerator.minHoleAreaMM2`,
+  1.5 mm²): a raster trace leaves sub-millimetre holes no thread can
+  render; they only split rows and broke connectors.
+- Behaviour change worth knowing: a fill with a wide hole used to trim
+  at the crossing; it now travels round the hole's edge, 1 mm inside,
+  under the row ends. Nothing crosses the hole either way (tests).
+- Tests: `FillConnectorRoutingTests` (3); two split tests now exercise
+  both `.none` and edge routing — 386 pass.
+
 ## Added: overlap removal on vector import, outlines and satin border (C2, C7)
 
 - **Remove overlaps** (`DesignFinishing.removeOverlaps`, `ShapeMerger.
