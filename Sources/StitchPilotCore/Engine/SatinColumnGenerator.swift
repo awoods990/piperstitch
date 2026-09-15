@@ -235,6 +235,110 @@ public enum SatinColumnGenerator {
         return Point2D(origin.x + t * direction.x, origin.y + t * direction.y)
     }
 
+    /// Like `rayPolygonIntersection`, but against every one of a shape's
+    /// boundaries at once (outer plus every hole), returning every
+    /// crossing found across all of them ordered nearest-first —
+    /// `computeSegmentRails` only ever wants the very nearest (a
+    /// branching segment's rail can pass near, or between, more than one
+    /// hole at once — a "B"'s stem sits between its two bowls' counters
+    /// — and a ray cast only against the outer boundary would sail
+    /// straight through an intervening hole to the far side, well past
+    /// where the segment's own rail should actually stop), but
+    /// `computeSegmentRingRails` below wants the nearest *two*: for a
+    /// self-loop edge (a hole's own skeleton loop), the first crossing
+    /// from its centroid is the hole's own boundary and the second is
+    /// whatever lies beyond it — normally the outer boundary, the same
+    /// pair `computeRingRails` gets by querying its one hole and one
+    /// outer polygon separately, just generalized to however many
+    /// boundaries a branching shape's full set of sub-paths has.
+    private static func rayPolygonsIntersections(origin: Point2D, direction: Point2D, polygons: [[Point2D]]) -> [Point2D] {
+        var hits: [(t: Double, point: Point2D)] = []
+        let perp = Point2D(-direction.y, direction.x)
+        for polygon in polygons {
+            guard polygon.count >= 3 else { continue }
+            let n = polygon.count
+            for i in 0..<n {
+                let a = polygon[i], b = polygon[(i + 1) % n]
+                let v1x = origin.x - a.x, v1y = origin.y - a.y
+                let v2x = b.x - a.x, v2y = b.y - a.y
+                let denom = v2x * perp.x + v2y * perp.y
+                guard abs(denom) > 1e-9 else { continue }
+                let t = (v2x * v1y - v2y * v1x) / denom
+                let s = (v1x * perp.x + v1y * perp.y) / denom
+                guard t > 1e-6, s >= -1e-6, s <= 1 + 1e-6 else { continue }
+                hits.append((t, Point2D(origin.x + t * direction.x, origin.y + t * direction.y)))
+            }
+        }
+        return hits.sorted { $0.t < $1.t }.map { $0.point }
+    }
+
+    /// The nearest crossing only — see `rayPolygonsIntersections`'s own
+    /// doc comment.
+    private static func rayPolygonsIntersection(origin: Point2D, direction: Point2D, polygons: [[Point2D]]) -> Point2D? {
+        rayPolygonsIntersections(origin: origin, direction: direction, polygons: polygons).first
+    }
+
+    /// The nearest point on any of `polygons`' own edges to `point`,
+    /// restricted to whichever side of `point` the `perp` direction
+    /// (`side: 1` or `-1`) picks out — `computeSegmentRails`' actual
+    /// rail-fitting primitive for an open branch segment, in place of a
+    /// single fixed-direction ray-cast.
+    ///
+    /// A ray-cast only ever finds a boundary point that happens to sit
+    /// exactly along one fixed direction from the sample; a genuine
+    /// medial-axis point near a CORNER, though, can be the true nearest
+    /// point to many *different* tangent directions along a curving or
+    /// widening segment (the corner's distance stays roughly the same
+    /// while the ray direction sweeps right past it) — a fixed-direction
+    /// ray only hits that corner from the one sample where the angle
+    /// happens to line up, and at every neighboring sample either misses
+    /// it (finding a much farther point along its own fixed direction, or
+    /// nothing at all) or, if the tangent is rotating, snaps onto and off
+    /// the corner in a way that isn't continuous from one sample to the
+    /// next. Found directly against a real raster-traced "B" logo (Boston
+    /// Red Sox): its stem, curving up into the wide junction where both
+    /// bowls meet, produced a rail whose B side stayed pinned to the same
+    /// physical corner for many consecutive samples while its A side kept
+    /// advancing along the smooth outer boundary — width climbing from
+    /// ~4mm to ~10mm over a handful of samples, which is exactly the kind
+    /// of asymmetric "fan" `isTwisted` correctly flags, but here it was a
+    /// real geometric consequence of the ray-casting technique itself, not
+    /// raster noise (which `smoothedPolyline` above already accounts for
+    /// separately). Searching for the nearest point directly, rather than
+    /// only along one fixed ray, tracks the true medial-axis pairing
+    /// continuously as the sample moves — including smoothly approaching
+    /// and leaving a corner, rather than only ever finding it from one
+    /// exact angle.
+    private static func nearestBoundaryPoint(from point: Point2D, perp: Point2D, side: Double, polygons: [[Point2D]]) -> Point2D? {
+        var best: Point2D?
+        var bestDistSq = Double.infinity
+        for polygon in polygons {
+            guard polygon.count >= 2 else { continue }
+            let n = polygon.count
+            for i in 0..<n {
+                let a = polygon[i], b = polygon[(i + 1) % n]
+                let candidate = nearestPointOnSegment(point, a, b)
+                let dx = candidate.x - point.x, dy = candidate.y - point.y
+                let dot = dx * perp.x + dy * perp.y
+                guard dot * side >= 0 else { continue }
+                let distSq = dx * dx + dy * dy
+                if distSq < bestDistSq { bestDistSq = distSq; best = candidate }
+            }
+        }
+        return best
+    }
+
+    /// The closest point to `p` lying on the segment `a`-`b` (clamped to
+    /// the segment, not the infinite line through it).
+    private static func nearestPointOnSegment(_ p: Point2D, _ a: Point2D, _ b: Point2D) -> Point2D {
+        let abx = b.x - a.x, aby = b.y - a.y
+        let lenSq = abx * abx + aby * aby
+        guard lenSq > 1e-12 else { return a }
+        let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq
+        let clamped = max(0, min(1, t))
+        return Point2D(a.x + clamped * abx, a.y + clamped * aby)
+    }
+
     /// Whether `shape` -- a single-boundary (no-hole) outline -- can be
     /// represented as one well-formed satin column with this engine's
     /// current rail-fitting: `computeRails` succeeds and the resulting
@@ -647,4 +751,552 @@ public enum SatinColumnGenerator {
         return result
     }
 
+    // MARK: - Branching satin (stage 2 — not wired into classification or
+    // `DigitizePipeline` yet; see DIGITIZING_ENGINE.md's branching-letter
+    // satin entry for the staged rollout plan)
+
+    /// Whether `shape` — an outline (with any number of holes) that
+    /// genuinely branches (a letter like "A", "B", "R", "H"; a logo
+    /// stroke with a junction) — can be represented as satin by
+    /// decomposing it into `StrokeTopologyAnalyzer`'s stroke segments and
+    /// rail-fitting each one independently, the way
+    /// `canRepresentAsSingleSatinColumn` checks the single-column case. A
+    /// hole's own loop becomes a self-loop edge in the topology (see
+    /// `StrokeTopologyAnalyzer.Edge`'s own doc comment) and is rail-fit
+    /// exactly like any other segment — `computeSegmentRails`/
+    /// `computeSegmentCrossings` operate on a polyline generically and
+    /// don't care whether it's open or closed, the same way
+    /// `computeCrossings` already treats `computeRingRails`'s closed rail
+    /// pair no differently from an open column's. Requires the topology
+    /// to have at least one real junction: a shape with none either
+    /// already has a direct, simpler, better-proven path
+    /// (`canRepresentAsSingleSatinColumn`, or the ring path for exactly
+    /// one hole) or isn't usable at all, and shouldn't route through this
+    /// newer, less-proven decomposition when it doesn't need to.
+    public static func canRepresentAsBranchingSatinColumn(shape: VectorShape, parameters: StitchGenerationParameters) -> Bool {
+        guard !shape.subPaths.isEmpty else { return false }
+        let polygons = shape.subPaths.map { $0.points }
+        guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty,
+              topology.nodes.contains(where: { $0.isJunction }) else { return false }
+        for edge in topology.edges {
+            guard let (railA, railB) = try? railsForEdge(edge, shapePolygons: polygons),
+                  computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters) != nil else { return false }
+        }
+        return true
+    }
+
+    /// Routes to `computeSegmentRingRails` for a self-loop edge (a
+    /// hole's own skeleton loop) and `computeSegmentRails` for every
+    /// other segment — see `computeSegmentRingRails`'s own doc comment
+    /// for why a self-loop specifically needs the radial technique
+    /// rather than the tangent-walk one every other segment uses.
+    private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]]) throws -> (railA: [Point2D], railB: [Point2D]) {
+        if edge.startNodeID == edge.endNodeID {
+            guard let rails = computeSegmentRingRails(loopPolyline: edge.polyline, shapePolygons: shapePolygons) else {
+                throw SatinGenerationError.shapeNotSuitable("couldn't trace a consistent ring column around this loop segment")
+            }
+            return rails
+        }
+        return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons)
+    }
+
+    /// Generates satin stitches for a branching shape by decomposing it
+    /// into `StrokeTopologyAnalyzer`'s stroke segments, rail-fitting and
+    /// crossing each one independently (`computeSegmentRails`/
+    /// `computeSegmentCrossings` — the same per-crossing technique
+    /// `computeCrossings` uses, just following a local segment centerline
+    /// instead of one global end-cap-to-end-cap axis), then concatenating
+    /// them in stroke-graph walk order (`orderedEdges`) into one flat
+    /// stitch list — the same `[Point2D]` contract `generate`/
+    /// `generatePartial` already return, so nothing downstream of this
+    /// function (`DigitizePipeline`, sequencing, hidden-travel routing,
+    /// every export format) needs to know a shape's satin came from one
+    /// column or several stitched together.
+    ///
+    /// Junctions themselves get no dedicated fan/patch yet — consecutive
+    /// segments' near-junction crossings simply follow each other in the
+    /// flat stitch list, the same way `generate` already transitions
+    /// between ordinary adjacent crossings. This can under- or over-cover
+    /// the small junction area compared to a proper radial patch; treated
+    /// here as an acceptable first approximation to prove the segment-
+    /// decomposition and sequencing mechanism end-to-end, with dedicated
+    /// junction stitching (`SATIN_JUNCTION_OVERLAP_MM` from the original
+    /// spec) as a follow-up refinement once this stage is verified against
+    /// real files.
+    public static func generateBranching(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [Point2D] {
+        guard !shape.subPaths.isEmpty else {
+            throw SatinGenerationError.shapeNotSuitable("no outline was provided")
+        }
+        let polygons = shape.subPaths.map { $0.points }
+        guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty else {
+            throw SatinGenerationError.shapeNotSuitable("couldn't derive a stroke topology for this shape")
+        }
+
+        var stitches: [Point2D] = []
+        for edge in orderedEdges(topology) {
+            let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons)
+            guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters) else {
+                throw SatinGenerationError.shapeNotSuitable("a branch segment couldn't be rail-fit as satin")
+            }
+            for i in 0..<crossings.expandedA.count {
+                stitches.append(crossings.expandedA[i])
+                stitches.append(crossings.expandedB[i])
+            }
+        }
+        guard !stitches.isEmpty else {
+            throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
+        }
+        return stitches
+    }
+
+    /// For each `polyline` sample (a stroke segment's own centerline, from
+    /// `StrokeTopologyAnalyzer`), casts a ray perpendicular to the local
+    /// tangent in both directions to find the two nearest boundary points —
+    /// the same ray-casting primitive `computeRingRails` uses for its fixed
+    /// radial sweep from one center, just re-aimed per sample to follow a
+    /// locally-varying direction instead. A sample where the perpendicular
+    /// ray misses the boundary on either side (rare — a sharp local kink at
+    /// a junction, or a centerline sample sitting exactly on a boundary
+    /// vertex) is skipped rather than failing the whole segment; only a
+    /// segment that loses more than a quarter of its samples this way is
+    /// rejected as too irregular to trust.
+    /// A perpendicular ray-cast hit farther than this multiple of
+    /// `StrokeTopologyAnalyzer`'s own local width estimate is treated as a
+    /// miss, not a real boundary point — see this function's own doc
+    /// comment on why a sample near a junction needs this bound at all.
+    private static let segmentRailWidthToleranceFactor = 2.0
+
+    /// At or below this local width, a branch segment sample is treated
+    /// as a genuinely tapering tip rather than merely a narrow section —
+    /// see `computeSegmentRails`'s own doc comment on why that distinct
+    /// treatment (collapsing both rails to one point) exists at all.
+    /// Deliberately well under `minSatinWidthMM`'s 1.5mm default: this
+    /// only needs to catch the near-zero-width samples where independent
+    /// ray-casting becomes numerically unstable, not every section that
+    /// merely happens to be on the narrow side.
+    private static let taperCollapseWidthMM = 0.5
+
+    /// Arc-length window (mm) `smoothedPolyline` averages each interior
+    /// sample over before rail-fitting — see that function's own doc
+    /// comment for why this exists at all. Chosen well under a typical
+    /// letter stroke's own width (so a real, meaningful curve along the
+    /// stroke's length isn't flattened away), but well above one raster
+    /// pixel step at `StrokeTopologyAnalyzer`'s default 10px/mm (0.1mm),
+    /// so it actually averages several consecutive steps rather than
+    /// nearly none.
+    private static let segmentSmoothingWindowMM = 0.6
+
+    /// Arc-length window (mm) used to smooth the RAILS themselves (the
+    /// boundary hit points `computeSegmentRails` finds via
+    /// `nearestBoundaryPoint`), applied just before returning — wider
+    /// than `segmentSmoothingWindowMM` (used for the centerline
+    /// beforehand) because a real corner a rail faithfully follows can
+    /// stay the true nearest point over a longer stretch than the raw
+    /// per-pixel jitter the centerline window targets; over-smoothing a
+    /// real corner here just rounds it slightly (routine in satin
+    /// digitizing) rather than misrepresenting where the centerline
+    /// itself runs, which the smaller centerline window is deliberately
+    /// conservative about. Found empirically against the real Red Sox
+    /// "B": 1.5mm and 2.0mm still left one isolated pinch (a real corner
+    /// the rail tracked for longer than either window), 2.5mm was the
+    /// first value that resolved it fully, 3.0mm resolved it with a
+    /// clearer margin and is the value kept here.
+    private static let railSmoothingWindowMM = 3.0
+
+    /// Averages each interior sample of a branch segment's raw skeleton
+    /// centerline with its neighbors within `segmentSmoothingWindowMM` of
+    /// it (by arc length), leaving the first and last samples — a node's
+    /// own position, which downstream code relies on to join adjacent
+    /// segments — untouched.
+    ///
+    /// `StrokeTopologyAnalyzer`'s centerline is a literal one-pixel-at-a-
+    /// time walk of a thinned raster skeleton: even on ordinary,
+    /// already-anti-aliased artwork, that walk routinely staircases a few
+    /// tenths of a degree back and forth from one pixel to the next along
+    /// an otherwise straight or gently curving stroke. `computeSegmentRails`
+    /// derives its perpendicular ray direction at each sample from that
+    /// sample's two immediate neighbors, so this pixel-level jitter feeds
+    /// directly into the ray direction at every single sample — normally
+    /// invisible in the resulting rails on a wide stroke (the noise is a
+    /// small fraction of the width), but on a genuinely thin section (a
+    /// tapering tip, a fine stroke) the same absolute jitter is a much
+    /// larger fraction of the local width, and can swing the rail's
+    /// direction enough from one sample to the next to make adjacent
+    /// crossings cross each other — exactly what `isTwisted` exists to
+    /// catch, but here because the raw walk is noisy relative to the
+    /// (small) width there, not because the underlying geometry actually
+    /// branches or twists. Found directly against a real raster-traced
+    /// "B" logo (Boston Red Sox), whose thin tapering tip still failed
+    /// `isTwisted` even after `taperCollapseWidthMM` handled the
+    /// near-zero-width samples specifically — the jitter wasn't confined
+    /// to the very tip, just less consequential (relative to width)
+    /// everywhere else along the same segment.
+    private static func smoothedPolyline(_ points: [Point2D], windowMM: Double = segmentSmoothingWindowMM) -> [Point2D] {
+        guard points.count > 2 else { return points }
+        let n = points.count
+        var cumulative = [Double](repeating: 0, count: n)
+        for i in 1..<n { cumulative[i] = cumulative[i - 1] + points[i - 1].distance(to: points[i]) }
+
+        var result = points
+        for i in 1..<(n - 1) {
+            let lo = cumulative[i] - windowMM / 2
+            let hi = cumulative[i] + windowMM / 2
+            var sumX = 0.0, sumY = 0.0, count = 0.0
+            var j = i
+            while j >= 0, cumulative[j] >= lo {
+                sumX += points[j].x; sumY += points[j].y; count += 1
+                j -= 1
+            }
+            j = i + 1
+            while j < n, cumulative[j] <= hi {
+                sumX += points[j].x; sumY += points[j].y; count += 1
+                j += 1
+            }
+            guard count > 0 else { continue }
+            result[i] = Point2D(sumX / count, sumY / count)
+        }
+        return result
+    }
+
+    /// See the type-level doc comment for the general ray-casting
+    /// approach. One case needs an extra safeguard beyond that: a sample
+    /// near a junction end sits where the WHOLE shape's own boundary has
+    /// "opened up" into a connecting branch (e.g. the left stem of an "H,"
+    /// right where it meets the crossbar) — casting perpendicular to the
+    /// stem's own local tangent there can sail straight past where the
+    /// stem's boundary *would* be in isolation and hit the crossbar's own,
+    /// much farther boundary instead, since that point is genuinely
+    /// interior to the combined shape, not on its edge at all. Found
+    /// directly against this file's own branching-H regression test: every
+    /// segment's rails came back structurally fine away from its junction
+    /// end, but the samples closest to a junction produced a sudden width
+    /// spike that `isTwisted` correctly caught as a malformed column.
+    /// `widthsMM` (from the same topology edge, computed locally via the
+    /// skeleton's own distance transform — not a whole-boundary ray-cast,
+    /// so it doesn't have this failure mode) gives an independent local
+    /// width estimate at each sample; a ray-cast hit farther than
+    /// `segmentRailWidthToleranceFactor` times that estimate is rejected
+    /// as having escaped into an unrelated connected branch rather than
+    /// trusted as this segment's own boundary.
+    private static func computeSegmentRails(polyline rawPolyline: [Point2D], widthsMM: [Double], shapePolygons: [[Point2D]]) throws -> (railA: [Point2D], railB: [Point2D]) {
+        guard rawPolyline.count >= 2, rawPolyline.count == widthsMM.count else {
+            throw SatinGenerationError.shapeNotSuitable("a branch segment needs at least two centerline points")
+        }
+        let polyline = smoothedPolyline(rawPolyline)
+        var railA: [Point2D] = []
+        var railB: [Point2D] = []
+        for i in 0..<polyline.count {
+            let tangent: Point2D
+            if i == 0 {
+                tangent = polyline[1] - polyline[0]
+            } else if i == polyline.count - 1 {
+                tangent = polyline[i] - polyline[i - 1]
+            } else {
+                tangent = polyline[i + 1] - polyline[i - 1]
+            }
+            let tangentLength = tangent.length
+            guard tangentLength > 1e-9 else { continue }
+            let perp = Point2D(-tangent.y / tangentLength, tangent.x / tangentLength)
+
+            let hitA: Point2D
+            let hitB: Point2D
+            if widthsMM[i] <= taperCollapseWidthMM {
+                // A genuinely tapering tip (a serif, a pointed stroke
+                // end) rather than merely a narrow section: collapse
+                // both rails to the segment's own centerline point here
+                // instead of trusting two independently ray-cast hits.
+                // Mirrors the single-column path's own established
+                // convention for a pointed end cap (`computeRails`
+                // shares a single midpoint between both rails there,
+                // rather than tapering two separate boundary hits down
+                // to near-coincidence) — the same idea, just decided
+                // per-sample from each sample's own known local width
+                // instead of one whole-column pointed/squared
+                // end-cap choice. Where the true geometry wants both
+                // sides to coincide anyway, independently ray-cast hits
+                // are exactly where small boundary noise becomes most
+                // numerically unstable: found directly against a real
+                // raster-traced "B" logo, whose own thin tapering tip
+                // (0.2mm narrowing over ~5mm of length) produced a
+                // twisted zigzag there even though the rails elsewhere
+                // along the same segment were perfectly sound.
+                hitA = polyline[i]
+                hitB = polyline[i]
+            } else {
+            // Every one of the shape's boundaries (outer plus every
+            // hole), not just the outer one -- a segment near a hole
+            // (a "B"'s stem sitting between its two bowls' counters)
+            // needs its perpendicular ray to stop at the *nearest*
+            // boundary in either direction, which just as easily is a
+            // hole's own edge as the outer one. See
+            // `rayPolygonsIntersection`'s own doc comment.
+            let maxDistance = max(widthsMM[i], 0.3) * segmentRailWidthToleranceFactor
+            let rawA = nearestBoundaryPoint(from: polyline[i], perp: perp, side: 1, polygons: shapePolygons)
+            let rawB = nearestBoundaryPoint(from: polyline[i], perp: perp, side: -1, polygons: shapePolygons)
+            let validA = rawA.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }
+            let validB = rawB.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }
+
+            switch (validA, validB) {
+            case let (a?, b?):
+                hitA = a
+                hitB = b
+            case let (a?, nil):
+                // One side's ray escaped past a plausible hit (typically
+                // where this sample sits close to where a hole's own
+                // loop passes nearest the point it connects to the rest
+                // of the shape -- the same "boundary has opened up into
+                // a connected branch" issue the width-tolerance check
+                // above exists to catch, just encountered from a loop's
+                // own polyline instead of an open segment's). Rather
+                // than discarding the sample outright, reconstruct the
+                // missing side by reflecting the valid one across this
+                // polyline point at the topology's own local half-width
+                // -- this point *is* the medial axis by construction, so
+                // it should sit equidistant from both true boundaries
+                // regardless of which single side the ray-cast actually
+                // found. Found directly against a real branching-plus-
+                // hole letterform shape (a "P"), where a hole's own loop
+                // lost roughly a third of its samples this way near its
+                // stem junction before this reconstruction existed.
+                hitA = a
+                hitB = mirroredAcross(polyline[i], from: a, distance: widthsMM[i] / 2)
+            case let (nil, b?):
+                hitB = b
+                hitA = mirroredAcross(polyline[i], from: b, distance: widthsMM[i] / 2)
+            case (nil, nil):
+                continue
+            }
+            }
+            railA.append(hitA)
+            railB.append(hitB)
+        }
+        guard railA.count >= max(2, polyline.count * 3 / 4) else {
+            throw SatinGenerationError.shapeNotSuitable("couldn't trace a consistent rail pair along this branch segment")
+        }
+        // Smoothing the CENTERLINE (above) stabilizes the ray/nearest-point
+        // direction at each sample, but the resulting rails are still hits
+        // against the shape's own boundary -- a real raster-traced logo's
+        // boundary is itself a faceted polygon, not a smooth curve, so a
+        // rail can still faithfully follow a genuine sharp corner there
+        // (`nearestBoundaryPoint` finding the exact same vertex for a run
+        // of consecutive samples, then transitioning to a neighboring edge)
+        // in a way no amount of centerline smoothing addresses, since the
+        // corner is real boundary geometry, not noise in the walk that
+        // produced the query points. That faceted transition is still
+        // sharp enough, relative to a nearby steadily-moving opposite rail,
+        // to make two adjacent crossings pinch through each other --
+        // found directly against the same real "B" logo's stem, one
+        // isolated instance surviving after `nearestBoundaryPoint` and
+        // curvature-weighted resampling above fixed the far more
+        // widespread failures. Smoothing the rails themselves the same
+        // way flattens exactly this without touching the (already sound)
+        // centerline or width profile.
+        return (smoothedPolyline(railA, windowMM: railSmoothingWindowMM), smoothedPolyline(railB, windowMM: railSmoothingWindowMM))
+    }
+
+    /// Reflects `point` across `center`, replacing the measured distance
+    /// with `distance` -- see `computeSegmentRails`'s own doc comment on
+    /// why this specific reconstruction (rather than just discarding an
+    /// implausible ray-cast hit) is the right fallback for a rail sample
+    /// whose one side is known-good.
+    private static func mirroredAcross(_ center: Point2D, from point: Point2D, distance: Double) -> Point2D {
+        let dx = center.x - point.x, dy = center.y - point.y
+        let len = (dx * dx + dy * dy).squareRoot()
+        guard len > 1e-9 else { return center }
+        return Point2D(center.x + dx / len * distance, center.y + dy / len * distance)
+    }
+
+    /// Rail-fits a self-loop edge (a hole's own skeleton loop — see
+    /// `StrokeTopologyAnalyzer.Edge`'s own doc comment) via the same
+    /// radial-sweep-from-one-center technique `computeRingRails` already
+    /// uses for a shape whose *only* structure is one hole, rather than
+    /// `computeSegmentRails`'s local-tangent walk. This distinction
+    /// matters, not just style: `computeRingRails`'s own doc comment
+    /// already explains why a ring needs angular correspondence from a
+    /// fixed center rather than arc-length-local pairing — walking a
+    /// closed loop's own polyline and casting locally-perpendicular rays
+    /// is exactly the "arc-length-based pairing" that comment warns
+    /// twists a ring's rails, and found directly against a real
+    /// branching-plus-hole letterform shape (a "P"): every attempt to
+    /// rail-fit a bowl's hole loop via `computeSegmentRails` came back
+    /// twisted regardless of how far the hole sat from the stem
+    /// junction, even once per-sample rail reconstruction (see
+    /// `mirroredAcross`) gave it full centerline coverage — the technique
+    /// itself, not incomplete coverage, was the problem.
+    ///
+    /// Unlike `computeRingRails` (which always has exactly one hole
+    /// polygon and one outer polygon to query separately), a self-loop
+    /// here can be one of several holes in a larger branching shape, so
+    /// there's no single "the outer boundary" to hand it directly —
+    /// instead, `rayPolygonsIntersections` returns every crossing along
+    /// each radial ray ordered nearest-first, and the nearest two are
+    /// used: the first is this loop's own hole boundary, the second is
+    /// whatever lies just beyond it (normally the shape's outer
+    /// boundary, unless two holes sit unusually close together).
+    private static func computeSegmentRingRails(loopPolyline: [Point2D], shapePolygons: [[Point2D]]) -> (railA: [Point2D], railB: [Point2D])? {
+        let center = vertexAverage(loopPolyline)
+        // `pointInPolygons` even-odd across every one of the shape's own
+        // boundaries reads "inside a hole" as *outside* the filled
+        // shape (the same convention used everywhere else in this
+        // engine) — so the centroid landing "inside" here means it
+        // landed in solid material, not in the hole this loop actually
+        // wraps, and this loop's shape is too irregular for a simple
+        // radial sweep from one point to trust. The same "couldn't find
+        // a usable center point" guard `computeRingRails` enforces via
+        // its own explicit check.
+        guard !PolygonGeometry.pointInPolygons(center, polygons: shapePolygons) else { return nil }
+
+        var railA: [Point2D] = []
+        var railB: [Point2D] = []
+        for i in 0..<ringRailSampleCount {
+            let theta = 2 * Double.pi * Double(i) / Double(ringRailSampleCount)
+            let direction = Point2D(cos(theta), sin(theta))
+            let hits = rayPolygonsIntersections(origin: center, direction: direction, polygons: shapePolygons)
+            guard hits.count >= 2 else { continue }
+            railB.append(hits[0])
+            railA.append(hits[1])
+        }
+        guard railA.count >= ringRailSampleCount * 3 / 4 else { return nil }
+
+        if let firstA = railA.first, let firstB = railB.first {
+            railA.append(firstA)
+            railB.append(firstB)
+        }
+        return (railA, railB)
+    }
+
+    /// Like `computeCrossings`, but for one branch segment rather than a
+    /// whole single-column shape: resamples the segment's rails at
+    /// `satinDensityMM`, rejects a twisted result (`isTwisted`, the same
+    /// check `computeCrossings` uses), and applies pull compensation.
+    /// Deliberately simpler than `computeCrossings` in two ways, both
+    /// because a segment's own ends are junctions or real endpoints
+    /// already handled elsewhere in the branching pipeline, not a whole
+    /// object's own free ends: no push-compensation trim (there's nothing
+    /// to push apart *into* — the segment is one piece of a larger
+    /// connected shape, not a standalone column with two free ends), and
+    /// no `crossingsEscapeTheShape` check (meaningful for a single global
+    /// axis that can rail-walk a concave bend straight across empty space;
+    /// a segment's rails come from the local perpendicular at each
+    /// centerline sample, which can't do that).
+    private static func computeSegmentCrossings(railA: [Point2D], railB: [Point2D], parameters: StitchGenerationParameters) -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double])? {
+        let density = max(parameters.satinDensityMM, 0.1)
+        let length = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
+        guard length > 0 else { return nil }
+        // Curvature-weighted, matching `computeCrossings`' own reasoning
+        // for the single-column path (see its doc comment): a segment
+        // that curves sharply — e.g. where a "B"'s stem sweeps up into
+        // the wide junction where both bowls meet — needs denser
+        // crossings than a straight run at the same `satinDensityMM`, or
+        // consecutive crossings rotate enough, sample to sample, to
+        // physically cross each other even though the underlying rails
+        // are perfectly sound (exactly the `isTwisted` failure found
+        // directly against a real raster-traced "B" logo's own stem,
+        // after the corner-fan issue `nearestBoundaryPoint` fixes was
+        // ruled out as the cause there).
+        let weightedLength = max(
+            PolygonGeometry.weightedPathLength(railA, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight),
+            PolygonGeometry.weightedPathLength(railB, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        )
+        let crossingCount = max(2, Int((weightedLength / density).rounded()))
+
+        let resampledA = PolygonGeometry.resampleByCountCurvatureWeighted(railA, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        let resampledB = PolygonGeometry.resampleByCountCurvatureWeighted(railB, count: crossingCount, referenceLengthMM: density, curvatureWeight: curvatureDensityWeight)
+        // A closed rail pair (`railA.first == railA.last`, exactly how
+        // `computeSegmentRingRails` closes a self-loop's rails, matching
+        // `computeRingRails`'s own convention) is exempt from
+        // `isTwisted` for the same reason `computeCrossings` already
+        // exempts a plain ring from it: the check's interior-margin
+        // exclusion assumes a column with real, tapered open ends, which
+        // a radial sweep from one fixed center doesn't have and can't
+        // produce a twisted zigzag from by construction. Applying it
+        // anyway was a real bug, not a stricter safety net — found
+        // directly against a real branching-plus-hole letterform shape
+        // (a "P"), whose hole loop failed here even once its rails came
+        // back fully covered and geometrically sound.
+        let isClosedRail = railA.count > 1 && railA.first == railA.last
+        if !isClosedRail, isTwisted(resampledA, resampledB) { return nil }
+
+        let rawWidths = (0...crossingCount).map { resampledA[$0].distance(to: resampledB[$0]) }
+        let averageWidth = rawWidths.reduce(0, +) / Double(max(1, rawWidths.count))
+        let pullCompMM = parameters.pullCompensationMM
+            ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: averageWidth, fabricType: parameters.fabricType)
+
+        var expandedA: [Point2D] = []
+        var expandedB: [Point2D] = []
+        var widths: [Double] = []
+        for i in 0...crossingCount {
+            let a = resampledA[i], b = resampledB[i]
+            let ea = pushOutward(a, from: b, by: pullCompMM / 2)
+            let eb = pushOutward(b, from: a, by: pullCompMM / 2)
+            expandedA.append(ea)
+            expandedB.append(eb)
+            widths.append(ea.distance(to: eb))
+        }
+        // No equivalent yet of `generatePartial`'s per-crossing width
+        // splitting (converting only the too-wide sections of a column
+        // to a local fill sub-region) — a genuinely branching shape that
+        // also has a wide section is real future work, not something
+        // stage 2 built. Until then, this is the same strict, all-or-
+        // nothing check `generate` itself uses: reject the whole segment
+        // rather than silently emit impractically wide "satin" zigzag
+        // stitches — the safe failure mode this file's existing
+        // `SatinGenerationError.shapeNotSuitable` fallback chain already
+        // handles at every call site. Found directly against a real
+        // large logo shape (a bold "A," genuinely a wide tapering blob
+        // rather than a letter stroke) whose segment reached 20mm+ wide
+        // in places — this check wasn't yet what declined it (a pruning
+        // bug independently meant it had no real junction to begin with
+        // once fixed), but it's exactly the kind of shape this exists to
+        // guard regardless.
+        guard widths.max() ?? 0 <= parameters.maxSatinWidthMM else { return nil }
+        return (expandedA, expandedB, widths)
+    }
+
+    /// Orders a stroke topology's edges into one continuous walk via a
+    /// simple greedy "follow the node you just arrived at" rule, flipping
+    /// each edge's own direction as needed so it continues from wherever
+    /// the previous one left off — the same idea `ObjectSequencer` applies
+    /// across whole objects, just one level down, across one shape's own
+    /// segments. Deliberately simple (no 2-opt improvement pass): proving
+    /// the segment-decomposition mechanism itself is this stage's goal,
+    /// not stitch-path optimality, which real-file measurement in a later
+    /// stage can motivate improving if the naive order leaves visible
+    /// excess travel. A segment with no remaining neighbor touching the
+    /// current node (a disjoint piece, or having exhausted the current
+    /// branch) just starts the next leg from wherever it naturally sits.
+    private static func orderedEdges(_ topology: StrokeTopologyAnalyzer.Topology) -> [StrokeTopologyAnalyzer.Edge] {
+        var remaining = topology.edges
+        guard !remaining.isEmpty else { return [] }
+
+        var ordered: [StrokeTopologyAnalyzer.Edge] = [remaining.removeFirst()]
+        var currentNode = ordered[0].endNodeID
+        while !remaining.isEmpty {
+            var foundIndex: Int?
+            for i in remaining.indices {
+                let touchesCurrentNode = remaining[i].startNodeID == currentNode || remaining[i].endNodeID == currentNode
+                if touchesCurrentNode {
+                    foundIndex = i
+                    break
+                }
+            }
+
+            let next: StrokeTopologyAnalyzer.Edge
+            if let index = foundIndex {
+                var candidate = remaining.remove(at: index)
+                if candidate.startNodeID != currentNode {
+                    candidate = StrokeTopologyAnalyzer.Edge(startNodeID: candidate.endNodeID, endNodeID: candidate.startNodeID,
+                                                             isClosedLoop: candidate.isClosedLoop,
+                                                             polyline: Array(candidate.polyline.reversed()),
+                                                             widthsMM: Array(candidate.widthsMM.reversed()))
+                }
+                next = candidate
+            } else {
+                next = remaining.removeFirst()
+            }
+            ordered.append(next)
+            currentNode = next.endNodeID
+        }
+        return ordered
+    }
 }

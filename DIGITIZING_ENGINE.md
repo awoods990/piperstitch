@@ -347,6 +347,426 @@ reconciliation fixture (`solidSquareWithHole` →
 so it still exercises the tatami-consensus path it was written for. Full
 suite (320 tests) passes; server package builds clean.
 
+## Phase 2 (continued) — branching-letter satin (stages 1-3, behind `allowBranchingSatin`, default off)
+
+A genuinely branching outline — a letter whose strokes meet at a real
+junction rather than one continuous "sausage" (A's crossbar, B's stem
+against its two bowls, H's crossbar between two stems) — has never been
+representable as satin in this engine: `SatinColumnGenerator.
+canRepresentAsSingleSatinColumn` correctly rejects it (a single global PCA
+axis and one pair of end-cap edges can't rail-fit something that forks),
+and `classify`/`classifyLetteringRun` both fall back the whole shape (or
+whole lettering run) to tatami fill. Real per-stroke skeleton
+segmentation was flagged as "a substantially larger, separate undertaking"
+in both functions' own doc comments from early in this project — this is
+that undertaking, built and merged in three explicitly staged, gated
+increments rather than one large change, per the design review before any
+of it was written.
+
+**Stage 1 — `StrokeTopologyAnalyzer.swift` (topology graph only, nothing
+wired in).** Rasterizes a shape onto a temporary pixel grid, extracts a
+1px skeleton (Zhang-Suen thinning, plus a residual-2x2-block cleanup pass
+— a well-documented Zhang-Suen limitation where a solid 2x2 block
+satisfies neither sub-iteration's deletion conditions and survives
+un-thinned), then walks that skeleton into a graph of nodes (junctions,
+endpoints) and edges (individual stroke segments, each carrying a local
+width profile sampled from a chamfer distance transform). Chosen over a
+vector skeleton method (straight skeleton, Voronoi medial axis) precisely
+because those are more brittle on the near-degenerate, noisy boundaries
+real raster-traced artwork actually produces — a concern this project has
+hit directly and repeatedly (the anti-aliasing fragmentation fixes earlier
+in this document exist for the same underlying reason).
+
+Testing this against synthetic fixtures (a plain column, a T-junction, the
+existing branching-H fixture, a circular ring) surfaced three real,
+non-obvious bugs before any of it shipped, all now covered by regression
+tests: (1) a raw 8-neighbor count misread an ordinary diagonal "staircase"
+pixel as a false junction — fixed by counting *runs* of skeleton pixels in
+the cyclically-ordered neighborhood instead, the same idea Zhang-Suen's
+own transition-count criterion already uses; (2) a chain pixel approaching
+a real junction could find that junction pixel grouped into the same run
+as an unrelated pixel one hop further into a *different* branch — picking
+the wrong one silently merged two edges into one and left the junction
+never actually visited, fixed by preferring a classified node pixel
+whenever one is reachable, and otherwise the straightest continuation
+rather than an arbitrary tie-break; (3) a node's own pixel was never added
+to the walker's "already claimed" set, so the closed-loop walker could
+mistake an endpoint for untouched skeleton and re-trace an already-
+complete edge as a phantom duplicate — caught by the simplest possible
+fixture, a plain straight column. Two dead-end fixes (a sub-pixel jitter
+on the raster origin, interleaving the 2x2 cleanup into Zhang-Suen's main
+loop) were tried against a stubborn circular-ring artifact, measured, and
+reverted when they broke previously-passing cases instead of helping —
+the actual fix was recognizing the artifact came from an adversarially
+exact geometric symmetry in the *test fixture itself* (a regular polygon
+with a facet landing exactly horizontal, real logos essentially never
+produce this), plus a minimum-length floor to drop genuine thinning-
+residue micro-loops.
+
+**Stage 2 — `SatinColumnGenerator.canRepresentAsBranchingSatinColumn`/
+`generateBranching` (still not wired in).** For each topology edge,
+rail-fits a local column by casting perpendicular to the segment's own
+tangent at each centerline sample — the same ray-casting primitive
+`computeRingRails` already uses for its fixed radial sweep, just re-aimed
+per sample instead of from one center — resamples and crosses each
+segment independently (`computeSegmentCrossings`, a simplified sibling of
+`computeCrossings` with no push-compensation trim and no
+`crossingsEscapeTheShape` check, both meaningless for one piece of a
+larger connected shape), then concatenates every segment in stroke-graph
+walk order into one flat `[Point2D]` stitch list — the exact same
+contract `generate`/`generatePartial` already return, so nothing
+downstream (`DigitizePipeline`, sequencing, hidden-travel routing, every
+export format) needs to know a shape's satin came from one column or
+several. Junctions get no dedicated fan/patch yet — consecutive segments'
+near-junction crossings simply follow each other in the flat list, an
+explicit, documented simplification rather than a hidden gap.
+
+Testing surfaced one more real bug: a segment sample near a junction sits
+where the whole shape's boundary has "opened up" into the connecting
+branch (the left stem of an H, right where it meets the crossbar) — a
+perpendicular ray-cast there can sail past where the stem's own boundary
+would be in isolation and hit the far boundary of the *other* branch
+instead, since that point is genuinely interior to the combined shape.
+Fixed using `StrokeTopologyAnalyzer`'s own local width estimate (computed
+independently via the distance transform, not a whole-boundary ray-cast,
+so it doesn't share this failure mode) as a sanity bound: a ray-cast hit
+farther than twice that estimate is rejected as having escaped into an
+unrelated branch rather than trusted as this segment's own edge.
+
+**Stage 3 — wired into `classify`/`harmonizeSameColorFillConsistency`/
+`reconcileRunningStitchOutliers`/`DigitizePipeline`, behind
+`StitchGenerationParameters.allowBranchingSatin` (default `false`).** With
+the flag off, all 333 existing tests passed unchanged, confirming the
+wiring is purely additive. With it on: `classify` now tries
+`canRepresentAsBranchingSatinColumn` as a second-tier check after the
+single-column path fails; `DigitizePipeline`'s `.satin` case tries
+`generateBranching` inside its existing `catch SatinGenerationError
+.shapeNotSuitable` handler, before falling through to the tatami-fill
+safety net that already existed for every other satin structural failure;
+`harmonizeSameColorFillConsistency` and `reconcileRunningStitchOutliers`
+both learned to treat a branching-eligible member the same way they
+already treat a single-hole ring member — neither forcing its color group
+to fill nor contributing to the group's own width decision, just
+following whatever its "simple" siblings decide. 11 new tests cover the
+flag both on and off, including an end-to-end `DigitizePipeline.flatten`
+call proving the branching H shape produces real satin-density stitch
+coverage (not just a tatami fallback) once opted in.
+
+Verified against real files (`DigitizeCLI`, with a temporary `ALLOW
+_BRANCHING_SATIN` env-var toggle and a per-object eligibility debug
+print, both removed before committing): flag on vs. off produced
+*byte-identical* output on all three files (Amerus, LIBBi, the bird
+mark) — an honest null result, not a failure. Every object that reaches
+the branching check either has more than one sub-path already (a real
+hole or, far more often on these three files, raster-tracing
+fragmentation noise the branching path doesn't attempt to handle) or is
+too thin to reach the check at all (classified `.tripleRun` by the width
+floor first); among the handful of single-boundary objects that do reach
+it, essentially none pass `canRepresentAsBranchingSatinColumn` on these
+files' actual (noisy, small-scale) geometry. This matches the risk
+flagged before any of stages 1-3 were written: skeleton extraction is
+tolerant of noise relative to vector methods, but not immune to it, and
+none of the three existing real-file fixtures happens to contain a large,
+clean, single-boundary branching letter to exercise the path against.
+The flag stays off by default regardless — this result doesn't block
+correctness, it just means these three files aren't the evidence that
+would justify defaulting it on. A fourth test file purpose-built with a
+bold branching wordmark (a large "H," "A," or "T") would be a more
+informative next real-file check than re-running these same three again.
+
+**Follow-up — two real files with genuine large-letter geometry, two
+different diagnoses, two real fixes.** A LIBBi wordmark SVG (clean vector
+paths, not raster-traced) and a bold "A" logo (a large filled letterform
+with a star cutout and a ribbon cutting across it) both still produced
+byte-identical flag-on/flag-off output, but for informative, different
+reasons this time rather than "nothing reaches the check at all":
+
+- On the LIBBi SVG, every letter with real bulk either already has a
+  hole (routes through the existing ring path, no branching needed), is
+  a genuinely curved single-boundary letter (U, C, S) that fails the
+  *single-column* check for curvature reasons unrelated to branching —
+  confirmed directly by checking its topology: 0 junctions, a plain open
+  curve — or, for this specific font's "H," has small enclosed
+  serif/terminal details (confirmed by isolating and rendering just that
+  object) that put it at `subPaths.count == 3`, outside the branching
+  path's current single-boundary-only scope entirely.
+- On the "A" logo, one large single-boundary piece *did* reach the
+  branching check with a real junction in its raw topology (2 junctions,
+  5 edges before pruning) — but investigating exactly why it still
+  failed surfaced two genuine, separate defects, both now fixed with
+  their own regression tests:
+  1. **A real pruning bug.** `prune()` correctly collapses a junction
+     down to a straight-through edge once its degree drops to 2, but had
+     no equivalent handling for degree dropping to 1 (both of a
+     junction's real branches pruned as noise, leaving only one
+     surviving edge) — the node stayed mislabeled `isJunction: true`
+     with nothing left to actually branch into.
+     `junctionPrunedDownToOneEdgeIsDemotedNotMislabeled` in
+     `StrokeTopologyAnalyzerTests.swift` reproduces this with a short-
+     armed T (both bar arms short enough to prune) and confirms the
+     surviving node is correctly demoted to a plain endpoint. Fixing
+     this did *not* change the "A" 's own final classification — once
+     correctly demoted, this particular piece has no real junction left
+     at all (both raw branches had highly suspicious 0.2mm endpoint
+     widths, the classic signature of thinning noise, not real
+     letterform structure) — but the mislabeling itself was a genuine,
+     independently worth-fixing defect regardless of this one shape's
+     outcome.
+  2. **A real, previously-latent safety gap.** `computeSegmentCrossings`
+     had no equivalent of `generatePartial`'s per-crossing width
+     handling — nothing stopped it from happily rail-fitting a segment
+     20mm+ wide (this "A" is a genuinely wide tapering blob in
+     places, not a uniform-width letter stroke) into "satin" zigzag
+     stitches impractically wide to actually sew. Added the same strict,
+     all-or-nothing `maxSatinWidthMM` check `generate` itself already
+     uses, covered by `branchingDeclinesASegmentWiderThanMaxSatinWidth`.
+     This hadn't caused any visible bad output yet (nothing had reached
+     this code path on a wide shape before), but was a real latent risk
+     worth closing on principle before it ever does.
+
+Both fixes are structural correctness fixes, not tuning — full suite (339
+tests) still passes, and the "A" logo's own flag-on/flag-off output
+remains byte-identical (confirmed via a direct rerun) since this
+particular piece genuinely has no real branch left once pruning is
+correct. The broader, softer question this investigation surfaces but
+doesn't answer — whether `pruneBranchLengthFactor`'s 1.5× local-width
+scaling, calibrated against letter-stroke widths (1–5mm), is still well-
+calibrated for a bold, solid, non-letter logo shape whose local width can
+legitimately reach 15-20mm — remains open; the two genuine branches this
+"A" piece had were correctly noise (0.2mm endpoint widths) rather than a
+casualty of that scaling this time, but a future file might present a
+real, wide branch close enough to the threshold that this becomes the
+deciding factor rather than a side detail. Worth revisiting with a file
+that actually has one, rather than tuning speculatively now.
+
+## Phase 2 (continued) — branching satin extended to shapes with holes (stage 4, still behind `allowBranchingSatin`)
+
+Four real files in a row (a LIBBi SVG, a bold "A" logo, a Boston Red Sox
+"B") all hit the same wall: every letter with genuine branching structure
+(B, R, and this session's synthetic "P" test fixture) turned out to need
+holes *and* branching at once, not pure holeless branching — `generate
+Branching`'s `shape.subPaths.count == 1` guard, a deliberate stage-2
+scoping decision rather than an implementation limit, was declining
+every one of them outright. This stage removes that restriction.
+
+**The topology layer needed zero changes.** `StrokeTopologyAnalyzer`'s
+rasterization already fills even-odd across every sub-path (outer minus
+every hole), so a hole was already "background" to the skeleton before
+this stage touched anything — verified directly against a synthetic "B"
+fixture (a stem with two bowls, each with its own hole), whose topology
+came back with each hole's own loop as a clean self-loop edge
+(`startNodeID == endNodeID`), connected into the wider graph through real
+junction nodes, entirely with stage 1's unmodified code.
+
+**The generation layer needed real work, and testing surfaced three more
+genuine, non-obvious bugs before any of it shipped:**
+
+1. **Rail-casting only looked at the outer boundary.** A segment near a
+   hole (a stem sitting between a letter's bowls) needs its perpendicular
+   ray to stop at the *nearest* boundary in either direction, which is
+   just as often a hole's own edge as the outer one — a ray checked only
+   against the outer polygon would sail straight through an intervening
+   hole to the far side. Fixed with `rayPolygonsIntersection`/
+   `rayPolygonsIntersections`, checking every one of a shape's boundaries
+   at once and taking the nearest (or nearest two) crossings.
+2. **A rail sample near a junction can lose one side entirely, not just
+   land implausibly far.** Exactly where a hole's own loop passes closest
+   to where it connects to the rest of the shape, one side of the
+   perpendicular ray correctly finds the nearby hole edge while the other
+   escapes into the connected branch's own distant boundary — the same
+   "boundary opened up into a connected branch" issue stage 2 already
+   found and bounded with a width-tolerance check, just encountered here
+   from a loop's own polyline instead of an open segment. Rather than
+   dropping these samples (which lost roughly a third of a loop's own
+   centerline in the fixture that found this), the missing side is now
+   reconstructed by reflecting the valid one across the sample point at
+   the topology's own local half-width — sound because that point *is*
+   the medial axis by construction, so it should sit equidistant from
+   both true boundaries regardless of which single side the ray-cast
+   actually found (`mirroredAcross`).
+3. **A self-loop's own rails still twisted even with full, sound
+   coverage** — the deepest and most informative bug of the three.
+   `computeSegmentRails` walks a segment's own polyline and casts
+   *locally*-perpendicular rays at each arc-length sample; `computeRing
+   Rails`'s own doc comment already explains why that "arc-length-based
+   pairing" is exactly the wrong technique for a closed loop, which needs
+   angular correspondence from one fixed center instead — reusing the
+   generic segment technique for a self-loop edge was reintroducing the
+   precise failure mode `computeRingRails` was built to avoid in the
+   first place. Fixed with `computeSegmentRingRails`, a self-loop-specific
+   radial sweep from the loop's own centroid (generalizing `computeRing
+   Rails`'s technique to however many boundaries a branching shape's full
+   sub-path set has, via `rayPolygonsIntersections`'s nearest-two
+   crossings rather than querying one fixed hole/outer pair directly).
+   Even after that fix, a second, related bug remained: `computeSegment
+   Crossings` called `isTwisted` unconditionally, where `computeCrossings`
+   (the original single-column path) explicitly *exempts* a closed ring
+   from that same check — a radial sweep can't produce a twisted zigzag
+   by construction, and applying the check's own margin-exclusion logic
+   (built for an open column's real, tapered ends) to a loop with no such
+   ends was actively wrong, not merely redundant. Fixed by detecting a
+   closed rail pair (`railA.first == railA.last`, the same convention
+   `computeSegmentRingRails` and `computeRingRails` both already close
+   their rails with) and skipping the check for it, matching
+   `computeCrossings`'s own established behavior exactly.
+
+All three fixes were found and verified against one evolving synthetic
+"P" fixture (a stem feeding into one bowl with a hole) — chosen after an
+early, cruder attempt (a two-bowl "B") produced enough simultaneous
+topology noise and geometry issues to make isolating any *one* bug
+impractical; the discipline that served every earlier stage well
+(minimal fixture, one clear failure, one fix, re-verify) applied here
+too. The final, cleaned-up "P" fixture succeeds end-to-end under
+realistic default parameters (`maxSatinWidthMM` at its normal 12mm, not
+loosened) — 316 stitches, zero points outside its own bounding box —
+covered by `branchingAcceptsAPLetterformWithAStemAndOneHole` in
+`BranchingSatinGeneratorTests.swift`. Full suite (340 tests) passes,
+server package builds clean.
+
+## Phase 2 (continued) — stage 4 completed: two-hole "B" proven, wiring extended, real files re-measured
+
+The three items the entry above left open are now done.
+
+**A genuine two-hole "B" succeeded on the first attempt** once the three
+bugs above were fixed — `branchingAcceptsABLetterformWithAStemAndTwoHoles`
+in `BranchingSatinGeneratorTests.swift`, same proportions/methodology as
+the one-hole "P" fixture, no new fixes needed. This confirms those three
+fixes were genuine and general rather than curve-fit to one shape.
+
+**`classify`, `harmonizeSameColorFillConsistency`, and
+`reconcileRunningStitchOutliers` now extend their existing
+`allowBranchingSatin` allowance to `subPaths.count > 2`** the same way
+they already did for the single-hole (`subPaths.count == 2`) case in
+stage 3 — a multi-hole shape gets one more real attempt via
+`canRepresentAsBranchingSatinColumn` before falling back to tatami fill,
+still strictly behind the same opt-in flag. 8 new tests cover this (18
+total in `BranchingSatinGeneratorTests.swift`), including end-to-end
+`DigitizePipeline.flatten` proof for both the one-hole and two-hole
+cases. Full suite (345 tests) passes; server package builds clean.
+
+**Real-file re-verification: still byte-identical, but now for a
+precise, different, and narrower reason.** Re-ran Amerus, the LIBBi SVG,
+and the Boston Red Sox "B" (the file that originally prompted stage 4)
+with the flag on. All three real "B"s — LIBBi's and the Red Sox's — now
+reach genuine topology with real junction structure and attempt
+`generateBranching` for the first time (confirmed directly: the Red Sox
+"B" resolves to 6 nodes, 4 junctions, 7 edges from its actual raster-
+traced geometry), which is real, verified progress — the multi-hole
+wiring is doing exactly what it's supposed to. But every one still fails,
+and this time isolating why pointed at something new: a thin, tapering
+tip edge (0.2mm down to 2.6mm wide over ~5mm of length — a serif-like
+detail or raster-tracing artifact at a stroke's own end) triggers
+`isTwisted`. Branch segments have no equivalent of the single-column
+path's tapered end-cap handling (`computeRails`' own squared-vs-pointed
+end logic) — every edge is treated as a uniform mid-column strip, and a
+genuinely near-zero-width tip pushes `isTwisted`'s adjacent-crossing
+check into exactly the kind of near-degenerate geometry it's meant to
+catch, whether or not the tip itself is structurally sound. This is a
+different, narrower gap than any of the three bugs fixed earlier in this
+stage — those were about *whether a segment's rails come back sound at
+all*; this one is about *one specific, real segment shape* (a tapering
+tip) that branch segments don't yet have dedicated handling for, the
+same category of "known simplification, not a hidden gap" stage 2's own
+doc comment already flagged for junction stitching.
+
+## Phase 2 (continued) — stage 4 real-file hardening: the Red Sox "B" now succeeds
+
+Continued investigation of the thin-tip failure above turned up something
+different from what it first looked like: the tapering tip wasn't the
+real (or only) problem. Two follow-up ideas were tried and both proved
+insufficient on their own, but the diagnostic work they produced pointed
+at the actual mechanism, which was then fixed directly. All tests
+(346 total, including a new one added for this) pass throughout; the
+real Red Sox "B" is now genuine, verified, **positive** satin output —
+the first real raster-traced branching-plus-hole letterform this engine
+has produced real satin coverage for.
+
+**Ruled out:** `taperCollapseWidthMM = 0.5` (collapsing near-zero-width
+samples to a single point, mirroring the single-column path's pointed
+end-cap convention) was implemented and kept -- it's correct and
+non-regressing -- but alone didn't fix the real failure. Widening
+`isTwisted`'s exclusion margin to 33% was tried and also didn't fix it,
+and was cleanly reverted (no unproven complexity kept).
+
+**The real cause, found via per-edge/per-crossing debug instrumentation
+against the actual Red Sox "B":** not raster noise near a thin tip, but
+three compounding effects in how `computeSegmentRails`/
+`computeSegmentCrossings` fit rails to a segment at all, all traced to
+concrete coordinates from the real file:
+
+1. **Fixed-direction ray-casting can't find a corner except from one
+   exact angle.** `computeSegmentRails` cast a single ray perpendicular
+   to each sample's local tangent. Near a real boundary corner (e.g.
+   where the "B"'s stem sweeps up into the wide junction both bowls
+   share), many different nearby centerline samples all have that same
+   corner as their true nearest boundary point -- but a fixed-direction
+   ray only ever hits it from the one sample where the angle lines up
+   exactly, and at every neighboring sample either misses it entirely or
+   snaps on/off it discontinuously. Debug output showed this directly: a
+   rail stayed pinned to the exact same physical point for several
+   consecutive samples while the opposite rail advanced smoothly, width
+   growing from ~4mm to ~10mm over a handful of samples -- an asymmetric
+   "fan" that made adjacent crossings cross each other, exactly what
+   `isTwisted` exists to catch, but for a real geometric reason, not
+   noise. **Fixed** by replacing the fixed-direction ray-cast with
+   `nearestBoundaryPoint` -- a genuine nearest-point-on-boundary search,
+   restricted to each rail's own side via the same perpendicular sign
+   test, but not restricted to one fixed angle. This tracks the true
+   medial-axis pairing continuously as the sample moves, including
+   smoothly approaching and leaving a corner, rather than only finding it
+   from one angle.
+2. **Branch segments had no curvature-aware crossing density.** The
+   single-column path (`computeCrossings`) already resamples more
+   densely on tight curves via `weightedPathLength`/
+   `resampleByCountCurvatureWeighted` (see its own doc comment) -- branch
+   segments (`computeSegmentCrossings`) never adopted this, using plain
+   uniform resampling instead. A segment curving through a real
+   letterform's own tight junction area needs the same treatment: too
+   few crossings there rotate enough from one to the next to physically
+   cross, even with structurally sound rails. **Fixed** by applying the
+   same curvature-weighted resampling `computeCrossings` already uses.
+   (A stronger curvature weight was tried experimentally, via a
+   temporary environment-variable override, to see if it fully closed
+   the gap -- it didn't, and at higher weights caused a runaway crossing
+   count near sharp rail corners, hanging a real-file test run for
+   minutes. That override was reverted; the default weight, 3.0,
+   matching the single-column path, was kept.)
+3. **A rail can faithfully track a real sharp facet long enough to pinch
+   against its neighbor.** Even with (1) and (2) fixed, one isolated
+   crossing remained: a real raster-traced boundary is a faceted polygon,
+   not a smooth curve, and a rail correctly following an actual corner
+   for a real physical stretch (not a fixed-angle artifact this time) can
+   still be sharp enough, relative to a steadily-moving opposite rail, to
+   pinch two adjacent crossings together. **Fixed** by smoothing the
+   RAILS themselves (not just the input centerline, which
+   `smoothedPolyline` already did per-sample to stabilize the ray/
+   nearest-point direction) with a wider arc-length window
+   (`railSmoothingWindowMM = 3.0`, vs. the centerline's own 0.6mm) --
+   found empirically: 1.5mm and 2.0mm left one isolated pinch, 2.5mm was
+   the first value to resolve it, 3.0mm was kept for margin.
+   Over-smoothing a real corner on the RAIL side is a mild, expected
+   rounding (routine in satin digitizing, where thread width itself
+   can't represent a razor-sharp sub-mm corner anyway) -- a materially
+   different risk than smoothing the centerline itself, which the
+   smaller, more conservative window stays deliberately conservative
+   about.
+
+**Result:** all three of the real Red Sox "B"'s branch segments now
+rail-fit successfully; `classify` returns `.satin` for it with
+`allowBranchingSatin` on, and `generateBranching` produces genuine dense
+coverage (visually verified via `DigitizeCLI`'s rendered PNG -- clean
+satin direction following the stroke, no visible twisting). Amerus and
+the LIBBi SVG were re-verified unaffected (Amerus byte-identical stitch
+count; LIBBi's own "B" object still falls back to tatami -- a different
+real shape with its own unresolved specifics, not a regression). A
+permanent regression test,
+`classifierReturnsSatinForARealRasterTracedBLogoWhenBranchingIsAllowed`
+in `BranchingSatinGeneratorTests.swift`, imports the actual
+`TestArtwork/Boston Red Sox.png` file directly and asserts real satin
+classification and coverage -- none of the synthetic P/B fixtures above
+are sensitive to any of the three effects fixed here, so this is the
+only test that actually exercises them.
+
 ## Phase 2 — planned next
 
 - Multi-region object segmentation refinements (holes within a raster

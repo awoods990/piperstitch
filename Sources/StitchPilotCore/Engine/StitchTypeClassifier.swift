@@ -93,7 +93,25 @@ public enum StitchTypeClassifier {
         let averageWidth = area / length
 
         if averageWidth < parameters.minSatinWidthMM { return .tripleRun }
-        if shape.subPaths.count > 2 { return .tatamiFill }
+        if shape.subPaths.count > 2 {
+            // `allowBranchingSatin` (stage 4 — see DIGITIZING_ENGINE.md):
+            // a shape with more than one hole (B, R with two counters in
+            // some fonts) was an unconditional hard limit before this
+            // stage, since `computeRingRails`'s ring support only ever
+            // traces one hole against the outer boundary — but
+            // `StrokeTopologyAnalyzer`'s general topology graph, and
+            // `SatinColumnGenerator.generateBranching`'s per-segment
+            // rail-fitting built on it, don't share that limit: a
+            // multi-hole shape with real branching structure (a stem
+            // feeding two bowls) decomposes into ordinary segments plus
+            // one self-loop edge per hole, same as the single-hole case
+            // stage 3 already extended this way. Still gated behind the
+            // same opt-in as every other branching-path use here.
+            if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
+                return .satin
+            }
+            return .tatamiFill
+        }
         if shape.subPaths.count == 2 { return .satin }
 
         // A shape's *average* width along one global axis is silent about
@@ -112,8 +130,20 @@ public enum StitchTypeClassifier {
         // "H") -- this was the one caller of a `.satin` verdict that
         // didn't, because raster import never goes through the lettering
         // path at all.
-        guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else { return .tatamiFill }
-        return .satin
+        if SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) { return .satin }
+        // `allowBranchingSatin` (default false — see its own doc comment
+        // on `StitchGenerationParameters`): a genuinely branching outline
+        // (a letter like "A," "B," "R," "H") that the single-column check
+        // above just rejected can still be real satin via
+        // `SatinColumnGenerator.generateBranching`'s stroke-segment
+        // decomposition (see DIGITIZING_ENGINE.md's staged rollout for
+        // this) -- gated behind an explicit opt-in rather than wired in
+        // unconditionally, since this path is newer and far less proven
+        // against real artwork than the single-column/ring paths above.
+        if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
+            return .satin
+        }
+        return .tatamiFill
     }
 
     /// Below this letter height, commercial digitizing guidance treats
@@ -260,9 +290,32 @@ public enum StitchTypeClassifier {
             for index in candidates {
                 let shape = objects[index].shape
                 let parameters = objects[index].parameters
-                if shape.subPaths.count > 2 { anyStructurallyFillOnly = true; continue }
+                if shape.subPaths.count > 2 {
+                    // `allowBranchingSatin` (stage 4): a multi-hole
+                    // member (B, R with two counters in some fonts) gets
+                    // the exact same neutral treatment as a branching
+                    // single-hole member just below, rather than an
+                    // unconditional fill-only mark -- see `classify`'s
+                    // own doc comment on this same allowance.
+                    if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
+                        continue
+                    }
+                    anyStructurallyFillOnly = true
+                    continue
+                }
                 guard shape.subPaths.count == 1, let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
                 guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else {
+                    // `allowBranchingSatin` members don't have a single
+                    // whole-shape "width" the way a simple column does
+                    // (see `classify`'s own doc comment on this same
+                    // trade-off) -- treated like a single-hole ring
+                    // member below: neither forcing the group to fill
+                    // nor contributing to `widestSimpleWidth`, just
+                    // following whatever the group's other, genuinely
+                    // "simple" members decide.
+                    if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
+                        continue
+                    }
                     anyStructurallyFillOnly = true
                     continue
                 }
@@ -284,10 +337,16 @@ public enum StitchTypeClassifier {
             }
 
             for index in candidates {
-                // A member that itself has more than one hole can never be
-                // satin regardless of the group's decision -- the same
-                // structural exception `classifyGlyphInRun` makes.
-                let finalType: StitchType = (groupType == .satin && result[index].shape.subPaths.count > 2) ? .tatamiFill : groupType
+                // A member with more than one hole can't inherit the
+                // group's own satin decision unless it's independently
+                // branching-eligible (`allowBranchingSatin`) -- the same
+                // structural exception `classifyGlyphInRun` makes for
+                // Add-Lettering text, extended here the same way the
+                // loop above already was.
+                let member = result[index]
+                let multiHoleBlocksIt = member.shape.subPaths.count > 2
+                    && !(member.parameters.allowBranchingSatin && SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: member.shape, parameters: member.parameters))
+                let finalType: StitchType = (groupType == .satin && multiHoleBlocksIt) ? .tatamiFill : groupType
                 result[index].stitchType = finalType
             }
         }
@@ -375,7 +434,15 @@ public enum StitchTypeClassifier {
                 guard box.width >= minimumBulkDimensionMM, box.height >= minimumBulkDimensionMM else { continue }
 
                 if consensusType == .satin,
-                   object.shape.subPaths.count > 2 || !SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: object.shape, parameters: object.parameters) {
+                   object.shape.subPaths.count > 2 || !SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: object.shape, parameters: object.parameters),
+                   // `allowBranchingSatin` override: a rejection above
+                   // from the single-column check alone doesn't rule out
+                   // a genuinely branching outline (any number of holes,
+                   // since stage 4 — see `classify`'s own doc comment on
+                   // this same allowance) that decomposes fine via
+                   // `generateBranching`.
+                   !(object.parameters.allowBranchingSatin
+                     && SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: object.shape, parameters: object.parameters)) {
                     result[index].stitchType = .tatamiFill
                 } else {
                     result[index].stitchType = consensusType

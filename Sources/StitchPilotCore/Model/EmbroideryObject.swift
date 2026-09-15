@@ -232,6 +232,19 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// explicitly.
     public var fabricType: FabricType = .standard
 
+    /// Opts a shape into `SatinColumnGenerator.canRepresentAsBranchingSatinColumn`/
+    /// `generateBranching` — decomposing a genuinely branching outline (a
+    /// letter like "A," "B," "R," "H") into stroke segments and rail-
+    /// fitting each independently, rather than falling back to tatami
+    /// fill the moment `canRepresentAsSingleSatinColumn` rejects the whole
+    /// shape as one column. Defaults to `false`: this is stage 3 of the
+    /// branching-letter satin work (see DIGITIZING_ENGINE.md) — real-file
+    /// verification and a visual review are the gate before this becomes
+    /// the default, not a code change alone. See
+    /// `StitchTypeClassifier.classify` and `DigitizePipeline`'s `.satin`
+    /// case for where this is actually consulted.
+    public var allowBranchingSatin: Bool = false
+
     // Phase 3 — reserved for object overlap / inset-outset (next).
 
     public init() {}
@@ -241,7 +254,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         case satinDensityMM, maxSatinWidthMM, minSatinWidthMM
         case fillSpacingMM, fillAngleDegrees, fillRowStaggerMM, fillPattern
         case underlayType, underlayStitchLengthMM, underlayInsetMM, zigzagUnderlaySpacingMM, zigzagUnderlayWidthThresholdMM
-        case pullCompensationMM, pushCompensationMM, fabricType
+        case pullCompensationMM, pushCompensationMM, fabricType, allowBranchingSatin
     }
 
     /// A field added here with a non-`Optional` type and a default value
@@ -278,6 +291,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         pullCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pullCompensationMM)
         pushCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pushCompensationMM)
         fabricType = try c.decodeIfPresent(FabricType.self, forKey: .fabricType) ?? defaults.fabricType
+        allowBranchingSatin = try c.decodeIfPresent(Bool.self, forKey: .allowBranchingSatin) ?? defaults.allowBranchingSatin
     }
 }
 

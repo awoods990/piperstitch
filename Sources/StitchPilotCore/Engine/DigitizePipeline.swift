@@ -312,6 +312,24 @@ public enum DigitizePipeline {
             do {
                 return [Array(underlay.reversed()) + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
             } catch SatinGenerationError.shapeNotSuitable {
+                // `allowBranchingSatin` (default false — see its own doc
+                // comment on `StitchGenerationParameters`): before giving
+                // up on satin and falling back to tatami fill below, a
+                // genuinely branching outline `StitchTypeClassifier`
+                // classified `.satin` specifically because this path
+                // exists (see `classify`'s own branching allowance) gets
+                // one more real attempt via `generateBranching`'s stroke-
+                // segment decomposition. A shape the classifier let
+                // through this way should virtually always succeed here
+                // too (both call the same `canRepresentAsBranchingSatinColumn`
+                // check), but `generateBranching` can still fail on a
+                // pathological case the cheaper check didn't catch --
+                // falling through to the existing tatami fallback below
+                // rather than aborting the whole digitize either way.
+                if object.parameters.allowBranchingSatin,
+                   let branchingStitches = try? SatinColumnGenerator.generateBranching(for: object.shape, parameters: object.parameters) {
+                    return [Array(underlay.reversed()) + branchingStitches]
+                }
                 // `StitchTypeClassifier` picks satin from a shape's average
                 // width alone, which is a real width measurement but no
                 // guarantee the outline is well-formed enough for satin's
