@@ -215,16 +215,15 @@ struct BranchingSatinGeneratorTests {
         }
     }
 
-    /// `allowBranchingSatin` defaults to `false` -- classifying the H
-    /// shape should still fall back to tatami fill exactly as before
-    /// unless a caller explicitly opts in, unaffected by
-    /// `generateBranching` existing alongside it.
-    @Test func classifierIsUnaffectedByTheNewBranchingPathByDefault() {
+    /// `allowBranchingSatin` defaults to `true` -- classifying the H
+    /// shape should use the branching path without a caller having to
+    /// opt in explicitly.
+    @Test func classifierUsesBranchingSatinByDefaultForTheHShape() {
         var p = StitchGenerationParameters()
         p.satinDensityMM = 0.4
-        #expect(!p.allowBranchingSatin)
+        #expect(p.allowBranchingSatin)
         let type = StitchTypeClassifier.classify(shape: hShape(), parameters: p)
-        #expect(type == .tatamiFill)
+        #expect(type == .satin)
     }
 
     // MARK: - Stage 3: wiring behind `allowBranchingSatin`
@@ -252,12 +251,12 @@ struct BranchingSatinGeneratorTests {
         #expect(plan.stitchCount > 40, "expected dense satin-density coverage across all three strokes, got \(plan.stitchCount) stitches")
     }
 
-    /// Without the flag, the exact same object still falls back to
-    /// tatami through the pipeline's existing safety net -- the flag
-    /// change is additive, not a replacement of the fallback.
+    /// With the flag explicitly turned off, the exact same object still
+    /// falls back to tatami through the pipeline's existing safety net --
+    /// the branching path is additive, not a replacement of the fallback.
     @Test func pipelineStillFallsBackToTatamiForTheHShapeWithoutTheFlag() throws {
-        let p = params()
-        #expect(!p.allowBranchingSatin)
+        var p = params()
+        p.allowBranchingSatin = false
         let object = EmbroideryObject(name: "H", shape: hShape(), stitchType: .satin,
                                        threadColor: .generic(RGBColor(hex: 0x000000)), parameters: p)
         let doc = StitchDocument(name: "BranchingH", physicalWidthMM: 15, physicalHeightMM: 20, objects: [object])
@@ -304,8 +303,8 @@ struct BranchingSatinGeneratorTests {
     }
 
     @Test func classifierStillReturnsTatamiForTheBShapeWithoutTheFlag() {
-        let p = params()
-        #expect(!p.allowBranchingSatin)
+        var p = params()
+        p.allowBranchingSatin = false
         let type = StitchTypeClassifier.classify(shape: bShape(), parameters: p)
         #expect(type == .tatamiFill)
     }

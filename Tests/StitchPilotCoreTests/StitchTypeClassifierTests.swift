@@ -305,7 +305,17 @@ struct StitchTypeClassifierTests {
     /// `.tatamiFill` together once harmonized, matching
     /// `classifyLetteringRun`'s real rule (any structurally fill-only
     /// member pulls the whole group to fill) rather than a majority vote.
-    @Test func multiHoleSiblingPullsWholeSameColorGroupToTatami() {
+    /// This exact "B"-shaped fixture (an outer boundary with two separate
+    /// counters, `subPaths.count == 3`) used to be a structural
+    /// impossibility for this engine -- forcing the whole same-color group
+    /// to tatami was the only correct choice. `allowBranchingSatin`
+    /// defaulting to `true` now (see DIGITIZING_ENGINE.md's real-file
+    /// hardening entry) makes a well-formed two-hole shape like this one
+    /// genuinely representable as branching satin, so the group no longer
+    /// needs to be pulled down at all -- this is the direct, intended
+    /// consequence of that default flip, not a regression in `harmonize`
+    /// itself.
+    @Test func multiHoleSiblingStaysSatinWithBranchingSatinAllowedByDefault() {
         let color = RGBColor(hex: 0x0A1F44)
         let lShape = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(4, 0), Point2D(4, 20), Point2D(0, 20),
@@ -313,9 +323,6 @@ struct StitchTypeClassifierTests {
         let iShape = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(3, 0), Point2D(3, 20), Point2D(0, 20),
         ], closed: true)])
-        // "B": an outer boundary with two separate counters (subPaths.count
-        // == 3), exactly like `multiHoledGlyphFallsBackToTatamiEvenInASatinRun`'s
-        // fixture above.
         let bOuter = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
         let bUpperHole = SubPath(points: [Point2D(2, 11), Point2D(8, 11), Point2D(8, 18), Point2D(2, 18)], closed: true)
         let bLowerHole = SubPath(points: [Point2D(2, 2), Point2D(8, 2), Point2D(8, 9), Point2D(2, 9)], closed: true)
@@ -325,6 +332,42 @@ struct StitchTypeClassifierTests {
             EmbroideryObject(name: "Letter\(index)", shape: shape,
                               stitchType: StitchTypeClassifier.classify(shape: shape, parameters: defaultParams),
                               threadColor: .generic(color))
+        }
+        #expect(objects[0].stitchType == .satin)
+        #expect(objects[1].stitchType == .satin)
+        #expect(objects[2].stitchType == .satin, "a well-formed two-hole B should now rail-fit as branching satin directly")
+
+        objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
+        #expect(objects.allSatisfy { $0.stitchType == .satin },
+                "no member needed to be pulled down -- the whole group was already genuinely satin-representable")
+    }
+
+    /// The safety net `harmonizeSameColorFillConsistency` exists for --
+    /// a same-color group with a member that genuinely can't be satin
+    /// (branching satin explicitly turned off here, standing in for any
+    /// real shape `canRepresentAsBranchingSatinColumn` still rejects, the
+    /// same way LIBBi's own real "B" still does -- see DIGITIZING_ENGINE.md)
+    /// must still pull the whole group down to tatami together, not leave
+    /// a mismatched texture next to its satin siblings.
+    @Test func multiHoleSiblingPullsWholeSameColorGroupToTatamiWhenBranchingIsUnavailable() {
+        let color = RGBColor(hex: 0x0A1F44)
+        var p = defaultParams
+        p.allowBranchingSatin = false
+        let lShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(4, 0), Point2D(4, 20), Point2D(0, 20),
+        ], closed: true)])
+        let iShape = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(3, 0), Point2D(3, 20), Point2D(0, 20),
+        ], closed: true)])
+        let bOuter = SubPath(points: [Point2D(0, 0), Point2D(10, 0), Point2D(10, 20), Point2D(0, 20)], closed: true)
+        let bUpperHole = SubPath(points: [Point2D(2, 11), Point2D(8, 11), Point2D(8, 18), Point2D(2, 18)], closed: true)
+        let bLowerHole = SubPath(points: [Point2D(2, 2), Point2D(8, 2), Point2D(8, 9), Point2D(2, 9)], closed: true)
+        let bShape = VectorShape(subPaths: [bOuter, bUpperHole, bLowerHole])
+
+        var objects = [lShape, iShape, bShape].enumerated().map { index, shape in
+            EmbroideryObject(name: "Letter\(index)", shape: shape,
+                              stitchType: StitchTypeClassifier.classify(shape: shape, parameters: p),
+                              threadColor: .generic(color), parameters: p)
         }
         // Confirm the baseline mismatch this test guards against actually
         // reproduces before harmonizing.
