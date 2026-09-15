@@ -171,6 +171,11 @@ recommendation**. Priority is by expected sew-out impact per hour of work.
 | 12 | B5, B6, B2, B3, C3 | 1.5 d total | Polish |
 | 13 | C2, C7 | 2 d | SVG overlap cleanup; outline/border options |
 
+**Status (2026-09-15):** A1–A7 and B1 are implemented — see
+CHANGELOG.md "digitizing engine — seven rules from the Wilcom reference
+manual" (commits 79890e4, 9ca898b, c62b612, and the mitred-corners
+commit). Remaining: B7, C1, C4–C7, B2/B3/B5/B6, C2/C3.
+
 Every item lands with tests in `Tests/StitchPilotCoreTests/` and a
 before/after run of `DigitizeCLI` over `TestArtwork/` (the regression
 corpus proposed separately); A1–A4 and B1 should each get a real sew-out.
