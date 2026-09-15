@@ -11,7 +11,7 @@ import { PRESET_LABELS } from "./SetupFlow";
 import { rgbCSS } from "../prefs";
 
 export const STITCH_LABELS: Record<StitchType, string> = { runningStitch: "Running stitch", tripleRun: "Triple run", satin: "Satin", tatamiFill: "Fill" };
-const UNDERLAY_LABELS: Record<UnderlayType, string> = { none: "None", centerRun: "Center run", edgeRun: "Edge run", zigzag: "Zigzag" };
+const UNDERLAY_LABELS: Record<UnderlayType, string> = { none: "None", centerRun: "Center run", edgeRun: "Edge run", zigzag: "Zigzag", tatami: "Tatami (open rows)", doubleTatami: "Double tatami (cross-hatch)" };
 
 export interface InspectorProps {
   catalog: Catalog;

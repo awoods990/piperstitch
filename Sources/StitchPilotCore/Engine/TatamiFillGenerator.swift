@@ -45,6 +45,20 @@ public enum TatamiFillGenerator {
     /// comment in `TatamiFillGeneratorTests.swift` for why a small residual
     /// crossing is fine and expected for that common case.
     public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double) -> [[Point2D]] {
+        generateRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM, routeConnectorsAlongEdges: false)
+    }
+
+    /// `routeConnectorsAlongEdges`: a connector that can't be sewn
+    /// straight (it would cross a hole, or leave the shape) is routed as a
+    /// travel run along that boundary -- just inside it -- instead of
+    /// becoming a run break. The standard "travel along the edge"
+    /// technique; used for a tatami *underlay*, whose travel is always
+    /// covered by the fill sewn on top of it afterwards, so a few extra
+    /// running stitches cost nothing visible and save a trim each.
+    /// The cover fill itself keeps breaking (a travel run over rows it
+    /// already sewed would show), which is what every existing caller
+    /// gets from the overload above.
+    public static func generateRuns(for shape: VectorShape, parameters: StitchGenerationParameters, breakThresholdMM: Double, routeConnectorsAlongEdges: Bool) -> [[Point2D]] {
         guard !shape.subPaths.isEmpty else { return [] }
         if parameters.fillPattern == .crossHatch {
             return generateCrossHatchRuns(for: shape, parameters: parameters, breakThresholdMM: breakThresholdMM)
@@ -145,6 +159,36 @@ public enum TatamiFillGenerator {
         let chains = chainRuns(rowRuns)
         let orderedChains = sequenceChains(chains)
 
+        // Applied both between chains (below) and between consecutive
+        // runs *within* a chain: `chainRuns` continues a chain onto
+        // whichever of a split row's runs overlaps it most, which at the
+        // row where a hole opens can be the run on the far side of the
+        // hole from where the previous full row's boustrophedon ended --
+        // a connector straight across the hole. With the cover fill's
+        // fine spacing the overlap tie usually breaks the right way; at
+        // the open spacing of a tatami *underlay* it demonstrably didn't
+        // (found by the pipeline's own hole-bridging test the moment
+        // underlay rows were generated this way). A row-to-row connector
+        // that is long or leaves the shape now ends the run there.
+        let minCheckedConnectorMM = 8.0
+        func connectorIsSewable(from a: Point2D, to b: Point2D) -> Bool {
+            let length = a.distance(to: b)
+            guard length <= breakThresholdMM else { return false }
+            return length <= minCheckedConnectorMM || connectorStaysInsideShape(from: a, to: b, polygons: rotatedPolygons)
+        }
+
+        // Where a connector can't be sewn straight, `routeConnectorsAlongEdges`
+        // tries a travel run along the crossed boundary first (see the
+        // overload's doc comment); the route is sampled at the run's own
+        // stitch length. Routed length is capped so a hole the size of the
+        // whole shape doesn't get a lap of travel round it.
+        let maxRoutedLengthMM = 120.0
+        func routedConnector(from a: Point2D, to b: Point2D) -> [Point2D]? {
+            guard routeConnectorsAlongEdges else { return nil }
+            guard let route = routeAlongBoundary(from: a, to: b, polygons: rotatedPolygons, insetMM: 1.0), PolygonGeometry.pathLength(route) <= maxRoutedLengthMM else { return nil }
+            return Array(sampleKeepingVertices(route, stitchLengthMM: max(stitchLength, 1.0)).dropFirst().dropLast())
+        }
+
         var rotatedChainPoints: [[Point2D]] = []
         for chain in orderedChains {
             var chainPoints: [Point2D] = []
@@ -158,6 +202,14 @@ public enum TatamiFillGenerator {
                 // regardless of how `sequenceChains` split a chain into
                 // pieces to splice side-strips in between them.
                 if run.rowIndex % 2 == 1 { points.reverse() }
+                if let last = chainPoints.last, let first = points.first, !connectorIsSewable(from: last, to: first) {
+                    if let route = routedConnector(from: last, to: first) {
+                        chainPoints.append(contentsOf: route)
+                    } else {
+                        rotatedChainPoints.append(chainPoints)
+                        chainPoints = []
+                    }
+                }
                 chainPoints.append(contentsOf: points)
             }
             if !chainPoints.isEmpty { rotatedChainPoints.append(chainPoints) }
@@ -204,14 +256,15 @@ public enum TatamiFillGenerator {
         // to matter either way; a connector that's both long *and* would
         // leave the shape becomes a real run boundary instead. See
         // CHANGELOG.md.
-        let minCheckedConnectorMM = 8.0
         var mergedRuns: [[Point2D]] = []
         for chainPoints in rotatedChainPoints {
             if let lastPoint = mergedRuns.last?.last, let firstPoint = chainPoints.first {
-                let connectorLength = lastPoint.distance(to: firstPoint)
-                let staysInside = connectorLength <= minCheckedConnectorMM
-                    || connectorStaysInsideShape(from: lastPoint, to: firstPoint, polygons: rotatedPolygons)
-                if connectorLength <= breakThresholdMM, staysInside {
+                if connectorIsSewable(from: lastPoint, to: firstPoint) {
+                    mergedRuns[mergedRuns.count - 1].append(contentsOf: chainPoints)
+                    continue
+                }
+                if let route = routedConnector(from: lastPoint, to: firstPoint) {
+                    mergedRuns[mergedRuns.count - 1].append(contentsOf: route)
                     mergedRuns[mergedRuns.count - 1].append(contentsOf: chainPoints)
                     continue
                 }
@@ -220,6 +273,123 @@ public enum TatamiFillGenerator {
         }
 
         return mergedRuns.map { run in run.map { rotate($0, cos: cos(angleRad), sin: sin(angleRad)) } }
+    }
+
+    /// A path from `a` to `b` that follows the boundary of a polygon (the
+    /// outer edge or a hole) the straight segment `a`->`b` crosses, kept
+    /// `insetMM` inside the stitched region, going round whichever way is
+    /// shorter. When the segment crosses more than one polygon each is
+    /// tried and the shortest route whose every leg stays inside the
+    /// shape wins. nil when nothing is crossed (no routing needed) or no
+    /// candidate route stays inside.
+    static func routeAlongBoundary(from a: Point2D, to b: Point2D, polygons: [[Point2D]], insetMM: Double) -> [Point2D]? {
+        var crossed: [Int] = []
+        for (index, polygon) in polygons.enumerated() where polygon.count >= 3 {
+            let n = polygon.count
+            for i in 0..<n where segmentsCross(a, b, polygon[i], polygon[(i + 1) % n]) {
+                crossed.append(index)
+                break
+            }
+        }
+        guard !crossed.isEmpty else { return nil }
+
+        var best: [Point2D]?
+        var bestLength = Double.infinity
+        for index in crossed {
+            // Keep the route just inside the *stitched* area: the outer
+            // boundary shrinks inward, a hole grows outward.
+            let boundary = PolygonGeometry.offsetPolygon(polygons[index], by: index == 0 ? insetMM : -insetMM)
+            guard let route = shortestWayRound(boundary, from: a, to: b) else { continue }
+            let length = PolygonGeometry.pathLength(route)
+            guard length < bestLength, routeStaysInside(route, polygons: polygons) else { continue }
+            best = route
+            bestLength = length
+        }
+        return best
+    }
+
+    /// Resamples a polyline at about `stitchLengthMM` while keeping every
+    /// vertex -- unlike arc-length resampling, which puts stitch points on
+    /// the path but lets the straight stitch *between* two of them cut
+    /// across a corner (round a hole, straight into the hole).
+    static func sampleKeepingVertices(_ path: [Point2D], stitchLengthMM: Double) -> [Point2D] {
+        guard path.count > 1 else { return path }
+        var out = [path[0]]
+        for (p, q) in zip(path, path.dropFirst()) {
+            let d = p.distance(to: q)
+            let pieces = max(1, Int((d / max(stitchLengthMM, 0.1)).rounded(.up)))
+            for k in 1...pieces {
+                let t = Double(k) / Double(pieces)
+                out.append(Point2D(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t))
+            }
+        }
+        return out
+    }
+
+    /// `[a, boundary points..., b]` following `boundary` between the
+    /// points on it nearest `a` and `b`, the shorter way round.
+    private static func shortestWayRound(_ boundary: [Point2D], from a: Point2D, to b: Point2D) -> [Point2D]? {
+        let n = boundary.count
+        guard n >= 3 else { return nil }
+        func nearest(_ p: Point2D) -> (edge: Int, point: Point2D) {
+            var best = (edge: 0, point: boundary[0], distance: Double.infinity)
+            for i in 0..<n {
+                let q = nearestPointOnSegment(p, boundary[i], boundary[(i + 1) % n])
+                let d = p.distance(to: q)
+                if d < best.distance { best = (i, q, d) }
+            }
+            return (best.edge, best.point)
+        }
+        let start = nearest(a), end = nearest(b)
+
+        var forward = [start.point]
+        if start.edge != end.edge {
+            var i = (start.edge + 1) % n
+            var guardCount = 0
+            while i != (end.edge + 1) % n, guardCount < n {
+                forward.append(boundary[i]); i = (i + 1) % n; guardCount += 1
+            }
+        }
+        forward.append(end.point)
+
+        var backward = [start.point]
+        var i = start.edge
+        var guardCount = 0
+        while i != end.edge, guardCount < n {
+            backward.append(boundary[i]); i = (i - 1 + n) % n; guardCount += 1
+        }
+        backward.append(end.point)
+
+        let route = PolygonGeometry.pathLength(forward) <= PolygonGeometry.pathLength(backward) ? forward : backward
+        return [a] + route + [b]
+    }
+
+    /// Every leg of `route` (sampled at several interior points) lies
+    /// inside `polygons` -- the offset boundaries are approximations at
+    /// sharp corners, so a route is verified, not trusted.
+    private static func routeStaysInside(_ route: [Point2D], polygons: [[Point2D]]) -> Bool {
+        for (p, q) in zip(route, route.dropFirst()) where p.distance(to: q) > 0.3 {
+            for step in 1...4 {
+                let t = Double(step) / 5
+                let sample = Point2D(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t)
+                if !PolygonGeometry.pointInPolygons(sample, polygons: polygons) { return false }
+            }
+        }
+        return true
+    }
+
+    private static func segmentsCross(_ p1: Point2D, _ p2: Point2D, _ p3: Point2D, _ p4: Point2D) -> Bool {
+        func cross(_ o: Point2D, _ a: Point2D, _ b: Point2D) -> Double { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+        let d1 = cross(p3, p4, p1), d2 = cross(p3, p4, p2), d3 = cross(p1, p2, p3), d4 = cross(p1, p2, p4)
+        return ((d1 > 0) != (d2 > 0)) && d1 != 0 && d2 != 0 && ((d3 > 0) != (d4 > 0)) && d3 != 0 && d4 != 0
+    }
+
+    private static func nearestPointOnSegment(_ p: Point2D, _ a: Point2D, _ b: Point2D) -> Point2D {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let len2 = dx * dx + dy * dy
+        guard len2 > 0 else { return a }
+        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+        return Point2D(a.x + dx * t, a.y + dy * t)
     }
 
     /// Samples several interior points along the straight line from `a` to

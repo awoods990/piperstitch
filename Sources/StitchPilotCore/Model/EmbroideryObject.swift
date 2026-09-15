@@ -118,23 +118,25 @@ public enum FabricType: String, Codable, Sendable, CaseIterable {
     }
 
     /// Multiplies `PullCompensationCalculator`'s base pull/push estimate.
-    /// Directional guidance only (this engine has no calibrated per-
-    /// fabric sew-out data yet -- see that type's own doc comment on why
-    /// its whole estimate is a heuristic, not a physical model): a low-
-    /// stretch, dimensionally stable material needs less correction than
-    /// the baseline, a stretchy knit needs meaningfully more, and terry/
-    /// plush needs a moderate bump for its own pile-related distortion.
+    /// Scaled so a mid-width satin column on each fabric lands on the
+    /// published industry guideline (Wilcom reference manual, "Pull
+    /// compensation": drills/cotton 0.20 mm, T-shirt 0.35, fleece/jumper
+    /// 0.40; docs/WILCOM_MANUAL_REVIEW.md B1) -- the standard-fabric base
+    /// estimate is ~0.21 mm, so knit x1.7 ≈ 0.35 and terry x2.0 ≈ 0.42.
+    /// Still directional guidance rather than measured data: the spec's
+    /// sew-out calibration (§68) is the intended way to replace these
+    /// with numbers from real fabric.
     public var compensationMultiplier: Double {
         switch self {
         case .standard: return 1.0
-        case .stableWoven: return 0.7
-        case .knit: return 1.3
-        case .stretchKnit: return 1.8
-        case .terry: return 1.4
+        case .stableWoven: return 0.85
+        case .knit: return 1.7
+        case .stretchKnit: return 2.2
+        case .terry: return 2.0
         case .leatherOrVinyl: return 0.6
-        case .structuredCap: return 0.8
-        case .unstructuredCap: return 1.1
-        case .beanie: return 1.7
+        case .structuredCap: return 0.9
+        case .unstructuredCap: return 1.3
+        case .beanie: return 2.2
         }
     }
 }
@@ -231,6 +233,15 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// of plain center-run — a single centerline pass isn't enough to
     /// stabilize fabric across a wide zigzag, only a narrow one.
     public var zigzagUnderlayWidthThresholdMM: Double = 4.0
+    /// An optional second underlay layer sewn after the first (Wilcom:
+    /// "larger areas and stretchy fabrics generally need more underlay...
+    /// larger objects may combine two layers"). nil = the engine decides
+    /// from size and fabric (`UnderlayGenerator.plan`); `.none` forces a
+    /// single layer.
+    public var secondUnderlayType: UnderlayType? = nil
+    /// Row spacing of a tatami (open-fill) underlay layer -- a few mm,
+    /// far more open than the cover fill it sits under.
+    public var tatamiUnderlaySpacingMM: Double = 3.0
 
     // Phase 3 — pull compensation (spec §17)
     /// `nil` = automatic (see `PullCompensationCalculator`). Only applies
@@ -275,6 +286,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         case satinAutoSpacing, satinSpacingOffsetFraction, satinShortenBelowFraction, satinAutoSplitMM
         case fillSpacingMM, fillAngleDegrees, fillRowStaggerMM, fillPattern
         case underlayType, underlayStitchLengthMM, underlayInsetMM, zigzagUnderlaySpacingMM, zigzagUnderlayWidthThresholdMM
+        case secondUnderlayType, tatamiUnderlaySpacingMM
         case pullCompensationMM, pushCompensationMM, fabricType, allowBranchingSatin
     }
 
@@ -313,6 +325,8 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         underlayInsetMM = try c.decodeIfPresent(Double.self, forKey: .underlayInsetMM) ?? defaults.underlayInsetMM
         zigzagUnderlaySpacingMM = try c.decodeIfPresent(Double.self, forKey: .zigzagUnderlaySpacingMM) ?? defaults.zigzagUnderlaySpacingMM
         zigzagUnderlayWidthThresholdMM = try c.decodeIfPresent(Double.self, forKey: .zigzagUnderlayWidthThresholdMM) ?? defaults.zigzagUnderlayWidthThresholdMM
+        secondUnderlayType = try c.decodeIfPresent(UnderlayType.self, forKey: .secondUnderlayType)
+        tatamiUnderlaySpacingMM = try c.decodeIfPresent(Double.self, forKey: .tatamiUnderlaySpacingMM) ?? defaults.tatamiUnderlaySpacingMM
         pullCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pullCompensationMM)
         pushCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pushCompensationMM)
         fabricType = try c.decodeIfPresent(FabricType.self, forKey: .fabricType) ?? defaults.fabricType
@@ -326,6 +340,32 @@ public enum UnderlayType: String, Codable, Sendable, CaseIterable {
     case edgeRun
     /// A wider-spaced, inset zigzag beneath satin — see `zigzagUnderlaySpacingMM`.
     case zigzag
+    /// Very open rows of running stitch across a filled shape, at right
+    /// angles to the cover fill's own rows -- the standard foundation for
+    /// a large fill (usually as a second layer over an edge run).
+    case tatami
+    /// Two tatami underlay passes at +45° and -45° to the cover fill: a
+    /// cross-hatch for very soft or elastic fabric (knit beanies, fleece,
+    /// athletic knits), which also lifts the cover slightly.
+    case doubleTatami
+}
+
+/// Which stretchy / napped fabrics call for more underlay than their
+/// size alone would -- see `UnderlayGenerator.plan`.
+extension FabricType {
+    var needsExtraUnderlay: Bool {
+        switch self {
+        case .knit, .stretchKnit, .terry, .beanie, .unstructuredCap: return true
+        case .standard, .stableWoven, .leatherOrVinyl, .structuredCap: return false
+        }
+    }
+
+    var needsCrossHatchUnderlay: Bool {
+        switch self {
+        case .stretchKnit, .beanie, .terry: return true
+        default: return false
+        }
+    }
 }
 
 /// One embroidery object: a geometric shape plus everything needed to sew

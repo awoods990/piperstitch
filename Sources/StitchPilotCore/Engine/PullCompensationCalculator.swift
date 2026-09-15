@@ -39,8 +39,20 @@ public enum PullCompensationCalculator {
         // for very wide ones so compensation doesn't keep shrinking toward zero.
         let widthFactor = objectWidthMM > 0 ? min(1.5, max(0.6, 4.0 / objectWidthMM)) : 1.0
 
-        return min(effectiveMax, (baseCompensationMM + densityFactor) * widthFactor * fabricType.compensationMultiplier)
+        let estimate = min(effectiveMax, (baseCompensationMM + densityFactor) * widthFactor * fabricType.compensationMultiplier)
+        // Lettering-width satin (the manual's own row: "lettering 0.2 -
+        // 0.3 mm"): the width factor above rightly grows compensation on
+        // narrow columns, but a small letter's stroke over-widened by 0.4
+        // mm reads as bold, so cap it at 0.30 mm on standard fabric
+        // (scaled up with the fabric, never down).
+        if stitchType == .satin, objectWidthMM > 0, objectWidthMM < narrowColumnWidthMM {
+            return min(estimate, narrowColumnCapMM * max(1, fabricType.compensationMultiplier))
+        }
+        return estimate
     }
+
+    private static let narrowColumnWidthMM = 3.0
+    private static let narrowColumnCapMM = 0.30
 
     /// Push compensation's counterpart to `estimate` above: fabric doesn't
     /// only pull together perpendicular to the stitching direction, it also

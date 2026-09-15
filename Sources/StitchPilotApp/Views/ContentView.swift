@@ -1041,6 +1041,8 @@ private struct ObjectInspectorSection: View {
         case .centerRun: return "Center Run"
         case .edgeRun: return "Edge Run"
         case .zigzag: return "Zigzag"
+        case .tatami: return "Tatami (open rows)"
+        case .doubleTatami: return "Double Tatami (cross-hatch)"
         }
     }
 }

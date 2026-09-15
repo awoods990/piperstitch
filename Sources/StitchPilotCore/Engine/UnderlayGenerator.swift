@@ -6,39 +6,182 @@ import Foundation
 /// underlay manually" (spec §16): `generate` picks a sensible default per
 /// stitch type unless `parameters.underlayType` overrides it.
 public enum UnderlayGenerator {
+    /// The one or two underlay layers an object gets, in sewing order.
+    public struct Plan: Equatable, Sendable {
+        public var first: UnderlayType
+        public var second: UnderlayType?
+    }
+
+    /// Every underlay stitch as one continuous sequence. Fine for satin
+    /// (whose underlay types are all single open paths or one closed
+    /// loop); a fill with a tatami underlay layer over a hole should use
+    /// `generateLayers`, whose per-run structure keeps the underlay from
+    /// bridging the hole -- flattening here would sew straight across it.
     public static func generate(for shape: VectorShape, stitchType: StitchType, parameters: StitchGenerationParameters) -> [Point2D] {
-        let effective = parameters.underlayType ?? defaultUnderlay(for: stitchType, shape: shape, parameters: parameters)
-        switch effective {
-        case .none:
-            return []
-        case .centerRun:
-            return centerRun(shape: shape, parameters: parameters)
-        case .edgeRun:
-            return edgeRun(shape: shape, parameters: parameters)
-        case .zigzag:
-            return zigzag(shape: shape, parameters: parameters)
+        generateLayers(for: shape, stitchType: stitchType, parameters: parameters).flatMap { $0.runs.flatMap { $0 } }
+    }
+
+    /// One entry per underlay layer, in sewing order, each as one or more
+    /// runs: a run boundary means "don't sew a stitch between these" (a
+    /// tatami underlay's chains on either side of a hole -- the same
+    /// break the cover fill itself makes). `DigitizePipeline` seams a
+    /// closed edge-run loop next to whatever follows it and turns run
+    /// boundaries into trim+jumps. Empty layers are dropped.
+    public struct Layer {
+        public var type: UnderlayType
+        public var runs: [[Point2D]]
+    }
+
+    public static func generateLayers(for shape: VectorShape, stitchType: StitchType, parameters: StitchGenerationParameters) -> [Layer] {
+        let plan = plan(for: shape, stitchType: stitchType, parameters: parameters)
+        var layers = [Layer(type: plan.first, runs: layerRuns(plan.first, shape: shape, parameters: parameters))]
+        if let second = plan.second { layers.append(Layer(type: second, runs: layerRuns(second, shape: shape, parameters: parameters))) }
+        return layers.map { Layer(type: $0.type, runs: $0.runs.filter { !$0.isEmpty }) }.filter { !$0.runs.isEmpty }
+    }
+
+    private static func layerRuns(_ type: UnderlayType, shape: VectorShape, parameters: StitchGenerationParameters) -> [[Point2D]] {
+        switch type {
+        case .none: return []
+        case .centerRun: return [centerRun(shape: shape, parameters: parameters)]
+        case .edgeRun: return [edgeRun(shape: shape, parameters: parameters)]
+        case .zigzag: return [zigzag(shape: shape, parameters: parameters)]
+        case .tatami: return tatami(shape: shape, parameters: parameters, angleOffsets: [90])
+        case .doubleTatami: return tatami(shape: shape, parameters: parameters, angleOffsets: [45, -45])
         }
     }
 
-    /// Satin picks between center-run and zigzag by estimated average
-    /// width: a single centerline pass stabilizes a narrow column fine,
-    /// but a wider zigzag needs more than one line of anchoring stitches
-    /// underneath it — the "German underlay" technique (contour-walk +
-    /// zigzag together) documented in EMBROIDERY_ALGORITHM_REFERENCE.md,
-    /// sourced from studying Ink/Stitch's satin underlay. Avoids
-    /// unnecessary underlay on very small objects either way (spec §16).
-    private static func defaultUnderlay(for stitchType: StitchType, shape: VectorShape, parameters: StitchGenerationParameters) -> UnderlayType {
-        switch stitchType {
-        case .satin:
-            guard let (railA, railB) = try? SatinColumnGenerator.computeRails(for: shape) else { return .centerRun }
-            let sampleCount = 10
-            let a = PolygonGeometry.resampleByCount(railA, count: sampleCount)
-            let b = PolygonGeometry.resampleByCount(railB, count: sampleCount)
-            let averageWidth = zip(a, b).map { $0.distance(to: $1) }.reduce(0, +) / Double(a.count)
-            return averageWidth > parameters.zigzagUnderlayWidthThresholdMM ? .zigzag : .centerRun
-        case .tatamiFill: return .edgeRun
-        case .runningStitch, .tripleRun: return .none // already a single light pass; no fabric buildup to stabilize
+    /// Below this longest dimension an object gets no underlay at all:
+    /// the manual's lettering rule ("lettering with heights under 5 mm
+    /// should not have underlay") generalised to any small object --
+    /// there is nothing for a foundation layer to stabilise, and it only
+    /// stiffens the piece and adds stitches.
+    public static let noUnderlayBelowSizeMM = 5.0
+    /// Satin narrower than this (a small letter's stroke) gets no
+    /// underlay; up to `edgeRunFromWidthMM` a single center run (the
+    /// manual: "letters 6-10 mm can have a center-run underlay"); wider
+    /// than that an edge run ("lettering larger than 10 mm is large
+    /// enough for edge-run") -- a normal font's column width is roughly a
+    /// fifth of its height, which is where these come from.
+    public static let noUnderlayBelowWidthMM = 1.2
+    public static let edgeRunFromWidthMM = 2.5
+    /// A satin column wider than this gets an edge run *under* its zigzag
+    /// as a second layer ("combine Zigzag with Center Run or Edge Run").
+    public static let secondSatinLayerFromWidthMM = 6.0
+    /// A fill larger than this gets a tatami underlay over its edge run
+    /// ("tatami underlay is used to stabilize large, filled shapes");
+    /// stretchy or napped fabric lowers the bar to `extraUnderlayAreaMM2`.
+    public static let tatamiUnderlayAreaMM2 = 400.0
+    public static let extraUnderlayAreaMM2 = 150.0
+
+    /// What an object gets by default, from its stitch type, size, width
+    /// and fabric -- unless `parameters.underlayType` / `secondUnderlayType`
+    /// override either layer. See docs/WILCOM_MANUAL_REVIEW.md A5/A7 for the
+    /// manual's rules these encode.
+    public static func plan(for shape: VectorShape, stitchType: StitchType, parameters: StitchGenerationParameters) -> Plan {
+        var plan = defaultPlan(for: stitchType, shape: shape, parameters: parameters)
+        if let forced = parameters.underlayType { plan.first = forced }
+        if let forcedSecond = parameters.secondUnderlayType { plan.second = forcedSecond == .none ? nil : forcedSecond }
+        if plan.first == .none, parameters.secondUnderlayType == nil {
+            plan.second = nil  // "no underlay" -- by size, or forced -- beats an automatic second layer
         }
+        return plan
+    }
+
+    private static func defaultPlan(for stitchType: StitchType, shape: VectorShape, parameters: StitchGenerationParameters) -> Plan {
+        let box = shape.boundingBox
+        let longest = max(box.width, box.height)
+        let fabric = parameters.fabricType
+        switch stitchType {
+        case .runningStitch, .tripleRun:
+            return Plan(first: .none, second: nil) // already a single light pass; no fabric buildup to stabilize
+        case .satin:
+            guard longest >= noUnderlayBelowSizeMM else { return Plan(first: .none, second: nil) }
+            guard let width = averageColumnWidth(shape) else { return Plan(first: .centerRun, second: nil) }
+            if width < noUnderlayBelowWidthMM { return Plan(first: .none, second: nil) }
+            if width < edgeRunFromWidthMM { return Plan(first: .centerRun, second: nil) }
+            if width <= parameters.zigzagUnderlayWidthThresholdMM { return Plan(first: .edgeRun, second: nil) }
+            let wantsSecond = width > secondSatinLayerFromWidthMM || fabric.needsExtraUnderlay
+            return Plan(first: .zigzag, second: wantsSecond ? .edgeRun : nil)
+        case .tatamiFill:
+            guard longest >= noUnderlayBelowSizeMM else { return Plan(first: .none, second: nil) }
+            let area = shapeArea(shape)
+            let threshold = fabric.needsExtraUnderlay ? extraUnderlayAreaMM2 : tatamiUnderlayAreaMM2
+            guard area >= threshold else { return Plan(first: .edgeRun, second: nil) }
+            return Plan(first: .edgeRun, second: fabric.needsCrossHatchUnderlay ? .doubleTatami : .tatami)
+        }
+    }
+
+    /// Average distance between a satin column's rails, or nil when the
+    /// shape doesn't rail-fit as a column at all.
+    private static func averageColumnWidth(_ shape: VectorShape) -> Double? {
+        guard let (railA, railB) = try? SatinColumnGenerator.computeRails(for: shape) else { return nil }
+        let sampleCount = 10
+        let a = PolygonGeometry.resampleByCount(railA, count: sampleCount)
+        let b = PolygonGeometry.resampleByCount(railB, count: sampleCount)
+        return zip(a, b).map { $0.distance(to: $1) }.reduce(0, +) / Double(a.count)
+    }
+
+    /// Outer area minus holes, in mm².
+    private static func shapeArea(_ shape: VectorShape) -> Double {
+        guard let outer = shape.subPaths.first else { return 0 }
+        var area = abs(PolygonGeometry.signedArea(outer.points))
+        for hole in shape.subPaths.dropFirst() { area -= abs(PolygonGeometry.signedArea(hole.points)) }
+        return max(0, area)
+    }
+
+    /// Open rows of running stitch across the shape at each of
+    /// `angleOffsets` degrees from the cover fill's own angle -- one pass
+    /// for `.tatami`, two for `.doubleTatami`. Generated by the fill
+    /// generator itself at an open spacing, on the shape's *true*
+    /// outline (an offset outline self-intersects at a letterform's
+    /// concave corners and breaks the edge routing that keeps this to one
+    /// run) with each row's ends pulled in from the boundary by
+    /// `underlayInsetMM` through the generator's push-compensation path,
+    /// pull compensation off (the cover fill carries it), and connectors
+    /// that would cross a hole routed along the hole's edge.
+    private static func tatami(shape: VectorShape, parameters: StitchGenerationParameters, angleOffsets: [Double]) -> [[Point2D]] {
+        guard let outer = shape.subPaths.first, outer.points.count >= 3 else { return [] }
+        let coverAngle = parameters.fillAngleDegrees ?? FillAngleSelector.selectAngle(for: shape)
+
+        var underlayParameters = parameters
+        underlayParameters.fillSpacingMM = max(parameters.tatamiUnderlaySpacingMM, 1.0)
+        underlayParameters.stitchLengthMM = max(parameters.underlayStitchLengthMM, 2.0)
+        underlayParameters.fillPattern = .rows
+        underlayParameters.pullCompensationMM = 0
+        underlayParameters.pushCompensationMM = 2 * max(parameters.underlayInsetMM, 0)
+        underlayParameters.underlayType = UnderlayType.none
+        underlayParameters.secondUnderlayType = UnderlayType.none
+
+        var runs: [[Point2D]] = []
+        for offset in angleOffsets {
+            underlayParameters.fillAngleDegrees = coverAngle + offset
+            runs.append(contentsOf: TatamiFillGenerator.generateRuns(for: shape, parameters: underlayParameters, breakThresholdMM: DigitizePipeline.defaultMaxJumpWithoutTrimMM, routeConnectorsAlongEdges: true))
+        }
+        // The row nearest an edge that runs parallel to it can sit closer
+        // than the margin (rows start half a spacing in from the bounding
+        // box and just keep going); drop any run that hugs the outer
+        // boundary that closely along its whole length. Routed travel
+        // and row ends are already held in by the push compensation and
+        // the routing inset.
+        let margin = max(parameters.underlayInsetMM, 0) * 0.9
+        guard margin > 0 else { return runs }
+        return runs.filter { run in
+            let samples = stride(from: 0, to: run.count, by: max(1, run.count / 8)).map { run[$0] }
+            return !samples.allSatisfy { distanceToBoundary($0, polygon: outer.points) < margin }
+        }
+    }
+
+    private static func distanceToBoundary(_ p: Point2D, polygon: [Point2D]) -> Double {
+        let n = polygon.count
+        var best = Double.infinity
+        for i in 0..<n {
+            let a = polygon[i], b = polygon[(i + 1) % n]
+            let dx = b.x - a.x, dy = b.y - a.y
+            let len2 = dx * dx + dy * dy
+            let t = len2 > 0 ? max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0
+            best = min(best, p.distance(to: Point2D(a.x + dx * t, a.y + dy * t)))
+        }
+        return best
     }
 
     /// A running stitch along a satin column's centerline (the average of

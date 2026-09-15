@@ -270,7 +270,7 @@ public enum DigitizePipeline {
                 return base + base.reversed() + base
             }]
         case .tatamiFill:
-            let underlay = UnderlayGenerator.generate(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
+            let layers = UnderlayGenerator.generateLayers(for: object.shape, stitchType: .tatamiFill, parameters: object.parameters)
             let fillRuns = TatamiFillGenerator.generateRuns(for: object.shape, parameters: object.parameters, breakThresholdMM: breakThresholdMM)
             // Edge-run underlay (the default for fill) traces a *closed*
             // loop, so its start/end point is arbitrary -- any point along
@@ -286,13 +286,30 @@ public enum DigitizePipeline {
             // Only safe for a genuinely closed-loop underlay (edge-run,
             // fill's default) -- centerRun/zigzag are open paths whose
             // endpoints are physically meaningful, not arbitrary.
-            let effectiveUnderlay = object.parameters.underlayType ?? .edgeRun
-            let alignedUnderlay = effectiveUnderlay == .edgeRun
-                ? rotateClosedLoopToEndNear(underlay, target: fillRuns.first?.first)
-                : underlay
-            guard !fillRuns.isEmpty else { return alignedUnderlay.isEmpty ? [] : [alignedUnderlay] }
-            var runs = fillRuns
-            runs[0] = alignedUnderlay + runs[0]
+            // With a second layer (a tatami underlay over the edge run --
+            // see `UnderlayGenerator.plan`), the loop is seamed next to
+            // that layer's own start instead, and the second layer then
+            // leads into the fill.
+            // A tatami underlay layer can itself arrive as several runs
+            // (chains on either side of a hole); those boundaries stay
+            // real boundaries (trim+jump) rather than being stitched
+            // across the hole. Each layer's first run continues the run
+            // before it.
+            // Each following run is joined onto the previous one only if
+            // the connector between them is short and stays inside the
+            // shape (a hole counts as outside); otherwise it starts a new
+            // run, exactly as the fill's own chains do.
+            let polygons = object.shape.subPaths.map { $0.points }
+            var runs: [[Point2D]] = []
+            for (index, layer) in layers.enumerated() {
+                let nextStart = index + 1 < layers.count ? layers[index + 1].runs.first?.first : fillRuns.first?.first
+                var layerRuns = layer.runs
+                if layer.type == .edgeRun, let loop = layerRuns.first {
+                    layerRuns[0] = rotateClosedLoopToEndNear(loop, target: nextStart)
+                }
+                for run in layerRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM) }
+            }
+            for run in fillRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM) }
             return runs
         case .satin:
             // Spec: "automatically divide or convert excessively wide satin
@@ -381,6 +398,40 @@ public enum DigitizePipeline {
                 let fill = TatamiFillGenerator.generate(for: object.shape, parameters: object.parameters)
                 return [fillUnderlay + fill]
             }
+        }
+    }
+
+    /// Appends `run` to the last run in `runs` when the connector from
+    /// that run's end to this run's start is short enough to sew as a
+    /// plain stitch AND stays inside the shape (so it's later covered);
+    /// otherwise `run` becomes a new run -- a trim+jump in
+    /// `flattenWithColors`. Mirrors `TatamiFillGenerator.generateRuns`'
+    /// own chain-joining rule, applied here across underlay layers and
+    /// into the fill.
+    private static func appendJoiningIfCovered(_ run: [Point2D], to runs: inout [[Point2D]], polygons: [[Point2D]], breakThresholdMM: Double) {
+        guard !run.isEmpty else { return }
+        guard let last = runs.last?.last, let first = run.first else { runs.append(run); return }
+        let length = last.distance(to: first)
+        let sampleCount = 5
+        var inside = true
+        if length > 1.0 {
+            for step in 1...sampleCount {
+                let t = Double(step) / Double(sampleCount + 1)
+                let sample = Point2D(last.x + (first.x - last.x) * t, last.y + (first.y - last.y) * t)
+                if !PolygonGeometry.pointInPolygons(sample, polygons: polygons) { inside = false; break }
+            }
+        }
+        if length <= breakThresholdMM, inside {
+            runs[runs.count - 1].append(contentsOf: run)
+        } else if let route = TatamiFillGenerator.routeAlongBoundary(from: last, to: first, polygons: polygons, insetMM: 1.0),
+                  PolygonGeometry.pathLength(route) <= 120 {
+            // Travel along the crossed edge instead of a trim -- this
+            // join precedes the cover fill, so the travel is covered.
+            let sampled = TatamiFillGenerator.sampleKeepingVertices(route, stitchLengthMM: 2.0)
+            runs[runs.count - 1].append(contentsOf: sampled.dropFirst().dropLast())
+            runs[runs.count - 1].append(contentsOf: run)
+        } else {
+            runs.append(run)
         }
     }
 

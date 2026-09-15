@@ -19,7 +19,7 @@ export interface ThreadColor {
 
 export type StitchType = "runningStitch" | "tripleRun" | "satin" | "tatamiFill";
 export type FillPattern = "rows" | "crossHatch" | "basketWeave";
-export type UnderlayType = "none" | "centerRun" | "edgeRun" | "zigzag";
+export type UnderlayType = "none" | "centerRun" | "edgeRun" | "zigzag" | "tatami" | "doubleTatami";
 export type FabricType =
   | "standard" | "stableWoven" | "knit" | "stretchKnit" | "terry" | "leatherOrVinyl"
   | "structuredCap" | "unstructuredCap" | "beanie";
