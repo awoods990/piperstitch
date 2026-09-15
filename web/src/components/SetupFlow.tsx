@@ -4,10 +4,10 @@
 // user sees comes from their own answers, not unconfirmed defaults.
 
 import { useMemo, useState } from "react";
+import { THREAD_WEIGHTS, type ThreadWeight } from "../types";
 import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType } from "../types";
 import { approx, cm } from "../format";
 
-export type ThreadWeight = "standard" | "fine";
 
 export interface SetupAnswers {
   placement: CatalogSize | "custom" | null;
@@ -264,15 +264,15 @@ export default function SetupFlow(props: Props) {
                     : "Off: keeps the exact colours detected in your file. Turn this on to snap them to real thread colours you can actually stitch with."}
               </div>
               <div className="choices two">
-                <Choice title="Standard (40wt)" subtitle="the usual weight — works for almost everything" selected={a.threadWeight === "standard"}
-                  onClick={() => setA({ ...a, threadWeight: "standard" })} />
-                <Choice title="Fine (60wt)" subtitle="thinner thread — small lettering, delicate detail" selected={a.threadWeight === "fine"}
-                  onClick={() => setA({ ...a, threadWeight: "fine" })} />
+                {THREAD_WEIGHTS.map((w) => (
+                  <Choice key={w.id} title={w.title} subtitle={w.subtitle} selected={a.threadWeight === w.id}
+                    onClick={() => setA({ ...a, threadWeight: w.id })} />
+                ))}
               </div>
               <div className="hint">
-                {a.threadWeight === "fine"
-                  ? "Fine thread sews best a bit denser than standard 40wt — density starts tighter for this design. You can still adjust it by hand afterward."
-                  : "40wt is what most digitizing assumes by default and what the density settings below are tuned for. Switch to Fine only if you're actually sewing with 60wt thread."}
+                {a.threadWeight === "wt40"
+                  ? "40 wt is what every density setting is tuned for. Pick another weight only if that's really what's on the machine."
+                  : "Every satin density and fill spacing is offset for this thread (thinner sews tighter, thicker wider) while the numbers you see stay 40 wt numbers. Change it later in the Density panel."}
               </div>
               <div className="summary">
                 {placementName} · {cm(a.widthMM)} × {cm(a.heightMM)} cm · {hoopName} · {fabricName} · {isVector ? "artwork colours" : PRESET_LABELS[a.colorPreset][0]}

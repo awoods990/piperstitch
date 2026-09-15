@@ -1243,6 +1243,19 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The design's thread weight (C3) -- written onto every object, like
+    /// the fabric; read from the first object.
+    var threadWeight: ThreadWeight {
+        get { document?.objects.first?.parameters.threadWeight ?? .wt40 }
+        set {
+            guard var current = document, threadWeight != newValue else { return }
+            commitImmediateUndoSnapshot()
+            for i in current.objects.indices { current.objects[i].parameters.threadWeight = newValue }
+            document = current
+            scheduleLiveRegenerate()
+        }
+    }
+
     /// `StitchDocument.laydown` for the Laydown section (C1): nil for
     /// none. Setting it re-digitizes; the laydown is generated from the
     /// current objects at flatten time, so it follows every edit.

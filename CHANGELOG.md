@@ -4,6 +4,39 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Changed: locks on every trim, chord-gap runs, thread weight, tatami jitter, short buried travel (B2, B3, B5, B6, C3)
+
+- **Tie-in and tie-off around every trim** (B2). Lock stitches were only
+  applied at colour-block boundaries, so every same-colour trim (the
+  3 mm visible-connector rule, a fill broken at a wide hole) left a cut
+  thread end with nothing holding it. `DigitizePipeline` now flattens
+  runs into segments, decides each trim once, and locks both sides of
+  it; a continuous same-colour thread still gets no lock in the middle.
+  The tie-off now steps *back* along the last stitch and returns
+  ("up-and-back on the last line") instead of overshooting past the end
+  — the overshoot landed in the hole when a run ended at one.
+- **Chord-gap running stitch** (B5, `RunningStitchGenerator`). A stitch
+  that would cut a curve by more than 0.1 mm now ends on the vertex
+  that deviates most (a corner gets a penetration exactly on it) or
+  halves, never below a 1 mm floor; straight runs keep the full length.
+  Outlines, edge-run underlay and buried travel all follow curves
+  properly; detail-heavy designs gain stitches (Sarasota 1993 → 2899,
+  including the new locks).
+- **Thread weight** (C3, `ThreadWeight` on every object's parameters):
+  30 / 40 / 60 / 80 wt offset every satin density and fill row spacing
+  by +0.03 / 0 / −0.03 / −0.06 mm at generation time (Wilcom's table),
+  so the numbers on screen stay 40 wt numbers. Chosen on the setup
+  flow's colours step (replacing the web app's old "fine = 0.25 mm"
+  shortcut) and in the Density panel of both apps.
+- **Tatami row jitter** (B6, `fillJitterFraction`, default 0.15): each
+  interior penetration shifts by a deterministic pseudo-random amount
+  of up to ±15 % of the stitch length; row ends stay exact. Breaks up
+  the faint diagonal a regular stagger shows on a large flat fill.
+- **Buried travel sews 2 mm stitches** (B3) instead of the object's
+  3 mm, so it stays under the cover and follows curves.
+- Tests: `StitchQualityRulesTests` (4), updated tie-stitch tests — 380
+  pass.
+
 ## Added: laydown stitch for napped fabrics (C1); covered travel can dog-leg
 
 - **Laydown** (`LaydownSettings` on the document, `LaydownGenerator`):

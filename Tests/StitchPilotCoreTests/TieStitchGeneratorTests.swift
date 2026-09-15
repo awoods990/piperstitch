@@ -32,13 +32,16 @@ struct TieStitchGeneratorTests {
         }
     }
 
-    @Test func tieOffAppendsOvershootThenReturn() {
+    @Test func tieOffStepsBackThenReturns() {
         let points = [Point2D(0, 0), Point2D(10, 0), Point2D(20, 0)]
         let result = TieStitchGenerator.applyTieOff(to: points)
         #expect(result.count == points.count + 2)
         #expect(Array(result.prefix(3)) == points)
         #expect(result.last == Point2D(20, 0)) // returns to the true endpoint
-        #expect(result[3].x > 20) // overshoots past the endpoint first
+        // Steps back along the last stitch (inside what was sewn), never
+        // past the end -- a run ending at a hole would otherwise lock
+        // into the hole.
+        #expect(result[3].x < 20 && result[3].x > 19)
     }
 
     @Test func tooFewPointsIsANoOp() {
@@ -53,12 +56,14 @@ struct TieStitchGeneratorTests {
     }
 
     @Test func onlyRunBoundariesGetTieStitchesInDigitizePipeline() throws {
-        // Two same-color, congruent objects sewn back to back share one
-        // thread run: exactly one tie-in (at the very start) and one
-        // tie-off (at the very end) for the whole run, not one pair per
-        // object -- so total stitches should be 2x one object's *raw*
-        // count plus the 4 tie stitches (2 tie-in + 2 tie-off) exactly
-        // once, not twice.
+        // Two same-color, congruent objects sewn back to back over a
+        // short jump share one thread: exactly one tie-in (at the very
+        // start) and one tie-off (at the very end) for the whole run, not
+        // one pair per object -- so total stitches should be 2x one
+        // object's *raw* count plus the 4 tie stitches (2 tie-in + 2
+        // tie-off) exactly once, not twice. Sewn far enough apart to be
+        // trimmed (the 3 mm visible-connector rule), the cut thread is
+        // locked on both sides of the trim too: two pairs.
         let color = ThreadColor.generic(RGBColor(hex: 0xFF0000))
         func makeObject(offsetX: Double) -> EmbroideryObject {
             let shape = VectorShape(subPaths: [SubPath(points: [Point2D(offsetX, 0), Point2D(offsetX + 10, 0)], closed: false)])
@@ -70,10 +75,16 @@ struct TieStitchGeneratorTests {
         let rawPerObject = withOneObject.stitchCount - 4 // subtract this object's own tie-in(2) + tie-off(2)
 
         let twoObjectDoc = StitchDocument(name: "Two", physicalWidthMM: 30, physicalHeightMM: 10,
-                                           objects: [makeObject(offsetX: 0), makeObject(offsetX: 20)])
+                                           objects: [makeObject(offsetX: 0), makeObject(offsetX: 12)])
         let withTwoObjects = try DigitizePipeline.flatten(twoObjectDoc)
-
+        #expect(withTwoObjects.trimCount == 1)
         #expect(withTwoObjects.stitchCount == rawPerObject * 2 + 4)
+
+        let farDoc = StitchDocument(name: "Far", physicalWidthMM: 40, physicalHeightMM: 10,
+                                    objects: [makeObject(offsetX: 0), makeObject(offsetX: 25)])
+        let far = try DigitizePipeline.flatten(farDoc)
+        #expect(far.trimCount == 2)
+        #expect(far.stitchCount == rawPerObject * 2 + 8, "a same-colour trim is locked on both sides")
     }
 
     @Test func colorChangeGetsTieOffBeforeAndTieInAfter() throws {

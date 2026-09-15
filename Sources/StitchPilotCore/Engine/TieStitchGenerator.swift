@@ -36,14 +36,18 @@ public enum TieStitchGenerator {
         return [start, forward] + points
     }
 
-    /// Appends a tie-off to `points`.
+    /// Appends a tie-off to `points`: back along the last stitch and
+    /// return to the end ("up-and-back on the last line", docs/
+    /// WILCOM_MANUAL_REVIEW.md B2). Going *back* keeps the lock inside
+    /// the stitching already sewn; overshooting forward instead put it
+    /// past the edge -- into a hole, when the run ended at one.
     public static func applyTieOff(to points: [Point2D]) -> [Point2D] {
         guard points.count >= 2 else { return points }
         let end = points[points.count - 1]
         let previous = points[points.count - 2]
         guard let dir = normalized(end, minus: previous) else { return points }
-        let overshoot = Point2D(end.x + dir.x * lockStitchLengthMM, end.y + dir.y * lockStitchLengthMM)
-        return points + [overshoot, end]
+        let back = Point2D(end.x - dir.x * lockStitchLengthMM, end.y - dir.y * lockStitchLengthMM)
+        return points + [back, end]
     }
 
     private static func normalized(_ a: Point2D, minus b: Point2D) -> Point2D? {

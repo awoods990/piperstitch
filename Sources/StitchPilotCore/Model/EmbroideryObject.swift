@@ -296,6 +296,20 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
     /// explicitly.
     public var fabricType: FabricType = .standard
 
+    /// The thread's weight -- docs/WILCOM_MANUAL_REVIEW.md C3. A thicker
+    /// thread covers with wider spacing, a thinner one needs tighter:
+    /// `ThreadWeight.spacingOffsetMM` is added to every satin density
+    /// and fill row spacing at generation time, so the digitized numbers
+    /// stay "40 wt" numbers and the weight is one setting for the design.
+    public var threadWeight: ThreadWeight = .wt40
+
+    /// Random shift of each tatami row's interior penetrations, as a
+    /// fraction of the stitch length (docs/WILCOM_MANUAL_REVIEW.md B6,
+    /// Wilcom's "random factor"): breaks up the faint diagonal a
+    /// perfectly regular stagger shows on a large flat fill. Row ends
+    /// stay exact. 0 = off.
+    public var fillJitterFraction: Double = 0.15
+
     /// Opts a shape into `SatinColumnGenerator.canRepresentAsBranchingSatinColumn`/
     /// `generateBranching` — decomposing a genuinely branching outline (a
     /// letter like "A," "B," "R," "H") into stroke segments and rail-
@@ -321,6 +335,7 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         case underlayType, underlayStitchLengthMM, underlayInsetMM, zigzagUnderlaySpacingMM, zigzagUnderlayWidthThresholdMM
         case secondUnderlayType, tatamiUnderlaySpacingMM
         case pullCompensationMM, pushCompensationMM, fabricType, allowBranchingSatin
+        case threadWeight, fillJitterFraction
     }
 
     /// A field added here with a non-`Optional` type and a default value
@@ -365,6 +380,39 @@ public struct StitchGenerationParameters: Codable, Hashable, Sendable {
         pushCompensationMM = try c.decodeIfPresent(Double.self, forKey: .pushCompensationMM)
         fabricType = try c.decodeIfPresent(FabricType.self, forKey: .fabricType) ?? defaults.fabricType
         allowBranchingSatin = try c.decodeIfPresent(Bool.self, forKey: .allowBranchingSatin) ?? defaults.allowBranchingSatin
+        threadWeight = try c.decodeIfPresent(ThreadWeight.self, forKey: .threadWeight) ?? defaults.threadWeight
+        fillJitterFraction = try c.decodeIfPresent(Double.self, forKey: .fillJitterFraction) ?? defaults.fillJitterFraction
+    }
+
+    /// `satinDensityMM` adjusted for the thread weight.
+    public var effectiveSatinDensityMM: Double { max(0.1, satinDensityMM + threadWeight.spacingOffsetMM) }
+    /// `fillSpacingMM` adjusted for the thread weight.
+    public var effectiveFillSpacingMM: Double { max(0.05, fillSpacingMM + threadWeight.spacingOffsetMM) }
+}
+
+/// Embroidery thread weight (the usual "wt" numbering: higher is
+/// thinner). Wilcom's spacing offsets by thread thickness, 40 wt being
+/// the reference every density in this engine is tuned for.
+public enum ThreadWeight: String, Codable, Sendable, CaseIterable {
+    case wt30, wt40, wt60, wt80
+
+    public var displayName: String {
+        switch self {
+        case .wt30: return "Heavy (30 wt)"
+        case .wt40: return "Standard (40 wt)"
+        case .wt60: return "Fine (60 wt)"
+        case .wt80: return "Very fine (80 wt)"
+        }
+    }
+
+    /// Added to satin density and fill row spacing (mm).
+    public var spacingOffsetMM: Double {
+        switch self {
+        case .wt30: return 0.03
+        case .wt40: return 0
+        case .wt60: return -0.03
+        case .wt80: return -0.06
+        }
     }
 }
 

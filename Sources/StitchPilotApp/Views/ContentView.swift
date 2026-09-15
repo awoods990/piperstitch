@@ -664,6 +664,11 @@ private struct InspectorView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
+                    Picker("Thread Weight", selection: Binding(get: { app.threadWeight }, set: { app.threadWeight = $0 })) {
+                        ForEach(ThreadWeight.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .help("Thinner thread needs tighter spacing to cover, thicker thread wider. The offset is applied at generation time to every satin density and fill spacing, so the numbers below stay 40 wt numbers.")
+                    .disabled(app.document == nil)
                     globalDensitySlider("Satin Density", value: $app.globalSatinDensityMM, extendedFloorCM: 0.01)
                     globalDensitySlider("Fill Row Spacing", value: $app.globalFillSpacingMM, extendedFloorCM: 0.005)
                     Text("Applies to every satin or fill object in the project at once. Select an individual object above to fine-tune just that one.")

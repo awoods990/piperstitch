@@ -112,76 +112,54 @@ public enum DigitizePipeline {
             colors.append(entry.color)
         }
 
-        var commands: [StitchCommand] = []
-        var previousColor: ThreadColor?
-
-        for (index, entry) in generated.enumerated() {
-            guard !entry.runs.isEmpty, !entry.runs[0].isEmpty else { continue }
-            let isFirstInRun = index == 0 || generated[index - 1].color.rgb != entry.color.rgb
-            let isLastInRun = index == generated.count - 1 || generated[index + 1].color.rgb != entry.color.rgb
-
-            var objectRuns = entry.runs
-            // Tie-in/tie-off (spec §27): anchor the thread at the start and
-            // end of each color engagement, not every individual object —
-            // same-color objects sewn back to back share one continuous
-            // thread with nothing to re-anchor between them. An object with
-            // more than one internal run (a tatami fill broken at a wide
-            // hole-crossing connector — see `TatamiFillGenerator.
-            // generateRuns`) still anchors only at its true first/last
-            // stitch, not at every internal run boundary.
-            if isFirstInRun { objectRuns[0] = TieStitchGenerator.applyTieIn(to: objectRuns[0]) }
-            if isLastInRun {
-                let lastIndex = objectRuns.count - 1
-                objectRuns[lastIndex] = TieStitchGenerator.applyTieOff(to: objectRuns[lastIndex])
+        // Every run of every object, in sewing order, with whether the
+        // generator itself demanded a break before it (a tatami fill's
+        // two sides of a wide hole -- see `TatamiFillGenerator.
+        // generateRuns`): that boundary is always a trim, however short.
+        var segments: [(color: ThreadColor, points: [Point2D], forcedBreak: Bool)] = []
+        for entry in generated {
+            for (runIndex, run) in entry.runs.enumerated() where !run.isEmpty {
+                segments.append((entry.color, run, runIndex > 0))
             }
+        }
 
-            if let prev = previousColor, !commands.isEmpty {
-                if prev.rgb != entry.color.rgb {
+        // A trim happens before a segment at a colour change, at a
+        // generator break, or when the same-colour jump into it is longer
+        // than `maxJumpWithoutTrimMM`. Tie-in/tie-off (spec §27, docs/
+        // WILCOM_MANUAL_REVIEW.md B2) anchor the thread on *both* sides of
+        // every trim and at the design's ends -- never between two
+        // same-colour segments that share one continuous thread. (They
+        // used to be applied only at colour-block boundaries, which left
+        // every same-colour trim unlocked: a cut thread end with nothing
+        // holding it.)
+        func trimBefore(_ i: Int) -> Bool {
+            guard i > 0 else { return false }
+            let previous = segments[i - 1], current = segments[i]
+            if previous.color.rgb != current.color.rgb || current.forcedBreak { return true }
+            return previous.points[previous.points.count - 1].distance(to: current.points[0]) > maxJumpWithoutTrimMM
+        }
+
+        var commands: [StitchCommand] = []
+        for i in segments.indices {
+            let cutBefore = trimBefore(i)
+            let cutAfter = i == segments.count - 1 || trimBefore(i + 1)
+            var points = segments[i].points
+            if i == 0 || cutBefore { points = TieStitchGenerator.applyTieIn(to: points) }
+            if cutAfter { points = TieStitchGenerator.applyTieOff(to: points) }
+
+            if i > 0 {
+                if segments[i - 1].color.rgb != segments[i].color.rgb {
                     commands.append(.trim)
                     commands.append(.colorChange)
-                } else {
-                    let jumpDistance = commands.last?.point?.distance(to: objectRuns[0][0]) ?? 0
-                    if jumpDistance > maxJumpWithoutTrimMM {
-                        commands.append(.trim)
-                    }
-                    commands.append(.jump(objectRuns[0][0]))
-                }
-            }
-
-            for (runIndex, runPoints) in objectRuns.enumerated() {
-                if runIndex > 0 {
-                    // A break the generator deliberately introduced because
-                    // this connector was too long to sew as a plain stitch
-                    // (e.g. a tatami fill's two sides of a wide hole) —
-                    // cut the thread and jump rather than bridging it,
-                    // mirroring how a same-color gap between two separate
-                    // objects is handled above.
+                } else if cutBefore {
                     commands.append(.trim)
-                    commands.append(.jump(runPoints[0]))
-                }
-                for (i, p) in runPoints.enumerated() {
-                    if i == 0, case .jump = commands.last {
-                        continue // the jump just above already targets this point
-                    }
-                    if i == 0, commands.isEmpty {
-                        // Move to the design's first stitch location -- and,
-                        // same as the `case .jump = commands.last` branch
-                        // above, that jump already targets this exact
-                        // point, so the loop must not also re-stitch it:
-                        // without this `continue`, the design's very first
-                        // command pair was `.jump(p)` immediately followed
-                        // by `.stitch(p)` at that identical coordinate — a
-                        // genuine zero-length stitch, on every single
-                        // design, that no edit could ever clear because
-                        // it was never caused by the design. See
-                        // CHANGELOG.md.
-                        commands.append(.jump(p))
-                        continue
-                    }
-                    commands.append(.stitch(p))
                 }
             }
-            previousColor = entry.color
+            // Move to the segment's first point without sewing; that
+            // point is then not re-stitched (it would be a genuine
+            // zero-length stitch on every design -- see CHANGELOG.md).
+            commands.append(.jump(points[0]))
+            for p in points.dropFirst() { commands.append(.stitch(p)) }
         }
 
         commands.append(.trim)

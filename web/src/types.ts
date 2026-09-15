@@ -44,8 +44,20 @@ export interface StitchGenerationParameters {
   pullCompensationMM?: number | null;
   pushCompensationMM?: number | null;
   fabricType: FabricType;
+  /** Thread weight; the engine offsets satin density and fill spacing by it (40 wt is the reference). */
+  threadWeight?: ThreadWeight;
+  /** Random shift of tatami interior penetrations as a fraction of stitch length (0 = off). */
+  fillJitterFraction?: number;
   [key: string]: unknown;
 }
+
+export type ThreadWeight = "wt30" | "wt40" | "wt60" | "wt80";
+export const THREAD_WEIGHTS: { id: ThreadWeight; title: string; subtitle: string }[] = [
+  { id: "wt40", title: "Standard (40 wt)", subtitle: "the usual weight — works for almost everything" },
+  { id: "wt60", title: "Fine (60 wt)", subtitle: "thinner thread — small lettering, delicate detail" },
+  { id: "wt30", title: "Heavy (30 wt)", subtitle: "thicker thread — bold, textured work" },
+  { id: "wt80", title: "Very fine (80 wt)", subtitle: "micro lettering; spacing tightens most" },
+];
 
 export interface EmbroideryObject {
   id: string;

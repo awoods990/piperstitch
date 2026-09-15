@@ -5,7 +5,8 @@
 // App re-digitize; only merge needs the server.
 
 import { useEffect, useState } from "react";
-import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, FillPattern, LaydownSettings, StitchDocument, StitchType, ThreadColor, UnderlayType } from "../types";
+import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, FillPattern, LaydownSettings, StitchDocument, StitchType, ThreadColor, ThreadWeight, UnderlayType } from "../types";
+import { THREAD_WEIGHTS } from "../types";
 import { cm, inches, formatRunTime } from "../format";
 import { PRESET_LABELS } from "./SetupFlow";
 import { rgbCSS } from "../prefs";
@@ -42,6 +43,7 @@ export interface InspectorProps {
   onTargetStitchCount: (target: number) => void;
   onStartAtCenter: (on: boolean) => void;
   onLaydown: (laydown: LaydownSettings | null) => void;
+  onThreadWeight: (weight: ThreadWeight) => void;
 }
 
 /** The default laydown: white 40wt, 2 mm margin, two open layers. */
@@ -207,6 +209,11 @@ function DensitySection({ p }: { p: InspectorProps }) {
   return (
     <section className="panel">
       <h3>Density (entire project)</h3>
+      <label className="row" title="Thinner thread needs tighter spacing to cover, thicker thread wider. The offset is applied at generation time to every satin density and fill spacing, so the numbers below stay 40 wt numbers.">Thread weight
+        <select value={p.document.objects[0]?.parameters.threadWeight ?? "wt40"} onChange={(e) => p.onThreadWeight(e.target.value as ThreadWeight)}>
+          {THREAD_WEIGHTS.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
+        </select>
+      </label>
       <label className="check" title="Unlocks the sliders down to the engine's hard floor (0.1 mm satin, 0.05 mm fill) — tighter than most machines and thread handle reliably.">
         <input type="checkbox" checked={p.allowExtendedDensity} onChange={(e) => p.onExtendedDensity(e.target.checked)} /> Push past normal limits
       </label>

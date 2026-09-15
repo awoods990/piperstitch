@@ -612,7 +612,7 @@ public enum SatinColumnGenerator {
         // regardless).
         let isClosedRing = railA.count > 1 && railA.first == railA.last
 
-        let density = max(parameters.satinDensityMM, 0.1)
+        let density = parameters.effectiveSatinDensityMM
         // `approxLength` (the real, unweighted path length) still drives
         // push compensation below -- that's a physical-length quantity,
         // not something that should shift with how curvy the column
@@ -1313,7 +1313,7 @@ public enum SatinColumnGenerator {
         guard boundary.count >= 3 else { return nil }
         boundary.append(boundary[0])
 
-        let density = max(parameters.satinDensityMM, 0.1)
+        let density = parameters.effectiveSatinDensityMM
         let perimeter = PolygonGeometry.pathLength(boundary)
         guard perimeter > 0 else { return nil }
         let spokeCount = max(6, Int((perimeter / density).rounded()))
@@ -1657,7 +1657,7 @@ public enum SatinColumnGenerator {
     /// a segment's rails come from the local perpendicular at each
     /// centerline sample, which can't do that).
     private static func computeSegmentCrossings(railA: [Point2D], railB: [Point2D], parameters: StitchGenerationParameters) -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double], mitre: [Bool])? {
-        let density = max(parameters.satinDensityMM, 0.1)
+        let density = parameters.effectiveSatinDensityMM
         let length = max(PolygonGeometry.pathLength(railA), PolygonGeometry.pathLength(railB))
         guard length > 0 else { return nil }
         // Curvature-weighted, matching `computeCrossings`' own reasoning

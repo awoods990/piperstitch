@@ -58,6 +58,7 @@ public enum HiddenTravelRouter {
     /// object sewn nearby) — bounding the search keeps this an O(n) pass
     /// per gap instead of unbounded, without giving up realistic coverage.
     private static let maxLookaheadObjects = 40
+    public static let buriedTravelStitchLengthMM = 2.0
 
     public static func bridgeSameColorGaps(_ items: [(object: EmbroideryObject, runs: [[Point2D]])], thresholdMM: Double) -> [(object: EmbroideryObject, runs: [[Point2D]])] {
         guard items.count > 1 else { return items }
@@ -73,7 +74,9 @@ public enum HiddenTravelRouter {
             let lookaheadEnd = min(result.count, i + maxLookaheadObjects)
             guard firstCoveringObjectIndex(from: exit, to: entry, in: result[i..<lookaheadEnd]) != nil else { continue }
 
-            let stitchLength = max(next.object.parameters.stitchLengthMM, 0.3)
+            // Buried travel uses a short stitch (docs/WILCOM_MANUAL_REVIEW.md
+            // B3: 1-3 mm) so it stays under the cover and follows curves.
+            let stitchLength = max(min(next.object.parameters.stitchLengthMM, buriedTravelStitchLengthMM), 0.3)
             let bridge = RunningStitchGenerator.generate(
                 for: SubPath(points: [exit, entry], closed: false),
                 stitchLengthMM: stitchLength,

@@ -112,7 +112,7 @@ public enum TatamiFillGenerator {
             for poly in rotatedPolygons { box = box.union(BoundingBox(points: poly)) }
         }
 
-        let spacing = max(parameters.fillSpacingMM, 0.05)
+        let spacing = parameters.effectiveFillSpacingMM
         let stitchLength = max(parameters.stitchLengthMM, 0.3)
         let stagger = parameters.fillRowStaggerMM
 
@@ -194,7 +194,8 @@ public enum TatamiFillGenerator {
             var chainPoints: [Point2D] = []
             for run in chain {
                 let phase = (Double(run.rowIndex) * stagger).truncatingRemainder(dividingBy: stitchLength)
-                var points = resampleRun(y: run.y, xStart: run.start, xEnd: run.end, stitchLength: stitchLength, phase: phase)
+                var points = resampleRun(y: run.y, xStart: run.start, xEnd: run.end, stitchLength: stitchLength, phase: phase,
+                                         jitterFraction: parameters.fillJitterFraction, seed: run.rowIndex)
                 // Boustrophedon: alternate direction by each run's own
                 // *absolute* row index (not its position within whatever
                 // chain/segment it ended up in after splicing), so
@@ -747,7 +748,12 @@ public enum TatamiFillGenerator {
     /// criss-cross pattern initially suspected to be caused by this turned
     /// out, on direct inspection, to be the ordinary tie-in/tie-off anchor
     /// stitches — see CHANGELOG.md).
-    private static func resampleRun(y: Double, xStart: Double, xEnd: Double, stitchLength: Double, phase: Double) -> [Point2D] {
+    /// `jitterFraction` shifts each interior penetration by a
+    /// deterministic pseudo-random amount of up to ±that fraction of the
+    /// stitch length (B6), keyed on the row and the stitch so the same
+    /// shape always sews the same way; both row ends stay exact.
+    private static func resampleRun(y: Double, xStart: Double, xEnd: Double, stitchLength: Double, phase: Double,
+                                    jitterFraction: Double = 0, seed: Int = 0) -> [Point2D] {
         var points: [Point2D] = [Point2D(xStart, y)]
         let firstOffset = phase > 0 ? phase : stitchLength
         let firstInterior = xStart + firstOffset
@@ -758,8 +764,16 @@ public enum TatamiFillGenerator {
         let remaining = xEnd - firstInterior
         let stepCount = max(1, Int((remaining / stitchLength).rounded()))
         let step = remaining / Double(stepCount)
+        let jitter = min(max(jitterFraction, 0), 0.4) * stitchLength
         for i in 0...stepCount {
-            points.append(Point2D(firstInterior + step * Double(i), y))
+            var x = firstInterior + step * Double(i)
+            if jitter > 0, i < stepCount {
+                // The band is under half a step, so neighbours never swap;
+                // only keep the point off the row's own ends.
+                let shift = (SatinSpacing.hash01(seed &* 7919 &+ Int(xStart * 10), i) * 2 - 1) * jitter
+                x = min(xEnd - 0.05, max(xStart + 0.05, x + shift))
+            }
+            points.append(Point2D(x, y))
         }
         return points
     }
