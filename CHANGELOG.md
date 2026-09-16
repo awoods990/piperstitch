@@ -4,6 +4,15 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: `POST /api/v1/internal/build-from-artwork` on the app server (for PiperStitch Proofs)
+
+- Import + build in one key-guarded call (RGBA pixels or SVG text in the
+  body; name, finished width, optional height, max colours and fabric in
+  the query) returning the `StitchDocument`, so Proofs can turn a
+  customer's artwork into a first-pass project in the shop's account the
+  moment it arrives. Same two steps the web app runs interactively; no
+  other Core change.
+
 ## Added: `POST /api/v1/internal/export/{format}` on the app server (for PiperStitch Proofs)
 
 - A key-guarded, server-to-server twin of the signed-in `export` route,

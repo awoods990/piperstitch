@@ -53,6 +53,47 @@ func routes(_ app: Application) throws {
         response.headers.contentType = HTTPMediaType(type: "application", subType: "octet-stream")
         return response
     }
+    // Server-to-server: PiperStitch Proofs turns a customer's artwork into
+    // a first-pass digitized project in the shop's account the moment it
+    // arrives (import + build in one call, the same two steps the web app
+    // does interactively). Body: RGBA pixels (`kind=raster`, dimensions in
+    // the query) or SVG text (`kind=svg`). Returns the StitchDocument;
+    // Proofs saves it through License Admin's projects API.
+    api.on(.POST, "internal", "build-from-artwork", body: .collect(maxSize: "48mb")) { req -> DocumentResponse in
+        let key = req.application.auth.webAPIKey
+        guard req.application.auth.enabled, !key.isEmpty, req.headers.first(name: "X-API-Key") == key else {
+            throw Abort(.unauthorized, reason: "Invalid API key")
+        }
+        struct Query: Content {
+            var kind: String; var name: String; var widthMM: Double; var heightMM: Double?
+            var width: Int?; var height: Int?; var maxColors: Int?; var fabricType: FabricType?
+        }
+        let q = try req.query.decode(Query.self)
+        guard q.widthMM > 0, var buffer = req.body.data, let bytes = buffer.readBytes(length: buffer.readableBytes), !bytes.isEmpty else {
+            throw Abort(.badRequest, reason: "A finished width and artwork bytes are required.")
+        }
+        let (shapes, fillColors): ([VectorShape], [RGBColor?]) = try await Engine.run {
+            if q.kind == "svg" {
+                let r = try SVGImporter.importShapes(from: Data(bytes))
+                return (r.shapes, r.fillColors)
+            }
+            guard let w = q.width, let h = q.height, w > 1, h > 1, w * h <= 16_000_000, bytes.count == w * h * 4 else {
+                throw Abort(.badRequest, reason: "Raster artwork needs width/height and exactly width*height*4 bytes of RGBA.")
+            }
+            let r = try ImageImporter.importShapes(rgba: bytes, width: w, height: h, maxColors: q.maxColors ?? ColorQuantizationPreset.normalEmbroidery.defaultMaxColors)
+            return (r.shapes, r.fillColors)
+        }
+        var bounds = BoundingBox.empty
+        for shape in shapes { bounds = bounds.union(shape.boundingBox) }
+        guard !bounds.isEmpty, bounds.width > 0, bounds.height > 0 else { throw Abort(.unprocessableEntity, reason: "No usable shapes in the artwork.") }
+        let source = ImportedSource(shapes: shapes, fillColors: fillColors, bounds: bounds, pixelWidth: q.kind == "svg" ? 0 : (q.width ?? 0), pixelHeight: q.kind == "svg" ? 0 : (q.height ?? 0))
+        let heightMM = q.heightMM ?? (q.widthMM * bounds.height / bounds.width)
+        let document = try await Engine.run {
+            DocumentBuilder.build(source: source, name: q.name, widthMM: q.widthMM, heightMM: heightMM,
+                                  matchToThreadLibrary: true, palette: nil, fabricType: q.fabricType ?? .standard)
+        }
+        return DocumentResponse(document: document)
+    }
     let engine = api.grouped(EntitlementGate())
     editRoutes(engine)
 
