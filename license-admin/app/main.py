@@ -189,6 +189,17 @@ class DeviceTokenIn(BaseModel):
 
 class WebEmailIn(BaseModel):
     email: str
+    app: str = "core"      # which app asked: the sign-in email's link goes back there
+
+
+class WebHandoffCreateIn(BaseModel):
+    token: str
+    target: str
+
+
+class WebHandoffRedeemIn(BaseModel):
+    code: str
+    user_agent: str = ""
 
 
 class WebVerifyIn(BaseModel):
@@ -577,7 +588,7 @@ def _require_web_key(x_api_key: Optional[str]) -> None:
 def api_web_signin_request(body: WebEmailIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
     try:
-        return web_access.request_code(email=body.email)
+        return web_access.request_code(email=body.email, app="proofs" if body.app == "proofs" else "core")
     except activation.ActivationError as e:
         return _activation_error(e, status=429 if e.code == "rate_limited" else 400)
 
@@ -587,6 +598,25 @@ def api_web_signin_verify(body: WebVerifyIn, x_api_key: Optional[str] = Header(N
     _require_web_key(x_api_key)
     try:
         session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=400)
+    return {"token": session.token, **web_access.state(token=session.token)}
+
+
+@app.post("/api/web/handoff/create")
+def api_web_handoff_create(body: WebHandoffCreateIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return {"code": web_access.create_handoff(token=body.token, target=body.target)}
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
+
+
+@app.post("/api/web/handoff/redeem")
+def api_web_handoff_redeem(body: WebHandoffRedeemIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        session = web_access.redeem_handoff(code=body.code, user_agent=body.user_agent)
     except activation.ActivationError as e:
         return _activation_error(e, status=400)
     return {"token": session.token, **web_access.state(token=session.token)}

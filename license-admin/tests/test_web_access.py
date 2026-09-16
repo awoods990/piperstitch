@@ -272,3 +272,22 @@ def test_proofs_trial_then_subscription_is_tracked_next_to_the_app(isolated_db, 
     assert listed["proofs_status"] == "active" and listed["proofs_used"] == 3 and listed["sub_status"] == "trialing"
     # The Proofs welcome went out, not the app's.
     assert any("Proofs" in (m["Subject"] or "") for m in fake_smtp.sent)
+
+
+def test_handoff_signs_the_customer_into_the_other_app_once(isolated_db, test_keypair, fake_smtp):
+    a = _sign_in(fake_smtp, email="handoff@example.com")
+    code = web_access.create_handoff(token=a.token, target="proofs")
+    other = web_access.redeem_handoff(code=code, user_agent="proofs")
+    assert other.customer_id == a.customer_id and other.token != a.token
+    assert web_access.state(token=other.token)["email"] == "handoff@example.com"
+    with pytest.raises(activation.ActivationError):
+        web_access.redeem_handoff(code=code)          # single use
+    with pytest.raises(activation.ActivationError):
+        web_access.redeem_handoff(code="nonsense")
+    with pytest.raises(activation.ActivationError):
+        web_access.create_handoff(token=a.token, target="elsewhere")
+    # A Proofs-initiated sign-in email links back to Proofs.
+    fake_smtp.sent.clear()
+    web_access.request_code(email="handoff@example.com", app="proofs")
+    body = fake_smtp.sent[-1].get_body(preferencelist=("plain",)).get_content()
+    assert config.PROOFS_APP_URL + "/signin?email=" in body

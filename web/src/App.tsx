@@ -85,7 +85,16 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const subscribed = params.get("subscribed");
     if (subscribed !== null) window.history.replaceState(null, "", window.location.pathname);
-    api.me(subscribed !== null).then((m) => {
+    // Arriving from PiperStitch Proofs already signed in: ?handoff=<code>
+    // becomes this app's session, no email code needed. Other parameters
+    // (?project=, ?return=) stay for their own handlers.
+    const handoff = params.get("handoff");
+    if (handoff) {
+      params.delete("handoff");
+      window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+    }
+    const load = handoff ? api.redeemHandoff(handoff).catch(() => api.me(true)) : api.me(subscribed !== null);
+    load.then((m) => {
       setMe(m);
       if (m.signedIn) pullPreferences();
       if (subscribed === "1" && m.account?.status === "active") setNotice("You're subscribed — thank you! Everything's unlocked.");
@@ -465,9 +474,13 @@ export default function App() {
   if (me.authEnabled && !me.signedIn) return <SignIn onSignedIn={onSignedIn} proofsURL={me.proofsURL} />;
   if (me.authEnabled && me.account && !me.account.entitled) return <SubscribeWall account={me.account} onSignOut={onSignOut} onRefresh={refreshMe} />;
 
+  const proofs = me.account?.proofs ?? null;
+  const showProofs = !!proofs && (proofs.subscribed || proofs.free_used > 0);
+  const goProofs = () => api.proofsHandoffURL().then((url) => window.location.assign(url)).catch((e) => fail(e));
   const accountMenu = (
     <>
       {returnTo && <a className="btn primary return-to" href={returnTo} title="Save here first; the proof is built from the saved project">← Back to Proofs</a>}
+      {!returnTo && showProofs && <button className="btn primary proofs-btn" onClick={goProofs} title="Open PiperStitch Proofs — already signed in">Proofs ↗</button>}
       {me.authEnabled && me.account ? <AccountMenu account={me.account} onSignOut={onSignOut} /> : null}
     </>
   );

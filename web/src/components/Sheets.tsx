@@ -444,7 +444,7 @@ export function SendSheet({ designName, onClose, onSend }: { designName: string;
 function ProofsPlan({ proofs, go }: { proofs: ProofsState | null; go: (fn: () => Promise<string>) => void }) {
   if (!proofs) return null;
   const dollars = `$${(proofs.price_cents / 100).toFixed(0)}/month`;
-  const open = () => window.open(proofs.url, "_blank", "noopener");
+  const open = () => go(api.proofsHandoffURL);   // already signed in: no second code
   let line: string;
   if (proofs.subscribed) line = proofs.status === "past_due" ? "Subscribed — the last payment didn't go through, please update your card." : `Subscribed · ${dollars}`;
   else if (proofs.free_used === 0) line = `Not started — your first ${proofs.free_granted} proofs are free.`;

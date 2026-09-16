@@ -68,6 +68,19 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id);
 
+CREATE TABLE IF NOT EXISTS web_handoffs (
+    -- One-time, two-minute codes that carry a signed-in customer from
+    -- the app to PiperStitch Proofs (or back) without a second sign-in.
+    -- Redeeming one issues a fresh web session for the other app.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    code_hash TEXT NOT NULL UNIQUE,
+    target TEXT NOT NULL,               -- 'core' | 'proofs'
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS proofs_uses (
     -- One row per proof the customer has sent on the free plan of
     -- PiperStitch Proofs, keyed by the proof's own id so a retry never
@@ -1104,6 +1117,24 @@ def create_web_session(*, customer_id: int, token_hash: str, user_agent: str) ->
             (customer_id, token_hash, user_agent[:200], _now(), _now()),
         )
         return cur.lastrowid
+
+
+def create_handoff(*, customer_id: int, code_hash: str, target: str, ttl_seconds: int) -> int:
+    with connection() as conn:
+        expires = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds") + "Z"
+        cur = conn.execute("INSERT INTO web_handoffs (customer_id, code_hash, target, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+                           (customer_id, code_hash, target, expires, _now()))
+        return cur.lastrowid
+
+
+def consume_handoff(code_hash: str) -> Optional[sqlite3.Row]:
+    """The handoff row if the code is live, marking it used; None otherwise."""
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM web_handoffs WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?", (code_hash, _now())).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE web_handoffs SET used_at = ? WHERE id = ?", (_now(), row["id"]))
+        return row
 
 
 def get_web_session_by_token_hash(token_hash: str) -> Optional[sqlite3.Row]:

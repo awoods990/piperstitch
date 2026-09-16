@@ -47,6 +47,8 @@ export const api = {
   validatePromo: (code: string) => postJSON<PromoValidation>("/auth/promo", { code }),
   billingPortalURL: async () => (await postJSON<{ url: string }>("/auth/billing-portal", {})).url,
   proofsCheckoutURL: async () => (await postJSON<{ url: string }>("/auth/proofs-checkout", {})).url,
+  proofsHandoffURL: async (next?: string) => (await postJSON<{ url: string }>("/auth/proofs-handoff", { next: next ?? null })).url,
+  redeemHandoff: (code: string) => postJSON<MeResponse>("/auth/handoff", { code }),
 
   // --- preferences (mirrored to the account when signed in) ---
   getPreferences: async (): Promise<{ preferences: Record<string, unknown> | null; updatedAt: string | null }> =>

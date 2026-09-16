@@ -54,7 +54,7 @@ def _expired(iso: str) -> bool:
 # ------------------------------------------------------------- sign-in ---
 
 
-def request_code(*, email: str) -> dict:
+def request_code(*, email: str, app: str = "core") -> dict:
     """Emails a code to any plausible address -- unlike the Mac's
     request_code, an unknown email is welcome here: verifying it is how
     the trial starts. Rate limits are shared with the Mac path."""
@@ -65,13 +65,40 @@ def request_code(*, email: str) -> dict:
         raise ActivationError("rate_limited", "Too many codes requested for this address — wait an hour, or use a code already in your inbox.")
     code = f"{secrets.randbelow(1_000_000):06d}"
     code_row_id = db.create_activation_code(email=email, code_hash=_hash(code), device_id=WEB_DEVICE_ID, ttl_minutes=config.ACTIVATION_CODE_TTL_MINUTES)
-    sign_in_url = f"{config.WEB_APP_URL}/?email={quote(email)}&code={code}"
+    # The email's "sign in instantly" link lands in whichever app asked.
+    base = f"{config.PROOFS_APP_URL}/signin" if app == "proofs" else f"{config.WEB_APP_URL}/"
+    sign_in_url = f"{base}?email={quote(email)}&code={code}"
     try:
         email_sender.send_activation_code_email(to_email=email, code=code, device_name="the web", sign_in_url=sign_in_url)
     except email_sender.EmailSendError as e:
         db.delete_activation_code(code_row_id)
         raise ActivationError("email_failed", f"We couldn't send the code: {e}") from e
     return {"sent": True, "expires_in_minutes": config.ACTIVATION_CODE_TTL_MINUTES}
+
+
+HANDOFF_TTL_SECONDS = 120
+
+
+def create_handoff(*, token: str, target: str) -> str:
+    """A one-time code that lets the other app sign this customer in
+    without a second email code. Two minutes, single use."""
+    if target not in ("core", "proofs"):
+        raise ActivationError("invalid_target", "Unknown handoff target.")
+    session = _session(token)
+    code = secrets.token_urlsafe(32)
+    db.create_handoff(customer_id=session["customer_id"], code_hash=_hash(code), target=target, ttl_seconds=HANDOFF_TTL_SECONDS)
+    return code
+
+
+def redeem_handoff(*, code: str, user_agent: str = "") -> "WebSession":
+    row = db.consume_handoff(_hash(code.strip()))
+    if row is None:
+        raise ActivationError("handoff_invalid", "That link has expired -- open the app again and try once more.")
+    customer = db.get_customer(row["customer_id"])
+    token = secrets.token_urlsafe(32)
+    session_row_id = db.create_web_session(customer_id=customer["id"], token_hash=_hash(token), user_agent=user_agent)
+    db.add_event(customer_id=customer["id"], subscription_id=None, kind="web_signed_in", detail=f"Signed in to {'PiperStitch Proofs' if row['target'] == 'proofs' else 'the web app'} from the other app.")
+    return WebSession(token=token, customer_id=customer["id"], session_row_id=session_row_id)
 
 
 @dataclass(frozen=True)

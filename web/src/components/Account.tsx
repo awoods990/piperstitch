@@ -245,7 +245,7 @@ export function AccountMenu({ account, onSignOut }: { account: AccountState; onS
           {trial && <button onClick={() => go(api.checkoutURL)}>Subscribe · {price(account)}</button>}
           {account.has_billing && <button onClick={() => go(api.billingPortalURL)}>Manage billing</button>}
           {account.proofs && (account.proofs.subscribed || account.proofs.free_used > 0) && (
-            <button onClick={() => window.open(account.proofs!.url, "_blank", "noopener")}>Open PiperStitch Proofs ↗</button>
+            <button onClick={() => go(api.proofsHandoffURL)}>Open PiperStitch Proofs ↗</button>
           )}
           <button onClick={onSignOut}>Sign out</button>
           {error && <div className="error-text menu-error">{error}</div>}

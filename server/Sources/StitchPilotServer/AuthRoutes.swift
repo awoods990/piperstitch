@@ -73,6 +73,34 @@ func authRoutes(_ api: RoutesBuilder) {
         return response
     }
 
+    /// Straight into PiperStitch Proofs without a second sign-in: License
+    /// Admin mints a one-time code, Proofs redeems it for its own session.
+    /// `next` is an optional path inside Proofs to land on.
+    auth.post("proofs-handoff") { req -> [String: String] in
+        let session = try await requireSession(req)
+        struct Body: Content { var next: String? }
+        let body = (try? req.content.decode(Body.self)) ?? Body(next: nil)
+        struct In: Content { var token: String; var target: String }
+        struct Out: Decodable { var code: String }
+        let code = try await req.licenseAdmin.post("/api/web/handoff/create", In(token: session.token, target: "proofs"), as: Out.self).code
+        var url = "\(req.application.auth.proofsURL)/signin/handoff?code=\(code)"
+        if let next = body.next, next.hasPrefix("/"), let q = next.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) { url += "&next=\(q)" }
+        return ["url": url]
+    }
+
+    /// The other direction: Proofs sent the browser here with ?handoff=<code>.
+    auth.post("handoff") { req -> Response in
+        try requireEnabled(req)
+        struct Body: Content { var code: String }
+        let body = try req.content.decode(Body.self)
+        struct In: Content { var code: String; var user_agent: String }
+        let raw = try await req.licenseAdmin.post("/api/web/handoff/redeem", In(code: body.code, user_agent: req.headers.first(name: .userAgent) ?? ""), as: VerifyOut.self)
+        let payload = SessionPayload(token: raw.token, account: raw.account, checkedAt: Int(Date().timeIntervalSince1970))
+        let response = try await MeResponse(authEnabled: true, signedIn: true, account: raw.account, proofsURL: req.application.auth.proofsURL).encodeResponse(for: req)
+        SessionCookie.set(payload, on: response, app: req.application)
+        return response
+    }
+
     auth.post("signout") { req -> Response in
         try requireEnabled(req)
         struct TokenIn: Content { var token: String }
