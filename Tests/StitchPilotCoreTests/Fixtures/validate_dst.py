@@ -7,10 +7,10 @@ test to compare against its own StitchPlan.
 
 Not part of the shipped app. Never invoked outside `swift test`.
 
-pyembroidery's internal Y convention is the negation of StitchPilot's
-(see DSTFormat.swift's "Coordinate convention" note) -- this script negates
-Y back before reporting, so the Swift side can compare directly without
-knowing about pyembroidery's convention.
+pyembroidery's internal Y convention is Y-down, the same as StitchPilot's
+(see DSTFormat.swift's "Coordinate convention" note), so coordinates are
+reported as pyembroidery decodes them. An earlier version negated Y here
+on the belief that pyembroidery was Y-up -- which masked mirrored output.
 """
 import json
 import sys
@@ -32,9 +32,9 @@ def main() -> None:
     max_x = max_y = float("-inf")
 
     for x, y, command in pattern.stitches:
-        # pyembroidery stores tenths of a millimeter, Y-up internally.
+        # pyembroidery stores tenths of a millimeter, Y-down internally.
         mm_x = x / 10.0
-        mm_y = -y / 10.0  # negate back to StitchPilot's Y-down convention
+        mm_y = y / 10.0  # pyembroidery is Y-down internally, same as StitchPilot
         if command == pyembroidery.STITCH:
             stitch_count += 1
             points.append([mm_x, mm_y])

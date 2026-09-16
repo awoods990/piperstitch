@@ -110,32 +110,36 @@ struct BranchingSatinGeneratorTests {
         }
     }
 
-    /// A shape with no real branch (a plain rectangle) already has a
-    /// direct, simpler, better-proven satin path -- `canRepresentAs
-    /// BranchingSatinColumn` should decline it rather than routing a shape
-    /// that doesn't need decomposition through the newer, less-proven
-    /// mechanism.
-    @Test func nonBranchingShapeIsDeclinedByTheBranchingPath() {
+    /// A shape with no real branch (a plain rectangle) is accepted by the
+    /// branching path too -- one skeleton edge with perpendicular rails --
+    /// and sews as a sound column. It used to be declined for having no
+    /// junction, on the grounds that the single-column path is the better
+    /// proven one; the single-column path is still tried first everywhere
+    /// (`StitchTypeClassifier.classify`, `DigitizePipeline`), but a long
+    /// curved stroke that path can't rail-fit (a ribbon, a keyline
+    /// fragment) needs this one to say yes, or it falls to fill.
+    @Test func nonBranchingShapeIsAcceptedByTheBranchingPath() throws {
         let rect = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(3, 0), Point2D(3, 20), Point2D(0, 20),
         ], closed: true)])
-        #expect(!SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: rect, parameters: params()))
+        #expect(SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: rect, parameters: params()))
+        let stitches = try SatinColumnGenerator.generateBranchingRuns(for: rect, parameters: params()).flatMap { $0 }
+        #expect(stitches.count > 10)
+        for point in stitches {
+            #expect(point.x >= -1 && point.x <= 4 && point.y >= -1 && point.y <= 21)
+        }
     }
 
-    /// A shape with a hole but no real junction (a plain ring, no
-    /// branching stem attached) is declined for the same reason a
-    /// holeless non-branching shape is -- no junction to decompose, not
-    /// because it has a hole at all. `computeRingRails`'s own dedicated
-    /// path already handles exactly this case directly and should keep
-    /// doing so; this just confirms the branching path doesn't
-    /// needlessly duplicate it. See `branchingHoleyBShapeIsAcceptedByTheBranchingPath`
-    /// for the case this path actually exists for: a hole *combined
-    /// with* real branching structure.
-    @Test func plainRingWithNoJunctionIsDeclinedByTheBranchingPath() {
+    /// A ring with no junction is accepted for the same reason a plain
+    /// rectangle now is (see above): its skeleton is one closed loop, and
+    /// the loop gets radial ring rails, or perpendicular ones where the
+    /// radial sweep can't reach the whole loop. `computeRingRails`'s
+    /// dedicated path is still tried first for a one-hole shape.
+    @Test func plainRingWithNoJunctionIsAcceptedByTheBranchingPath() {
         let outer = SubPath(points: [Point2D(0, 0), Point2D(20, 0), Point2D(20, 20), Point2D(0, 20)], closed: true)
         let hole = SubPath(points: [Point2D(7, 7), Point2D(13, 7), Point2D(13, 13), Point2D(7, 13)], closed: true)
         let ring = VectorShape(subPaths: [outer, hole])
-        #expect(!SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: ring, parameters: params()))
+        #expect(SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: ring, parameters: params()))
     }
 
     /// Stage 4's actual target case: a stem *and* a hole together (a "P"

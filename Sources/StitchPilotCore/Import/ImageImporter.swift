@@ -98,7 +98,6 @@ public enum ImageImporter {
 
         let clusters = ColorQuantizer.quantize(pixels: foregroundColors, maxColors: maxColors)
         guard !clusters.isEmpty else { throw ImageImportError.noForegroundFound }
-        let backgroundRampIndices = backgroundRampClusterIndices(clusters, backgroundColor: backgroundColor)
 
         // Memoized nearest-cluster lookup: real artwork repeats exact RGB
         // values constantly (flat-color logos especially), so caching by
@@ -144,18 +143,42 @@ public enum ImageImporter {
             // Gray"/"Silver" clusters, fringing every letter.
             let distToBackground = backgroundColor.map { RGBColor.deltaE(color, $0) } ?? .infinity
             let effectiveSecondDist = min(secondDist, distToBackground)
-            let ratioAmbiguous = effectiveSecondDist.isFinite && effectiveSecondDist > 0 && bestDist / effectiveSecondDist > ambiguousLabelRatio
-            // A pixel confidently matching its own cluster is still
-            // ambiguous if that whole *cluster* is itself a suspected
-            // background ramp (`backgroundRampClusterIndices`) -- k-means
-            // can center a cluster exactly on a ramp's own colors when
-            // there are enough ramp pixels to seed one, which makes every
-            // member pixel a tight, "confident" match to it despite the
-            // cluster itself being spurious. Confirmed necessary against
-            // real files: without this, the ratio test alone missed ramp
-            // pixels precisely because they fit their own tailored cluster
-            // too well.
-            isAmbiguous[i] = ratioAmbiguous || backgroundRampIndices.contains(index)
+            isAmbiguous[i] = effectiveSecondDist.isFinite && effectiveSecondDist > 0 && bestDist / effectiveSecondDist > ambiguousLabelRatio
+        }
+        // A pixel confidently matching its own cluster is still ambiguous
+        // if that whole *cluster* is itself a suspected background ramp
+        // (`backgroundRampClusterIndices`) -- k-means can center a cluster
+        // exactly on a ramp's own colors when there are enough ramp pixels
+        // to seed one, which makes every member pixel a tight, "confident"
+        // match to it despite the cluster itself being spurious. Confirmed
+        // necessary against real files: without this, the ratio test alone
+        // missed ramp pixels precisely because they fit their own tailored
+        // cluster too well. Ramp detection runs after the first labelling
+        // pass because one of its tests is spatial (see the function).
+        let backgroundRampIndices = backgroundRampClusterIndices(clusters, backgroundColor: backgroundColor,
+                                                                 labels: labels, foregroundMask: foregroundMask, width: width, height: height)
+        if !backgroundRampIndices.isEmpty {
+            // A ramp pixel that is decisively nearer the background than any
+            // real design colour IS background, whatever its neighbours
+            // say. The neighbour vote below is right for a fringe one or
+            // two pixels wide, but a small negative space that consists
+            // entirely of blend pixels (the turtle case above: 2-4 px holes
+            // in a 110-px image) has only design-coloured confident
+            // neighbours, so the vote alone fills every hole solid. Colour
+            // decides those; the vote still handles the genuinely
+            // in-between pixels along the edges.
+            let realClusters = clusters.indices.filter { !backgroundRampIndices.contains($0) }
+            for i in 0..<(width * height) where labels[i] >= 0 && backgroundRampIndices.contains(labels[i]) {
+                isAmbiguous[i] = true
+                guard let backgroundColor, !realClusters.isEmpty else { continue }
+                let color = RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2])
+                let toBackground = RGBColor.deltaE(color, backgroundColor)
+                let toNearestReal = realClusters.map { RGBColor.deltaE(color, clusters[$0].rgb) }.min() ?? .infinity
+                if toBackground < decisiveBackgroundRatio * toNearestReal {
+                    labels[i] = backgroundLabelSentinel
+                    isAmbiguous[i] = false
+                }
+            }
         }
         labels = smoothAmbiguousBoundaryLabels(labels, isAmbiguous: isAmbiguous, foregroundMask: foregroundMask, width: width, height: height,
                                                tieBreak: { pixelIndex, candidates in
@@ -265,7 +288,26 @@ public enum ImageImporter {
     /// zero-width gray running-stitch lines, mistaken at first for
     /// baseball-seam detail. Same per-pixel neighbor-vote treatment as
     /// the background case, for the same reason.
-    private static func backgroundRampClusterIndices(_ clusters: [ColorCluster], backgroundColor: RGBColor?) -> Set<Int> {
+    ///
+    /// The "smaller than the real cluster" guard is what stops a genuine
+    /// mid-tone design colour from being mistaken for a blend, but it
+    /// assumes a ramp is a thin fringe. A small or blurry source breaks
+    /// that: in a 110-px phone screenshot of a tribal turtle (one of the
+    /// professionally digitized reference designs), the 2-4 px negative
+    /// spaces inside the dark shell were *entirely* blend pixels -- no
+    /// clean background pixel survived inside them -- and those greys
+    /// outnumbered the dark colour itself, so the guard let a huge
+    /// "Silver" cluster through and every hole in the shell was stitched
+    /// solid in white thread. So a cluster on the background/foreground
+    /// line is also flagged, whatever its size, when it is *spatially* a
+    /// fringe: nearly every one of its pixels sits within 2 px of a pixel
+    /// of some other label (or of the background), and its colour is
+    /// nearer the background than the foreground end. A real light-grey
+    /// design element passes because its interior pixels are more than
+    /// 2 px from anything else; a legitimate thin light-grey line on a
+    /// tiny image would not, which is the trade-off accepted here.
+    private static func backgroundRampClusterIndices(_ clusters: [ColorCluster], backgroundColor: RGBColor?,
+                                                     labels: [Int], foregroundMask: [Bool], width: Int, height: Int) -> Set<Int> {
         guard clusters.count > 1 else { return [] }
         var suspects = Set<Int>()
         func liesBetween(_ lab: LABColor, _ endA: LABColor, _ endB: LABColor) -> Bool {
@@ -274,12 +316,61 @@ public enum ImageImporter {
             let dA = sqrt(labDistanceSquared(lab, endA)), dB = sqrt(labDistanceSquared(lab, endB))
             return ((dA + dB) - dAB) / dAB <= 0.15
         }
+        func nearerToBackgroundThan(_ lab: LABColor, _ foregroundLab: LABColor, backgroundLab: LABColor) -> Bool {
+            labDistanceSquared(lab, backgroundLab) < labDistanceSquared(lab, foregroundLab)
+        }
+        // Fractions of cluster `c`'s pixels within a Chebyshev distance of
+        // 2 of (a) any pixel carrying a different label, background
+        // included, and (b) a pixel of cluster `endpoint` specifically.
+        func fringeFractions(_ c: Int, endpoint: Int) -> (any: Double, endpoint: Double) {
+            var total = 0, fringe = 0, nearEndpoint = 0
+            for y in 0..<height {
+                for x in 0..<width where labels[y * width + x] == c {
+                    total += 1
+                    var touchesOther = false, touchesEndpoint = false
+                    for dy in -2...2 {
+                        let ny = y + dy
+                        guard ny >= 0, ny < height else { touchesOther = true; continue }
+                        for dx in -2...2 {
+                            let nx = x + dx
+                            guard nx >= 0, nx < width else { touchesOther = true; continue }
+                            let j = ny * width + nx
+                            if !foregroundMask[j] || labels[j] != c { touchesOther = true }
+                            if foregroundMask[j], labels[j] == endpoint { touchesEndpoint = true }
+                        }
+                    }
+                    if touchesOther { fringe += 1 }
+                    if touchesEndpoint { nearEndpoint += 1 }
+                }
+            }
+            guard total > 0 else { return (0, 0) }
+            return (Double(fringe) / Double(total), Double(nearEndpoint) / Double(total))
+        }
         for (c, candidate) in clusters.enumerated() {
             let lab = candidate.rgb.lab
             let larger = clusters.enumerated().filter { $0.offset != c && candidate.pixelCount < $0.element.pixelCount }
             if let backgroundColor, larger.contains(where: { liesBetween(lab, backgroundColor.lab, $0.element.rgb.lab) }) {
                 suspects.insert(c)
                 continue
+            }
+            if let backgroundColor {
+                // A blend is also spatially *between* its two colours: most
+                // of its pixels sit right next to the design colour it fades
+                // from. Without that test a genuine thin pale line (a light
+                // blue ribbon beside navy lettering on white -- the Oholi
+                // mark) is indistinguishable from a fringe by colour and
+                // thinness alone, and was dissolved into the background.
+                let endpoints = clusters.enumerated().filter {
+                    $0.offset != c && liesBetween(lab, backgroundColor.lab, $0.element.rgb.lab) && nearerToBackgroundThan(lab, $0.element.rgb.lab, backgroundLab: backgroundColor.lab)
+                }
+                let isSpatialFringe = endpoints.contains { endpoint in
+                    let fractions = fringeFractions(c, endpoint: endpoint.offset)
+                    return fractions.any >= spatialRampFringeFraction && fractions.endpoint >= spatialRampEndpointFraction
+                }
+                if isSpatialFringe {
+                    suspects.insert(c)
+                    continue
+                }
             }
             for i in larger.indices {
                 for j in larger.indices where j > i {
@@ -293,6 +384,20 @@ public enum ImageImporter {
         }
         return suspects
     }
+
+    /// See `backgroundRampClusterIndices`: the share of a cluster's pixels
+    /// that must be within 2 px of another label for it to count as a
+    /// fringe on spatial grounds alone.
+    private static let spatialRampFringeFraction = 0.75
+
+    /// ...and the share that must sit within 2 px of the design colour the
+    /// cluster supposedly blends from.
+    private static let spatialRampEndpointFraction = 0.5
+
+    /// A ramp-cluster pixel whose Delta-E to the background is under this
+    /// fraction of its Delta-E to the nearest real design colour resolves
+    /// straight to background (see the ramp handling in `importShapes`).
+    private static let decisiveBackgroundRatio = 0.6
 
     private static func labDistanceSquared(_ a: LABColor, _ b: LABColor) -> Double {
         let dl = a.l - b.l, da = a.a - b.a, db = a.b - b.b
@@ -496,10 +601,28 @@ public enum ImageImporter {
     /// same source pixels. `boxesNearlyMatch` catches that without needing
     /// exact polygon equality (simplification/regularization can shift a
     /// few points between the hole and the overlay's own outer boundary).
+    ///
+    /// Only a shape that is *mostly solid* gets this treatment. A thin
+    /// outline network -- the dark keyline of a cartoon, where one colour
+    /// draws every edge and encloses every other region -- also reads as
+    /// "a shape whose holes are covered by other shapes", and stripping
+    /// its holes turns a 1 mm line drawing into a solid silhouette sewn
+    /// under the entire design: twice the stitches everywhere, a stiff
+    /// double layer, the outline's own character lost, and the base fill's
+    /// rows showing through every seam between the colours on top. Found
+    /// against a professionally digitized golfing alligator, where the
+    /// pro kept that keyline as a satin outline sewn last. The two cases
+    /// differ in how much of their outer area the shape itself covers:
+    /// a banner with text on it is well over half solid; a line drawing's
+    /// strokes are a small fraction of what they enclose
+    /// (`minimumSolidFractionForHoleRemoval`).
     private static func removeHolesCoveredByAnotherShape(_ shapes: inout [VectorShape], fillColors: [RGBColor?]) {
         for i in shapes.indices {
             guard shapes[i].subPaths.count > 1 else { continue }
             let outer = shapes[i].subPaths[0]
+            let outerArea = abs(PolygonGeometry.signedArea(outer.points))
+            let holeArea = shapes[i].subPaths.dropFirst().reduce(0.0) { $0 + abs(PolygonGeometry.signedArea($1.points)) }
+            guard outerArea > 0, (outerArea - holeArea) / outerArea >= minimumSolidFractionForHoleRemoval else { continue }
 
             var strippedHoleBoxes: [BoundingBox] = []
             var keptSubPaths: [SubPath] = []
@@ -532,6 +655,11 @@ public enum ImageImporter {
             shapes[i].subPaths = [outer] + keptSubPaths
         }
     }
+
+    /// See `removeHolesCoveredByAnotherShape`: a shape whose own area is
+    /// under this share of its outer boundary's area is a line drawing, not
+    /// a solid field, and keeps its holes.
+    private static let minimumSolidFractionForHoleRemoval = 0.35
 
     /// True when each box covers most of their mutual overlap -- "these
     /// are essentially the same region," not just "these two shapes
@@ -793,7 +921,18 @@ public enum ImageImporter {
         }
 
         if cornersAgree {
-            let bg = corners[0]
+            // The background colour is the per-channel median of every
+            // border pixel, not the single top-left pixel: JPEG ringing
+            // put a (255, 227, 255) pink at one corner of a white-background
+            // phone screenshot, and with that as the reference the real
+            // white was 28 units "away" -- close enough to still count as
+            // background, but far enough to break the anti-aliasing ramp
+            // test, which measures every blend colour against this value.
+            var rs: [Double] = [], gs: [Double] = [], bs: [Double] = []
+            for x in 0..<width { for y in [0, height - 1] { let p = pixel(x, y); rs.append(p.r); gs.append(p.g); bs.append(p.b) } }
+            for y in 0..<height { for x in [0, width - 1] { let p = pixel(x, y); rs.append(p.r); gs.append(p.g); bs.append(p.b) } }
+            func median(_ v: [Double]) -> Double { let s = v.sorted(); return s.isEmpty ? 0 : s[s.count / 2] }
+            let bg = (r: median(rs), g: median(gs), b: median(bs), a: 255.0)
             for y in 0..<height {
                 for x in 0..<width {
                     let p = pixel(x, y)

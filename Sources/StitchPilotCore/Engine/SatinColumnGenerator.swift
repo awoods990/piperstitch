@@ -207,12 +207,43 @@ public enum SatinColumnGenerator {
         guard railA.count >= ringRailSampleCount * 3 / 4 else {
             throw SatinGenerationError.shapeNotSuitable("couldn't trace a consistent ring column around this hole")
         }
+        // The sweep must also reach the whole shape. A small loop at one
+        // end of a long ribbon is "a shape with one hole" too, but rays
+        // from the loop's centre stop at the ribbon's near edges and the
+        // rest of the ribbon is never railed -- the satin came out as the
+        // loop alone, silently. If a real share of the outer boundary lies
+        // beyond anything a rail reached, this is not a ring.
+        guard ringRailsReachOutline(outer, center: center, outerHits: railA) else {
+            throw SatinGenerationError.shapeNotSuitable("the ring's rails don't reach the whole outline")
+        }
 
         if let firstA = railA.first, let firstB = railB.first {
             railA.append(firstA)
             railB.append(firstB)
         }
         return (railA, railB)
+    }
+
+    /// See `computeRingRails`: true when nearly every outer vertex lies
+    /// within the farthest distance any radial rail reached (with a little
+    /// slack), i.e. the radial sweep actually covers the shape.
+    private static func ringRailsReachOutline(_ outer: [Point2D], center: Point2D, outerHits: [Point2D]) -> Bool {
+        guard let reach = outerHits.map({ center.distance(to: $0) }).max(), reach > 0, !outer.isEmpty else { return false }
+        let beyond = outer.filter { center.distance(to: $0) > reach * ringReachSlack }.count
+        return Double(beyond) / Double(outer.count) <= ringReachUncoveredFraction
+    }
+    private static let ringReachSlack = 1.15
+    private static let ringReachUncoveredFraction = 0.1
+
+    /// Whether `shape` (outer boundary plus exactly one hole) can be sewn
+    /// as one ring-shaped satin column -- the check `StitchTypeClassifier`
+    /// makes before calling a one-hole shape satin.
+    public static func canRepresentAsRingSatinColumn(shape: VectorShape) -> Bool {
+        guard shape.subPaths.count == 2 else { return false }
+        var outer = shape.subPaths[0].points, hole = shape.subPaths[1].points
+        if outer.count > 1, outer.first == outer.last { outer.removeLast() }
+        if hole.count > 1, hole.first == hole.last { hole.removeLast() }
+        return (try? computeRingRails(outer: outer, hole: hole)) != nil
     }
 
     /// A coarse centroid (plain vertex average, matching the same
@@ -981,6 +1012,82 @@ public enum SatinColumnGenerator {
         (try? branchingPlan(for: shape, parameters: parameters)) != nil
     }
 
+    /// A centre-run underlay for a branching column: running stitch along
+    /// every skeleton edge, in the same walk order the satin will follow,
+    /// so it ends near where the first crossings begin. The single-column
+    /// underlay (`UnderlayGenerator`, `.centerRun`) runs the shape's
+    /// principal axis end to end, which for an "H" or a keyline network
+    /// is a line through empty space with a hook poking out past each end
+    /// of the letter -- visible as small rectangles beyond the satin.
+    /// Empty when the shape has no skeleton (the caller then sews no
+    /// underlay rather than a wrong one).
+    public static func branchingCenterRunUnderlay(for shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
+        guard parameters.underlayType != UnderlayType.none,
+              let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty else { return [] }
+        let edges = orderedEdges(topology).filter { $0.polyline.count >= 2 }
+        guard !edges.isEmpty else { return [] }
+        // Node adjacency, for travelling between edges *along* the
+        // skeleton (later buried under the satin) instead of straight
+        // across whatever lies between -- an "H" would otherwise get a
+        // stitched line from the foot of one leg to the foot of the other.
+        var adjacency: [Int: [(edge: StrokeTopologyAnalyzer.Edge, forward: Bool)]] = [:]
+        for edge in edges where edge.startNodeID != edge.endNodeID {
+            adjacency[edge.startNodeID, default: []].append((edge, true))
+            adjacency[edge.endNodeID, default: []].append((edge, false))
+        }
+        func skeletonPath(from a: Int, to b: Int) -> [Point2D] {
+            guard a != b else { return [] }
+            var previous: [Int: (node: Int, edge: StrokeTopologyAnalyzer.Edge, forward: Bool)] = [:]
+            var queue = [a], visited: Set<Int> = [a], head = 0
+            while head < queue.count, previous[b] == nil {
+                let node = queue[head]; head += 1
+                for (edge, forward) in adjacency[node] ?? [] {
+                    let next = forward ? edge.endNodeID : edge.startNodeID
+                    guard !visited.contains(next) else { continue }
+                    visited.insert(next); previous[next] = (node, edge, forward); queue.append(next)
+                }
+            }
+            guard previous[b] != nil else { return [] }
+            var path: [Point2D] = [], node = b
+            while node != a, let step = previous[node] {
+                let polyline = step.forward ? step.edge.polyline : Array(step.edge.polyline.reversed())
+                path.insert(contentsOf: polyline, at: 0)
+                node = step.node
+            }
+            return path
+        }
+        var centerline: [Point2D] = []
+        var currentNode: Int? = nil
+        for edge in edges {
+            var polyline = edge.polyline
+            if let current = currentNode, edge.startNodeID != current {
+                if edge.endNodeID == current {
+                    polyline.reverse()
+                } else {
+                    let viaStart = skeletonPath(from: current, to: edge.startNodeID)
+                    let viaEnd = skeletonPath(from: current, to: edge.endNodeID)
+                    if !viaEnd.isEmpty, viaStart.isEmpty || PolygonGeometry.pathLength(viaEnd) < PolygonGeometry.pathLength(viaStart) {
+                        centerline.append(contentsOf: viaEnd); polyline.reverse()
+                    } else {
+                        centerline.append(contentsOf: viaStart)
+                    }
+                }
+            }
+            centerline.append(contentsOf: polyline)
+            currentNode = polyline.last == edge.polyline.last ? edge.endNodeID : edge.startNodeID
+            if edge.startNodeID == edge.endNodeID { currentNode = edge.startNodeID }
+        }
+        return RunningStitchGenerator.generate(for: SubPath(points: centerline, closed: false),
+                                               stitchLengthMM: parameters.underlayStitchLengthMM,
+                                               minStitchLengthMM: parameters.minStitchLengthMM)
+    }
+
+    /// Why `canRepresentAsBranchingSatinColumn` said no, for diagnostics
+    /// (DigitizeCLI's `DEBUG_CLASSIFY`); nil when it would say yes.
+    public static func branchingSatinRejection(shape: VectorShape, parameters: StitchGenerationParameters) -> String? {
+        do { _ = try branchingPlan(for: shape, parameters: parameters); return nil } catch { return "\(error)" }
+    }
+
     /// Routes to `computeSegmentRingRails` for a self-loop edge (a
     /// hole's own skeleton loop) and `computeSegmentRails` for every
     /// other segment — see `computeSegmentRingRails`'s own doc comment
@@ -988,10 +1095,22 @@ public enum SatinColumnGenerator {
     /// rather than the tangent-walk one every other segment uses.
     private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]]) throws -> (railA: [Point2D], railB: [Point2D]) {
         if edge.startNodeID == edge.endNodeID {
-            guard let rails = computeSegmentRingRails(loopPolyline: edge.polyline, shapePolygons: shapePolygons) else {
+            if let rails = computeSegmentRingRails(loopPolyline: edge.polyline, shapePolygons: shapePolygons) {
+                return rails
+            }
+            // The radial sweep only works for a roundish loop whose centroid
+            // sits in its hole. A loop around an irregular hole -- the
+            // enclosed regions of a cartoon's keyline, the spirals of a
+            // tribal turtle (both professionally digitized reference
+            // designs, both drawn as satin by the pro) -- fails it, and used
+            // to sink the whole shape into fill. The perpendicular ray-cast
+            // rails every open segment already uses don't care about the
+            // loop's overall shape, only its local width, so they serve as
+            // the fallback; the loop's own per-point widths are known.
+            guard edge.polyline.count == edge.widthsMM.count, edge.polyline.count >= 3 else {
                 throw SatinGenerationError.shapeNotSuitable("couldn't trace a consistent ring column around this loop segment")
             }
-            return rails
+            return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons)
         }
         return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons)
     }
@@ -1062,6 +1181,9 @@ public enum SatinColumnGenerator {
             emitPatch(at: segment.edge.endNodeID)
         }
         pieces.removeAll { $0.isEmpty }
+        if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil {
+            print("  branching: segments kept: " + plan.segments.map { "\($0.kept.count)/\($0.expandedA.count)" }.joined(separator: " ") + "; pieces: " + pieces.map { "\($0.count)" }.joined(separator: " "))
+        }
         guard !pieces.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
         }
@@ -1088,6 +1210,49 @@ public enum SatinColumnGenerator {
         var mitre: [Bool]
         var kept: Range<Int>
     }
+
+    /// Repairs a segment whose consecutive crossings scissor across each
+    /// other instead of rejecting the whole shape for it. A crossing that
+    /// intersects the previous kept crossing well inside both (the same
+    /// test `isTwisted` applies) is first tried with its two rail points
+    /// swapped -- the usual cause is one perpendicular ray having landed on
+    /// the far side where the skeleton doubles back -- and dropped if that
+    /// still crosses. Only a few such crossings are tolerated
+    /// (`maxUntwistDropFraction`); past that the rails really are unsound
+    /// and the later `isTwisted` check throws as before. Found against two
+    /// professionally digitized reference designs (a cartoon's keyline
+    /// network, a tribal turtle) whose stroke networks were each sunk into
+    /// tatami by a single scissoring pair among hundreds of crossings.
+    private static func untwisted(expandedA: [Point2D], expandedB: [Point2D], widths: [Double], mitre: [Bool])
+        -> (expandedA: [Point2D], expandedB: [Point2D], widths: [Double], mitre: [Bool]) {
+        let count = expandedA.count
+        guard count > 2, expandedB.count == count, widths.count == count, mitre.count == count else {
+            return (expandedA, expandedB, widths, mitre)
+        }
+        func crossesInterior(_ a0: Point2D, _ b0: Point2D, _ a1: Point2D, _ b1: Point2D) -> Bool {
+            guard segmentsIntersect(a0, b0, a1, b1), let p = intersectionPoint(a0, b0, a1, b1) else { return false }
+            return ![a0, b0, a1, b1].contains { $0.distance(to: p) <= fanPivotToleranceMM }
+        }
+        var outA = [expandedA[0]], outB = [expandedB[0]], outW = [widths[0]], outM = [mitre[0]]
+        var dropped = 0
+        for i in 1..<count {
+            var a = expandedA[i], b = expandedB[i]
+            if crossesInterior(outA[outA.count - 1], outB[outB.count - 1], a, b) {
+                swap(&a, &b)
+                if crossesInterior(outA[outA.count - 1], outB[outB.count - 1], a, b) { dropped += 1; continue }
+            }
+            outA.append(a); outB.append(b); outW.append(widths[i]); outM.append(mitre[i])
+        }
+        guard dropped <= Int(Double(count) * maxUntwistDropFraction) else { return (expandedA, expandedB, widths, mitre) }
+        return (outA, outB, outW, outM)
+    }
+
+    /// See `untwisted`.
+    private static let maxUntwistDropFraction = 0.15
+
+    /// See `branchingPlan`: a skeleton edge shorter than this that can't
+    /// be rail-fit is skipped rather than failing the shape.
+    private static let negligibleSegmentLengthMM = 2.0
 
     private struct BranchingPlan {
         var polygons: [[Point2D]]
@@ -1119,19 +1284,34 @@ public enum SatinColumnGenerator {
         guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("couldn't derive a stroke topology for this shape")
         }
-        guard topology.nodes.contains(where: { $0.isJunction }) else {
-            throw SatinGenerationError.shapeNotSuitable("this shape has no junction to branch at")
-        }
+        // No junction is fine: a single curved stroke whose boundary-rail
+        // fit (`canRepresentAsSingleSatinColumn`) failed still has a
+        // skeleton, and one skeleton edge with perpendicular rails is
+        // exactly what this path sews for every branch anyway. Callers try
+        // the single-column path first, so this only ever sees the
+        // strokes that path could not handle.
 
+        if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil {
+            let box = shape.boundingBox
+            print(String(format: "  branching: shape %.1fx%.1f, %d nodes, %d edges: %@", box.width, box.height, topology.nodes.count, topology.edges.count,
+                         topology.edges.map { String(format: "%.1f", PolygonGeometry.pathLength($0.polyline)) }.joined(separator: " ")))
+        }
         var segments: [BranchSegment] = []
         for edge in orderedEdges(topology) {
             let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons)
             guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters),
                   !crossings.expandedA.isEmpty else {
+                // A stub of skeleton too short to carry a single crossing
+                // (a pruning remnant at a junction, a two-point edge) is
+                // not a reason to give up on a 70 mm keyline network; the
+                // junction patch covers that spot anyway. Anything longer
+                // that can't be railed is a real problem, as before.
+                if PolygonGeometry.pathLength(edge.polyline) < negligibleSegmentLengthMM { continue }
                 throw SatinGenerationError.shapeNotSuitable("a branch segment couldn't be rail-fit as satin")
             }
-            segments.append(BranchSegment(edge: edge, expandedA: crossings.expandedA, expandedB: crossings.expandedB,
-                                          widths: crossings.widths, mitre: crossings.mitre, kept: 0..<crossings.expandedA.count))
+            let repaired = untwisted(expandedA: crossings.expandedA, expandedB: crossings.expandedB, widths: crossings.widths, mitre: crossings.mitre)
+            segments.append(BranchSegment(edge: edge, expandedA: repaired.expandedA, expandedB: repaired.expandedB,
+                                          widths: repaired.widths, mitre: repaired.mitre, kept: 0..<repaired.expandedA.count))
         }
 
         let nodesByID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
@@ -1634,6 +1814,10 @@ public enum SatinColumnGenerator {
             railA.append(hits[1])
         }
         guard railA.count >= ringRailSampleCount * 3 / 4 else { return nil }
+        // Same coverage requirement as `computeRingRails`, against the
+        // loop's own centerline: a sweep that doesn't reach the whole loop
+        // is handed to the perpendicular-rail fallback by the caller.
+        guard ringRailsReachOutline(loopPolyline, center: center, outerHits: railA) else { return nil }
 
         if let firstA = railA.first, let firstB = railB.first {
             railA.append(firstA)

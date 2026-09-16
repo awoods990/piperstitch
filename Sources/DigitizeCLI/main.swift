@@ -47,6 +47,109 @@ if args.count >= 3, args[1] == "--validate-formats" {
     exit(failed == 0 ? 0 : 1)
 }
 
+/// A structural profile of a stitch plan, printed the same way for a file
+/// we generated and for a professionally digitized one, so the two can be
+/// compared number for number (see the "professional samples" entry in
+/// DIGITIZING_ENGINE.md). Per colour run: stitch count, mean stitch length,
+/// and the share of stitches that reverse direction against the previous
+/// one -- a satin column reverses on every stitch (zigzag), a fill only at
+/// row ends, a running stitch almost never -- which is enough to tell how
+/// much of a design a digitizer chose to sew as satin without any object
+/// information.
+func printProfile(_ plan: StitchPlan) {
+    var runs: [(stitches: Int, lengthSum: Double, reversals: Int, pairs: Int, lengths: [Double])] = []
+    var current: (stitches: Int, lengthSum: Double, reversals: Int, pairs: Int, lengths: [Double]) = (0, 0, 0, 0, [])
+    var last: Point2D? = nil
+    var lastDir: Point2D? = nil
+    var allLengths: [Double] = []
+    for command in plan.commands {
+        switch command {
+        case .stitch(let p):
+            current.stitches += 1
+            if let l = last {
+                let d = Point2D(p.x - l.x, p.y - l.y)
+                let len = l.distance(to: p)
+                if len > 0.05 {
+                    current.lengthSum += len; current.lengths.append(len); allLengths.append(len)
+                    if let ld = lastDir {
+                        let dot = (d.x * ld.x + d.y * ld.y) / (len * max(1e-9, ld.distance(to: .zero)))
+                        current.pairs += 1
+                        if dot < -0.5 { current.reversals += 1 }
+                    }
+                    lastDir = d
+                }
+            }
+            last = p
+        case .jump(let p):
+            last = p; lastDir = nil
+        case .colorChange:
+            runs.append(current); current = (0, 0, 0, 0, []); last = nil; lastDir = nil
+        case .trim, .stop:
+            last = nil; lastDir = nil
+        case .end:
+            break
+        }
+    }
+    if current.stitches > 0 { runs.append(current) }
+    let box = BoundingBox(points: plan.commands.compactMap { $0.point })
+    let sorted = allLengths.sorted()
+    func pct(_ q: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * q))] }
+    print(String(format: "Profile: %d stitches, %d colour runs, %d trims, %.1f x %.1f mm, %.0f mm thread",
+                 plan.stitchCount, runs.count, plan.trimCount, box.width, box.height, plan.totalStitchLength))
+    print(String(format: "  stitch length p10/p50/p90/max: %.2f / %.2f / %.2f / %.2f mm", pct(0.1), pct(0.5), pct(0.9), sorted.last ?? 0))
+    let area = max(1, box.width * box.height)
+    print(String(format: "  stitches per mm² of bbox: %.2f", Double(plan.stitchCount) / area))
+    var satinish = 0
+    for (i, r) in runs.enumerated() {
+        let rev = r.pairs > 0 ? Double(r.reversals) / Double(r.pairs) : 0
+        let mean = r.lengths.isEmpty ? 0 : r.lengthSum / Double(r.lengths.count)
+        let kind = rev > 0.8 ? "satin-like" : rev > 0.25 ? "mixed" : mean > 2.0 && rev < 0.25 ? "fill/run" : "fill"
+        if rev > 0.8 { satinish += r.stitches }
+        print(String(format: "  run %2d: %6d st  mean %.2f mm  reversal %.0f%%  %@", i + 1, r.stitches, mean, rev * 100, kind))
+    }
+    print(String(format: "  satin-like share of stitches: %.0f%%", plan.stitchCount > 0 ? Double(satinish) / Double(plan.stitchCount) * 100 : 0))
+}
+
+if args.count >= 4, args[1] == "--analyze" {
+    // Diagnostic: read a finished DST/PES (e.g. a professionally digitized
+    // sample), print its structural profile, and render it with our own
+    // renderer so it can sit beside our result for the same artwork.
+    let inputURL = URL(fileURLWithPath: args[2])
+    let outputURL = URL(fileURLWithPath: args[3])
+    let ppm = args.count > 4 ? (Double(args[4]) ?? 12) : 12
+    let data = try Data(contentsOf: inputURL)
+    let ext = inputURL.pathExtension.lowercased()
+    let decodedCommands = ext == "dst" ? try DSTFormat.read(data).commands : try PESFormat.read(data).commands
+    let box = BoundingBox(points: decodedCommands.compactMap { $0.point })
+    let margin = 3.0
+    // The readers hand back document space (Y-down), so only a shift to a
+    // positive origin is needed. If a machine file ever renders upside-down
+    // here, that reader's Y sign is wrong -- see DSTFormat's coordinate note.
+    let shifted = decodedCommands.map { command -> StitchCommand in
+        switch command {
+        case .stitch(let p): return .stitch(Point2D(p.x - box.minX + margin, p.y - box.minY + margin))
+        case .jump(let p): return .jump(Point2D(p.x - box.minX + margin, p.y - box.minY + margin))
+        default: return command
+        }
+    }
+    let plan = StitchPlan(commands: shifted)
+    print("=== \(inputURL.lastPathComponent) ===")
+    printProfile(plan)
+    // The readers don't carry thread colours, so each run gets a distinct
+    // colour from a fixed palette: structure is what's being compared.
+    let palette: [UInt32] = [0x2f5d3a, 0x8a2c2c, 0x2c4f8a, 0xc08a2a, 0x6a3a8a, 0x2a8a8a, 0x8a5a2a, 0x555555, 0xb04a8a, 0x4a8a3a]
+    let runCount = plan.colorChangeCount + 1
+    let colors = (0..<runCount).map { ThreadColor.generic(RGBColor(hex: palette[$0 % palette.count])) }
+    var options = StitchRenderer.Options()
+    options.pixelsPerMM = ppm
+    guard let png = StitchRenderer.renderPNGData(plan, widthMM: box.width + 2 * margin, heightMM: box.height + 2 * margin, colors: colors, options: options) else {
+        print("Render failed"); exit(1)
+    }
+    try png.write(to: outputURL)
+    print("Wrote \(outputURL.path)")
+    exit(0)
+}
+
 if args.count >= 3, args[1] == "--recommend-size" {
     // Diagnostic: what SizeRecommender would set as the initial Finished
     // Size for this file, matching AppState.importFile's own logic --
@@ -192,10 +295,16 @@ do {
             parameters.fabricType = fabric
         }
         let stitchType = StitchTypeClassifier.classify(shape: fitted, parameters: parameters)
+        if ProcessInfo.processInfo.environment["DEBUG_CLASSIFY"] != nil {
+            let box = fitted.boundingBox
+            let reason = stitchType == .tatamiFill ? (SatinColumnGenerator.branchingSatinRejection(shape: fitted, parameters: parameters) ?? "eligible (rejected elsewhere)") : "-"
+            print(String(format: "  classify Object %d: %@; subPaths=%d bbox %.1fx%.1f; branching satin: %@", i + 1, stitchType.rawValue, fitted.subPaths.count, box.width, box.height, reason))
+        }
         objects.append(EmbroideryObject(name: pieceIndex == 0 ? "Object \(i + 1)" : "Object \(i + 1) (\(pieceIndex + 1))", shape: fitted, stitchType: stitchType,
                                          threadColor: threadColor, parameters: parameters))
       }
     }
+    objects = StitchTypeClassifier.separateStrokesFromAreas(objects)
     objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
     objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
     checkpoint("Built \(objects.count) objects")
@@ -220,6 +329,10 @@ do {
     print("Objects: \(objects.count)  Stitches: \(plan.stitchCount)  Colors: \(colors.count)  Color changes: \(plan.colorChangeCount)  Trims: \(plan.trimCount)")
     print("Max stitch length: \(String(format: "%.2f", plan.maxStitchLength()))mm  Total thread: \(String(format: "%.0f", plan.totalStitchLength))mm  Est. run time: \(RunTimeEstimator.estimate(plan).formatted) at \(Int(RunTimeEstimator.defaultStitchesPerMinute)) spm")
     print("Readiness: \(report.score)/100 (\(report.isReadyToSew ? "Ready to Sew" : "Review Recommended"))")
+    if ProcessInfo.processInfo.environment["PROFILE"] != nil { printProfile(plan) }
+    if ProcessInfo.processInfo.environment["DUMP_PLAN"] != nil {
+        for (i, c) in plan.commands.prefix(400).enumerated() { print("  \(i): \(c)") }
+    }
     for issue in report.issues {
         print("  [\(issue.severity.rawValue)] \(issue.message)")
     }

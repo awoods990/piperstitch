@@ -121,21 +121,18 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: taperingBlob, parameters: defaultParams) == .satin)
     }
 
-    /// Even a wide, roughly square blob still classifies `.satin` here --
-    /// width is never a classification-time rejection reason on its own,
-    /// only the structural `canRepresentAsSingleSatinColumn` check (a
-    /// convex square rail-fits without twisting, so it passes). In
-    /// practice `generatePartial` then classifies nearly every crossing of
-    /// a genuinely blob-shaped region `.fill` (40mm comfortably exceeds
-    /// `maxSatinWidthMM`), so the *rendered* stitches end up visually
-    /// equivalent to plain tatami fill regardless of this classification --
-    /// this test pins the classifier's own decision, not the final
-    /// generated geometry (see `SatinColumnGeneratorTests` for that).
-    @Test func wideBlobStillClassifiesSatinButGeneratesAsEffectivelyFill() {
+    /// A wide, roughly square blob classifies `.tatamiFill` outright. It
+    /// used to come back `.satin` -- a convex square rail-fits without
+    /// twisting, and width was never a classification-time reason on its
+    /// own -- and only sewed as fill because `generatePartial` converted
+    /// every over-wide crossing. A 100 mm disc labelled "satin" in the
+    /// object list was the visible symptom; a shape whose average width is
+    /// far past `maxSatinWidthMM` is an area and is now called one.
+    @Test func wideBlobClassifiesAsFill() {
         let blob = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(40, 0), Point2D(40, 40), Point2D(0, 40),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: blob, parameters: defaultParams) == .satin)
+        #expect(StitchTypeClassifier.classify(shape: blob, parameters: defaultParams) == .tatamiFill)
     }
 
     @Test func customMinSatinWidthIsRespected() {

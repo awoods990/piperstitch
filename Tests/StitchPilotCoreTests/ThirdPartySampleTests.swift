@@ -86,4 +86,44 @@ struct ThirdPartySampleTests {
     @Test func dstAndPESAgreeOnRoughDesignSizeForADifferentDesign() throws {
         try assertRoughlyAgree(dst: "scene.dst", pes: "scene.pes")
     }
+
+    /// Same design, two formats, so the two readers must place the stitches
+    /// in the *same orientation* -- a coarse occupancy grid of each,
+    /// normalised to its own bounding box, has to match. A reader that gets
+    /// the Y sign wrong decodes a top-to-bottom mirror image, which passes
+    /// every size and count check above and is exactly the bug this guards
+    /// against: DST/EXP/JEF store Y pointing up, PES/VP3 pointing down, and
+    /// for a long time the DST/EXP/JEF writers (and readers) applied no flip
+    /// because pyembroidery's internal model was assumed to be Y-up. Every
+    /// exported DST sewed upside-down until a professionally digitized
+    /// design supplied as both DST and PES showed the two readers
+    /// disagreeing. Guards against a same-sign mistake in either reader,
+    /// since the writers are checked against the readers by round trip.
+    private func occupancyGrid(_ commands: [StitchCommand], cells: Int) -> [Double] {
+        let points = commands.compactMap { if case .stitch(let p) = $0 { return p } else { return nil } }
+        let box = BoundingBox(points: points)
+        var grid = [Double](repeating: 0, count: cells * cells)
+        for p in points {
+            let cx = min(cells - 1, Int((p.x - box.minX) / max(box.width, 1e-9) * Double(cells)))
+            let cy = min(cells - 1, Int((p.y - box.minY) / max(box.height, 1e-9) * Double(cells)))
+            grid[cy * cells + cx] += 1
+        }
+        let total = max(1, Double(points.count))
+        return grid.map { $0 / total }
+    }
+
+    private func assertSameOrientation(dst: String, pes: String) throws {
+        let a = occupancyGrid(try DSTFormat.read(Data(contentsOf: fixtureURL(dst))).commands, cells: 6)
+        let b = occupancyGrid(try PESFormat.read(Data(contentsOf: fixtureURL(pes))).commands, cells: 6)
+        let flipped = (0..<6).flatMap { row in (0..<6).map { col in b[(5 - row) * 6 + col] } }
+        func distance(_ x: [Double], _ y: [Double]) -> Double { zip(x, y).reduce(0) { $0 + abs($1.0 - $1.1) } }
+        let same = distance(a, b), mirrored = distance(a, flipped)
+        #expect(same < mirrored, "\(dst) vs \(pes): the two readers decode the same design mirrored top-to-bottom (distance as-is \(same), distance to the vertical mirror \(mirrored)) -- one of them has the Y sign wrong")
+        #expect(same < 0.25, "\(dst) vs \(pes): stitch distribution should broadly agree between formats (distance \(same))")
+    }
+
+    @Test func dstAndPESDecodeTheSameDesignInTheSameOrientation() throws {
+        try assertSameOrientation(dst: "scene.dst", pes: "scene.pes")
+        try assertSameOrientation(dst: "random1-ew.dst", pes: "random1-ew.pes")
+    }
 }

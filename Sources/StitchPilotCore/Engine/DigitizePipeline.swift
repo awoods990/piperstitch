@@ -353,6 +353,27 @@ public enum DigitizePipeline {
             // last point back at the *near* tip, right next to where the
             // crossings begin, collapsing that seam back down to a
             // genuinely short stitch. See CHANGELOG.md.
+            // A shape the classifier accepted as satin *because* the
+            // branching path can sew it (a stroke network, a long curved
+            // ribbon with a loop -- `separateStrokesFromAreas`) must be sewn
+            // by that path: the single-column `generatePartial` below does
+            // not throw on such a shape, it "succeeds" on whatever the
+            // radial or boundary rails happen to reach and silently drops
+            // the rest -- the Oholi mark's ribbon came out as its loop and
+            // nothing else. Mirror the classifier: single column when it
+            // fits, otherwise branching.
+            if object.parameters.allowBranchingSatin,
+               !SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: object.shape, parameters: object.parameters),
+               let branchingRuns = try? SatinColumnGenerator.generateBranchingRuns(for: object.shape, parameters: object.parameters),
+               let firstRun = branchingRuns.first {
+                // The underlay follows the branching skeleton, not the
+                // single column's principal axis -- see
+                // `branchingCenterRunUnderlay`.
+                let skeletonUnderlay = SatinColumnGenerator.branchingCenterRunUnderlay(for: object.shape, parameters: object.parameters)
+                var runs: [[Point2D]] = [skeletonUnderlay + firstRun]
+                runs.append(contentsOf: branchingRuns.dropFirst())
+                return runs
+            }
             do {
                 return [Array(underlay.reversed()) + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
             } catch SatinGenerationError.shapeNotSuitable {
@@ -373,12 +394,13 @@ public enum DigitizePipeline {
                 if object.parameters.allowBranchingSatin,
                    let branchingRuns = try? SatinColumnGenerator.generateBranchingRuns(for: object.shape, parameters: object.parameters),
                    let firstRun = branchingRuns.first {
-                    // Same underlay-first seam handling as the plain column
-                    // above; any further runs are the branching generator's
-                    // own deliberate breaks (a hop that would otherwise be
-                    // sewn straight across a counter) and become real
-                    // trim+jumps in `flattenWithColors`, like a fill's.
-                    var runs: [[Point2D]] = [Array(underlay.reversed()) + firstRun]
+                    // Skeleton underlay (see above); any further runs are the
+                    // branching generator's own deliberate breaks (a hop that
+                    // would otherwise be sewn straight across a counter) and
+                    // become real trim+jumps in `flattenWithColors`, like a
+                    // fill's.
+                    let skeletonUnderlay = SatinColumnGenerator.branchingCenterRunUnderlay(for: object.shape, parameters: object.parameters)
+                    var runs: [[Point2D]] = [skeletonUnderlay + firstRun]
                     runs.append(contentsOf: branchingRuns.dropFirst())
                     return runs
                 }

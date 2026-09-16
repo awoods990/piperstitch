@@ -25,6 +25,34 @@ what's implemented, how each was validated, and known losses/limitations.
 | PDF production worksheet | — | — | Planned | Phase 5 |
 | CSV stitch data | — | — | Planned | Phase 5 |
 
+## Coordinate convention (all formats)
+
+StitchPilot's internal `Point2D` is **Y-down** (bitmap/SVG convention), and
+so is pyembroidery's internal model -- its PEC code applies no sign change,
+and PEC bytes are Y-down. The on-disk conventions are:
+
+| Format | On-disk Y | Writer/reader flip? |
+|---|---|---|
+| DST | up | yes (negate on write and read) |
+| EXP | up | yes |
+| JEF | up | yes |
+| PES / PEC | down | no |
+| VP3 | stitch deltas down; header/position fields negated (as pyembroidery writes them) | deltas no; header fields yes |
+
+**History:** until September 2026 every note in this file and in the
+format sources said the opposite -- that pyembroidery's internal model was
+Y-up, so "its flip cancels ours" -- and DST, EXP and JEF were written with
+no flip while VP3 negated its deltas. All four sewed upside-down (mirrored
+top to bottom). The test oracles (`Fixtures/validate_*.py`) negated Y on
+the same assumption, so the cross-validation passed. It was caught when a
+professionally digitized design supplied as both `.DST` and `.PES` decoded
+to mirror images of each other through our readers: the same feature sat at
+y = +261 in the DST and y = -261 in the PES, and pyembroidery read both
+files identically. `ThirdPartySampleTests.dstAndPESDecodeTheSameDesignInTheSameOrientation`
+now compares the two readers on the same design so a same-sign mistake in
+either one fails immediately. The per-format "Coordinate convention" notes
+below have been corrected; the format sources carry the details.
+
 ## DST (Tajima)
 
 **Implemented in:** `DSTFormat.swift`. Both writer and reader.
@@ -154,11 +182,9 @@ reader when it's available locally, confirming stitch count and bounding
 box agree exactly — not just that this project's own writer and reader
 agree with each other.
 
-**Coordinate convention:** same as DST — StitchPilot's internal `Point2D`
-(Y-down) already matches EXP's on-disk Y-down convention, so no sign flip
-is needed converting between them (see `EXPFormat.swift`'s "Coordinate
-convention" note for how this was confirmed from the reference writer,
-which negates Y going the other way from its own Y-up internal model).
+**Coordinate convention:** same as DST — EXP's on-disk deltas are Y-up,
+so Y is negated on write and on read (see "Coordinate convention (all
+formats)" above; an earlier version of this note had it backwards).
 
 **Known limitation:** EXP carries no design name, thread color, or hoop
 metadata anywhere in its layout — `write(_:designName:)` accepts a name
@@ -238,9 +264,12 @@ what actually ends a design.
 about the true unit scale and coordinate sign — the source's own `* 100`
 looks like a simple ×100 scale until you notice it's applied on top of
 pyembroidery's already-0.1mm-per-unit internal representation (net ×1000
-relative to real mm, not ×100), and its Y fields' explicit sign flips only
-make sense once you know pyembroidery's internal Y convention is itself
-the negation of StitchPilot's. Both facts were confirmed empirically before
+relative to real mm, not ×100), and its Y fields' explicit sign flips are
+part of the file format (header and position fields are stored negated;
+stitch deltas are not) -- pyembroidery's internal Y is the SAME as
+StitchPilot's, so we apply exactly the flips it applies, no more (an
+earlier version of this writer had them inverted; see "Coordinate
+convention (all formats)" above). The scale fact was confirmed empirically before
 writing any Swift: generating patterns of known real-world size and
 position with pyembroidery's own writer (with `pyembroidery` installed
 locally), inspecting the raw output bytes field-by-field, and separately

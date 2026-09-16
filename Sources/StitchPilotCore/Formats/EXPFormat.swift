@@ -10,13 +10,11 @@ import Foundation
 /// correctness approach `DSTFormat`/`PESFormat` use — getting this wrong
 /// produces a file that opens but sews incorrectly (spec §59).
 ///
-/// Coordinate convention: same as DST — StitchPilot's internal `Point2D`
-/// (Y-down) already matches EXP's on-disk Y-down convention. Verified via
-/// pyembroidery's writer, which negates Y going from its own Y-up internal
-/// representation to EXP bytes (`delta_y = -dy & 0xFF`); since our own
-/// internal representation is already Y-down, the equivalent negation
-/// cancels out and no sign flip is needed here (same reasoning as
-/// `DSTFormat`'s "Coordinate convention" note).
+/// Coordinate convention: same as DST — EXP's on-disk deltas are Y-up, so
+/// Y is negated on write and on read. pyembroidery's internal model is
+/// Y-down like ours (not Y-up, as an earlier version of this note assumed),
+/// so its `delta_y = -dy & 0xFF` is exactly the flip we need too. See
+/// `DSTFormat`'s "Coordinate convention" note for the evidence.
 ///
 /// Layout: no header. Each record is one of:
 /// - stitch: 2 bytes, `[dx & 0xFF, dy & 0xFF]` (each a signed byte, -128...127)
@@ -70,7 +68,7 @@ public enum EXPFormat {
 
         func moveTo(_ target: Point2D, jump: Bool) throws {
             let targetX = Int((target.x * unitsPerMM).rounded())
-            let targetY = Int((target.y * unitsPerMM).rounded())
+            let targetY = Int((-target.y * unitsPerMM).rounded()) // EXP is Y-up
             try emitDeltaUnitsSplitIfNeeded(targetX - currentX, targetY - currentY, jump: jump, into: &body)
             currentX = targetX
             currentY = targetY
@@ -153,7 +151,7 @@ public enum EXPFormat {
         while let b0 = readByte() {
             if b0 != 0x80 {
                 guard let b1 = readByte() else { throw EXPFormatError.truncatedRecord }
-                current = Point2D(current.x + delta(b0), current.y + delta(b1))
+                current = Point2D(current.x + delta(b0), current.y - delta(b1)) // file Y-up -> internal Y-down
                 commands.append(.stitch(current))
                 continue
             }
@@ -164,20 +162,20 @@ public enum EXPFormat {
             case 0x80:
                 commands.append(.trim)
             case 0x04:
-                current = Point2D(current.x + delta(b2), current.y + delta(b3))
+                current = Point2D(current.x + delta(b2), current.y - delta(b3))
                 commands.append(.jump(current))
             case 0x02:
                 // "This shouldn't exist" per the reference reader -- a
                 // stitch delivered through the escape encoding rather than
                 // the normal 2-byte form. Handled the same as a plain
                 // stitch for files that do contain it.
-                current = Point2D(current.x + delta(b2), current.y + delta(b3))
+                current = Point2D(current.x + delta(b2), current.y - delta(b3))
                 commands.append(.stitch(current))
             case 0x01:
                 commands.append(.colorChange)
                 let dx = delta(b2), dy = delta(b3)
                 if dx != 0 || dy != 0 {
-                    current = Point2D(current.x + dx, current.y + dy)
+                    current = Point2D(current.x + dx, current.y - dy)
                     commands.append(.jump(current))
                 }
             default:

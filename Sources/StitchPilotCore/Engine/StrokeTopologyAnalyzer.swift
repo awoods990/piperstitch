@@ -121,6 +121,10 @@ public enum StrokeTopologyAnalyzer {
     /// rejected the entire otherwise-sound letter from the branching path.
     private static let minimumClosedLoopLengthMM = 6.0
 
+    /// See `buildGraph`: a dead-ended walk shorter than this is skeleton
+    /// noise, not a lost arm.
+    private static let minimumDanglingEdgePixels = 6
+
     // MARK: - Entry point
 
     /// Builds the topology graph for `shape`, or `nil` if the shape is
@@ -551,6 +555,10 @@ public enum StrokeTopologyAnalyzer {
         // same one), building one edge per walk.
         var visitedChainPixels = Set<Int>()
         var edges: [Edge] = []
+        // Node clusters are fixed from here on; a walk that dead-ends
+        // somewhere the degree test didn't call an endpoint gets one made
+        // for it (below), appended after the real ones.
+        var extraNodes: [Node] = []
         for node in nodes {
             let clusterPixels = nodeIndexOfPixel.filter { $0.value == node.id }.map { $0.key }
             for pixelIdx in clusterPixels {
@@ -558,37 +566,34 @@ public enum StrokeTopologyAnalyzer {
                 for (nx, ny) in stepDirections(x, y, skeleton: skeleton, width: width, height: height, nodeIndexOfPixel: nodeIndexOfPixel) {
                     let nIdx = ny * width + nx
                     guard nodeIndexOfPixel[nIdx] == nil, !visitedChainPixels.contains(nIdx) else { continue }
-                    if let edge = walkEdge(from: (nx, ny), cameFrom: (x, y), skeleton: skeleton, width: width, height: height,
-                                            nodeIndexOfPixel: nodeIndexOfPixel, visitedChainPixels: &visitedChainPixels),
-                       // A dead-end walk (no node ever reached) is only
-                       // possible via the defensive re-visit guard inside
-                       // `walkEdge` -- it shouldn't happen on a properly
-                       // thinned skeleton (every chain pixel has exactly
-                       // 2 branch directions by construction), so rather
-                       // than guess at a plausible-looking endpoint, drop
-                       // the fragment entirely.
-                       let endNodeID = edge.endNodeID, let endNode = nodes.first(where: { $0.id == endNodeID }) {
+                    guard let edge = walkEdge(from: (nx, ny), cameFrom: (x, y), skeleton: skeleton, width: width, height: height,
+                                              nodeIndexOfPixel: nodeIndexOfPixel, visitedChainPixels: &visitedChainPixels) else { continue }
+                    if let endNodeID = edge.endNodeID, let endNode = nodes.first(where: { $0.id == endNodeID }) {
                         let polyline = [physicalPoint(x, y)] + edge.pixels.map { physicalPoint($0.0, $0.1) } + [endNode.position]
                         let widths = [widthMM(x, y)] + edge.pixels.map { widthMM($0.0, $0.1) } + [endNode.widthMM]
                         edges.append(Edge(startNodeID: node.id, endNodeID: endNodeID,
                                            isClosedLoop: false, polyline: polyline, widthsMM: widths))
+                    } else if let last = edge.pixels.last, edge.pixels.count >= minimumDanglingEdgePixels {
+                        // A dead-end walk (no node reached) was assumed
+                        // impossible on a properly thinned skeleton and
+                        // dropped. It does happen -- the step rule can run
+                        // out of moves on a two-pixel staircase, or into a
+                        // pixel another walk already claimed -- and dropping
+                        // it silently lost a real 40 mm arm of a thin ribbon
+                        // (the Oholi mark's, from the letter to the loop), so
+                        // the satin came out half-length. Keep the arm,
+                        // terminated at a synthetic endpoint.
+                        let endID = nodes.count + extraNodes.count
+                        extraNodes.append(Node(id: endID, position: physicalPoint(last.0, last.1), isJunction: false, widthMM: widthMM(last.0, last.1)))
+                        let polyline = [physicalPoint(x, y)] + edge.pixels.map { physicalPoint($0.0, $0.1) }
+                        let widths = [widthMM(x, y)] + edge.pixels.map { widthMM($0.0, $0.1) }
+                        edges.append(Edge(startNodeID: node.id, endNodeID: endID, isClosedLoop: false, polyline: polyline, widthsMM: widths))
                     }
                 }
             }
         }
+        nodes += extraNodes
 
-        // `visitedChainPixels` only ever accumulates plain chain pixels
-        // (see `walkEdge`) -- a node's own pixel(s) are tracked
-        // separately in `nodeIndexOfPixel` and never added there. Without
-        // also excluding those, `walkClosedLoops`'s scan for "any
-        // unvisited skeleton pixel" finds an endpoint's own pixel (never
-        // itself walked *into*, only walked *up to*) looking exactly
-        // like an untouched fragment, and re-traces the whole
-        // already-covered edge from there as a bogus extra "closed
-        // loop" -- found directly against this file's own straight-
-        // column regression test, the simplest possible case, which
-        // came back with its one real edge plus an exact-length phantom
-        // duplicate before this was excluded too.
         edges += walkClosedLoops(skeleton: skeleton, width: width, height: height,
                                   excluding: visitedChainPixels.union(nodeIndexOfPixel.keys),
                                   physicalPoint: physicalPoint, widthMM: widthMM)

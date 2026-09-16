@@ -108,6 +108,7 @@ enum DocumentBuilder {
                                              threadColor: threadColor, parameters: parameters))
           }
         }
+        objects = StitchTypeClassifier.separateStrokesFromAreas(objects)
         objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
         objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
         return StitchDocument(name: name, physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)

@@ -112,7 +112,27 @@ public enum StitchTypeClassifier {
             }
             return .tatamiFill
         }
-        if shape.subPaths.count == 2 { return .satin }
+        if shape.subPaths.count == 2 {
+            // A ring is satin only if it is narrow enough to be one: its
+            // mean width is the band's area over its mean circumference.
+            // A 100 mm disc with a letter-shaped hole used to be solid (the
+            // importer stripped holes covered by other shapes) and is now a
+            // 20 mm-wide ring, which is an area, not a column.
+            let holePerimeter = PolygonGeometry.pathLength(shape.subPaths[1].points + [shape.subPaths[1].points[0]])
+            let outerPerimeter = PolygonGeometry.pathLength(outer.points + [outer.points[0]])
+            let ringArea = area - abs(PolygonGeometry.signedArea(shape.subPaths[1].points))
+            let meanCircumference = (holePerimeter + outerPerimeter) / 2
+            let ringWidth = meanCircumference > 0 ? ringArea / meanCircumference : averageWidth
+            guard ringWidth <= parameters.maxSatinWidthMM else { return .tatamiFill }
+            // ...and only if the radial ring rails actually cover it (a
+            // ribbon with a loop at one end is not a ring). Otherwise the
+            // branching path may still sew it as satin, if allowed.
+            if SatinColumnGenerator.canRepresentAsRingSatinColumn(shape: shape) { return .satin }
+            if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
+                return .satin
+            }
+            return .tatamiFill
+        }
 
         // A shape's *average* width along one global axis is silent about
         // whether it's actually one straight-ish column at all -- an "L"
@@ -130,6 +150,12 @@ public enum StitchTypeClassifier {
         // "H") -- this was the one caller of a `.satin` verdict that
         // didn't, because raster import never goes through the lettering
         // path at all.
+        // Far too wide for any column -- a 100 mm disc came back "satin"
+        // here (the single-column rail fit succeeds on a convex blob) and
+        // only sewed as fill because the satin generator converts over-wide
+        // sections. Call it what it is. (`averageWidth` is the outer
+        // polygon's, so this test belongs only here, on hole-free shapes.)
+        if averageWidth > parameters.maxSatinWidthMM * 1.5 { return .tatamiFill }
         if SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) { return .satin }
         // `allowBranchingSatin` (default false — see its own doc comment
         // on `StitchGenerationParameters`): a genuinely branching outline
@@ -273,6 +299,107 @@ public enum StitchTypeClassifier {
     /// accent alone), so this runs *before* that pass: harmonizing the
     /// bulkier siblings first gives the outlier reconciliation a more
     /// reliable, already-consistent consensus to correct outliers toward.
+    /// Strokes narrower than this are sewn as satin and areas wider than it
+    /// as fill when one imported region contains both -- see
+    /// `separateStrokesFromAreas`. Professional practice on the reference
+    /// designs: the alligator's 1 mm keyline is satin, its 3-5 mm collar
+    /// and belly bands are fill, and nothing wider than about this is
+    /// ever a single satin column.
+    public static let strokeSplitWidthMM = 3.0
+
+    /// How far a separated stroke grows back over the area it was cut
+    /// from, so the satin lands on fill rather than beside it.
+    public static let strokeAreaOverlapMM = 0.4
+
+    /// Narrowest satin a separated stroke may be (see
+    /// `separateStrokesFromAreas`); below this it is a bean stitch.
+    public static let strokeMinimumSatinWidthMM = 1.0
+
+    /// A separated piece smaller than this in both directions is a tracing
+    /// sliver, not a design element.
+    public static let minimumPieceDimensionMM = 1.0
+
+    /// Splits each fill-classified object into its area (fill) and its
+    /// strokes (satin), the way a digitizer treats a colour that is both
+    /// a solid and a line -- a cartoon whose dark green is the jacket AND
+    /// the keyline round every other colour, imported as one shape. Left
+    /// whole, that shape can only be fill (short choppy rows across the
+    /// 1 mm line) or satin (fans across the 25 mm jacket); the
+    /// professionally digitized version of exactly that artwork fills the
+    /// jacket and runs a satin outline over everything, and the outline is
+    /// nearly half its stitches. `ShapeMerger.splitThickAndThin` does the
+    /// geometry; this decides what each part becomes.
+    ///
+    /// A shape that turns out to be *all* stroke -- a letter, a keyline
+    /// with nothing solid attached -- is not split, but is allowed the
+    /// branching-satin path (`allowBranchingSatin`), which is how a
+    /// stroke network becomes satin at all. That path stays off for
+    /// everything else: measured thinness is a far better gate for it than
+    /// the shape's hole count, and the same alligator shows what it does to
+    /// an area (see DIGITIZING_ENGINE.md, "professional samples"). Strokes
+    /// that still can't be satin fall back to fill, as before.
+    public static func separateStrokesFromAreas(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
+        var result: [EmbroideryObject] = []
+        for object in objects {
+            guard object.stitchType == .tatamiFill,
+                  let split = ShapeMerger.splitThickAndThin(object.shape, thinWidthMM: strokeSplitWidthMM, overlapMM: strokeAreaOverlapMM) else {
+                result.append(object)
+                continue
+            }
+            var strokeParameters = object.parameters
+            strokeParameters.allowBranchingSatin = true
+            // A 1 mm keyline is satin in professional work (the alligator's
+            // is ~1.2 mm); the general minimum stays where it is.
+            strokeParameters.minSatinWidthMM = min(strokeParameters.minSatinWidthMM, strokeMinimumSatinWidthMM)
+            func strokeObject(_ shape: VectorShape, name: String) -> EmbroideryObject {
+                var type = classify(shape: shape, parameters: strokeParameters)
+                // A stroke that can't be satin is a bean-stitch line along
+                // its own edges -- never fill: tatami rows across a 1 mm
+                // line are the one result that is worse than either.
+                if type == .tatamiFill { type = .tripleRun }
+                if ProcessInfo.processInfo.environment["DEBUG_CLASSIFY"] != nil, type != .satin {
+                    print("  stroke \(name): \(type.rawValue); subPaths=\(shape.subPaths.count); branching: \(SatinColumnGenerator.branchingSatinRejection(shape: shape, parameters: strokeParameters) ?? "eligible")")
+                }
+                // Decided by measured geometry: the sibling-consensus passes
+                // that follow must not fold it back into its area's fill.
+                return EmbroideryObject(name: name, shape: shape, stitchType: type, threadColor: object.threadColor,
+                                        parameters: strokeParameters, stitchTypeIsManualOverride: true)
+            }
+            if split.thick.isEmpty {
+                // All stroke: keep the object, let it try branching satin.
+                let type = classify(shape: object.shape, parameters: strokeParameters)
+                if ProcessInfo.processInfo.environment["DEBUG_CLASSIFY"] != nil {
+                    print("  all-stroke \(object.name): \(type.rawValue); subPaths=\(object.shape.subPaths.count); branching: \(SatinColumnGenerator.branchingSatinRejection(shape: object.shape, parameters: strokeParameters) ?? "eligible")")
+                }
+                var stroke = object
+                if type == .satin { stroke.stitchType = .satin; stroke.parameters = strokeParameters; stroke.stitchTypeIsManualOverride = true }
+                result.append(stroke)
+                continue
+            }
+            if split.thin.isEmpty { result.append(object); continue }
+            // Tracing the two masks can leave sub-millimetre slivers along
+            // the cut; nothing that small is sewable.
+            func isSubstantial(_ piece: VectorShape) -> Bool {
+                let box = piece.boundingBox
+                return max(box.width, box.height) >= minimumPieceDimensionMM
+            }
+            // Areas first, strokes after, so the satin overlaps onto sewn
+            // fill rather than the fill covering the satin's edge.
+            let areas = split.thick.filter(isSubstantial), strokes = split.thin.filter(isSubstantial)
+            for (i, piece) in areas.enumerated() {
+                var area = object
+                area.shape = piece
+                area.name = areas.count == 1 ? "\(object.name) (area)" : "\(object.name) (area \(i + 1))"
+                area.stitchTypeIsManualOverride = true
+                result.append(area)
+            }
+            for (i, piece) in strokes.enumerated() {
+                result.append(strokeObject(piece, name: strokes.count == 1 ? "\(object.name) (outline)" : "\(object.name) (outline \(i + 1))"))
+            }
+        }
+        return result
+    }
+
     public static func harmonizeSameColorFillConsistency(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
         var groupsByColor: [RGBColor: [Int]] = [:]
         for (index, object) in objects.enumerated() {
@@ -281,7 +408,9 @@ public enum StitchTypeClassifier {
 
         var result = objects
         for indices in groupsByColor.values {
-            let candidates = indices.filter { objects[$0].stitchType == .satin || objects[$0].stitchType == .tatamiFill }
+            // An explicit choice -- the user's, or `separateStrokesFromAreas`'s
+            // geometry-based one -- is not up for a sibling vote.
+            let candidates = indices.filter { !objects[$0].stitchTypeIsManualOverride && (objects[$0].stitchType == .satin || objects[$0].stitchType == .tatamiFill) }
             guard candidates.count > 1 else { continue }
 
             var anyStructurallyFillOnly = false
@@ -429,6 +558,7 @@ public enum StitchTypeClassifier {
 
             for index in indices {
                 let object = objects[index]
+                guard !object.stitchTypeIsManualOverride else { continue }
                 guard object.stitchType == .runningStitch || object.stitchType == .tripleRun else { continue }
                 let box = object.shape.boundingBox
                 guard box.width >= minimumBulkDimensionMM, box.height >= minimumBulkDimensionMM else { continue }

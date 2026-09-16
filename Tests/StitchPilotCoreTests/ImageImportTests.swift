@@ -44,6 +44,42 @@ struct ImageImportTests {
         return mutableData as Data
     }
 
+    /// A small, blurry source: a dark frame whose 3 px-wide enclosed gaps
+    /// hold no clean white pixel at all, only light-grey blend, plus a
+    /// JPEG-style pink artifact in one corner. Modelled on a 110 px phone
+    /// screenshot of a tribal turtle (TestArtwork/Professional Files) that
+    /// came back with every hole in the shell stitched in white thread:
+    /// the corner pixel was taken as *the* background colour, which broke
+    /// the blend-colour test, and the grey outnumbered the dark colour so
+    /// the size guard on that test let it through. The holes must import
+    /// as holes (bare fabric), not as a light-grey object.
+    @Test func blurryEnclosedGapsAreHolesNotALightGreyObject() throws {
+        let size = 60
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(1, 1, 1, in: colorSpace))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        // Dark frame, 36x36, with five 5-px slots that are light grey (a
+        // blend of the dark and the white) rather than white -- and more
+        // grey than dark in total, so the old "a blend cluster is smaller
+        // than the real one" guard alone would not catch it.
+        context.setFillColor(deviceColor(0.09, 0.25, 0.30, in: colorSpace))
+        context.fill(CGRect(x: 10, y: 10, width: 36, height: 36))
+        context.setFillColor(deviceColor(0.73, 0.85, 0.88, in: colorSpace))
+        for slot in 0..<5 { context.fill(CGRect(x: 13, y: 12 + slot * 7, width: 30, height: 5)) }
+        // One pink corner pixel.
+        context.setFillColor(deviceColor(1, 0.89, 1, in: colorSpace))
+        context.fill(CGRect(x: 0, y: size - 1, width: 1, height: 1))
+        let png = encodePNG(context.makeImage()!)
+
+        let result = try ImageImporter.importShapes(from: png, maxColors: 3)
+        let lightObjects = result.fillColors.compactMap { $0 }.filter { Int($0.r) + Int($0.g) + Int($0.b) > 450 }
+        #expect(lightObjects.isEmpty, "the light-grey slots are blend, not a colour to sew: \(result.fillColors)")
+        let frame = try #require(result.shapes.max { abs(PolygonGeometry.signedArea($0.subPaths[0].points)) < abs(PolygonGeometry.signedArea($1.subPaths[0].points)) })
+        #expect(frame.subPaths.count == 6, "the frame keeps its five slots as holes (got \(frame.subPaths.count - 1))")
+    }
+
     @Test func findsSingleSquare() throws {
         let png = makePNG(size: 100, drawSquare: CGRect(x: 20, y: 20, width: 40, height: 40))
         let result = try ImageImporter.importShapes(from: png)

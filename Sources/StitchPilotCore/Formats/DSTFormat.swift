@@ -18,9 +18,15 @@ import Foundation
 ///
 /// Coordinate convention: StitchPilot's internal `Point2D` uses Y-increases-
 /// downward (matching SVG/CoreGraphics-bitmap convention used elsewhere in
-/// the import pipeline). DST's native on-disk delta encoding also increases
-/// Y downward, so — unlike libraries whose internal model is Y-up — no sign
-/// flip is needed here between internal points and file bytes.
+/// the import pipeline). DST's on-disk deltas increase Y *upward* (machine
+/// convention), so every Y is negated on the way out and back on the way
+/// in. This was originally written without the flip on the belief that
+/// pyembroidery's internal model is Y-up; it is Y-down like ours (its PEC
+/// code applies no flip, and PEC is Y-down), which is why pyembroidery's
+/// DstWriter negates Y and so must we. Confirmed against a professionally
+/// digitized design supplied as both DST and PES: the same feature sits at
+/// y = +261 in the DST and y = -261 in the PES. Without the flip every
+/// exported DST sewed upside-down (mirrored top to bottom).
 public enum DSTFormatError: Error, LocalizedError {
     case deltaOutOfRange(dx: Double, dy: Double)
     case truncatedRecord
@@ -65,7 +71,7 @@ public enum DSTFormat {
 
         func moveTo(_ target: Point2D, jump: Bool) throws {
             let targetX = Int((target.x * unitsPerMM).rounded())
-            let targetY = Int((target.y * unitsPerMM).rounded())
+            let targetY = Int((-target.y * unitsPerMM).rounded()) // DST is Y-up; see the coordinate note above
             try emitDeltaUnitsSplitIfNeeded(targetX - currentX, targetY - currentY, jump: jump, into: &body)
             currentX = targetX
             currentY = targetY
@@ -182,14 +188,15 @@ public enum DSTFormat {
         s += "CO:\(pad(colorChangeCount, 3))\r"
         let maxX = box.isEmpty ? 0 : Int((box.maxX * unitsPerMM).rounded())
         let minX = box.isEmpty ? 0 : Int((box.minX * unitsPerMM).rounded())
-        let maxY = box.isEmpty ? 0 : Int((box.maxY * unitsPerMM).rounded())
-        let minY = box.isEmpty ? 0 : Int((box.minY * unitsPerMM).rounded())
+        // Header extents describe the file's own (Y-up) coordinates.
+        let maxY = box.isEmpty ? 0 : Int((-box.minY * unitsPerMM).rounded())
+        let minY = box.isEmpty ? 0 : Int((-box.maxY * unitsPerMM).rounded())
         s += "+X:\(pad(abs(maxX), 5))\r"
         s += "-X:\(pad(abs(minX), 5))\r"
         s += "+Y:\(pad(abs(maxY), 5))\r"
         s += "-Y:\(pad(abs(minY), 5))\r"
         let ax = Int((lastPoint.x * unitsPerMM).rounded())
-        let ay = Int((lastPoint.y * unitsPerMM).rounded())
+        let ay = Int((-lastPoint.y * unitsPerMM).rounded())
         s += "AX:\(signedPad(ax, 5))\r"
         s += "AY:\(signedPad(ay, 5))\r"
         s += "MX:\(signedPad(0, 5))\r"
@@ -237,7 +244,7 @@ public enum DSTFormat {
             }
             let dx = Double(decodeAxis(b0: b0, b1: b1, b2: b2, isY: false)) / unitsPerMM
             let dy = Double(decodeAxis(b0: b0, b1: b1, b2: b2, isY: true)) / unitsPerMM
-            current = Point2D(current.x + dx, current.y + dy)
+            current = Point2D(current.x + dx, current.y - dy) // file Y-up -> internal Y-down
 
             if b2 & 0b1100_0011 == 0b1100_0011 {
                 commands.append(.colorChange)

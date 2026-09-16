@@ -12,11 +12,11 @@ import Foundation
 /// same correctness approach every format in this file uses — getting
 /// this wrong produces a file that opens but sews incorrectly (spec §59).
 ///
-/// Coordinate convention: same as DST/EXP — StitchPilot's internal
-/// `Point2D` (Y-down) already matches JEF's on-disk Y-down convention, so
-/// no sign flip is needed converting between them (verified via the
-/// reference writer, which negates Y going from its own Y-up internal
-/// model to JEF bytes).
+/// Coordinate convention: same as DST/EXP — JEF's on-disk deltas are Y-up,
+/// so Y is negated on write and on read. pyembroidery's internal model is
+/// Y-down like ours (not Y-up, as an earlier version of this note assumed),
+/// so its `write_int_8(f, -dy)` is exactly the flip we need too. See
+/// `DSTFormat`'s "Coordinate convention" note for the evidence.
 ///
 /// Layout: a 116-byte header (see `makeHeader` for the exact field-by-field
 /// breakdown), then `colorCount` big-endian... no — little-endian 32-bit
@@ -77,7 +77,7 @@ public enum JEFFormat {
 
         func moveTo(_ target: Point2D, jump: Bool) throws {
             let targetX = Int((target.x * unitsPerMM).rounded())
-            let targetY = Int((target.y * unitsPerMM).rounded())
+            let targetY = Int((-target.y * unitsPerMM).rounded()) // JEF is Y-up
             if jump, targetX == currentX, targetY == currentY {
                 // A zero-distance jump moves the needle nowhere -- skip it
                 // entirely rather than encode it. JEF's on-disk zero-delta
@@ -284,7 +284,7 @@ public enum JEFFormat {
             if b0 != 0x80 {
                 guard let b1 = readByte() else { throw JEFFormatError.truncatedRecord }
                 flushPendingTrim()
-                current = Point2D(current.x + delta(b0), current.y + delta(b1))
+                current = Point2D(current.x + delta(b0), current.y - delta(b1)) // file Y-up -> internal Y-down
                 commands.append(.stitch(current))
                 continue
             }
@@ -304,7 +304,7 @@ public enum JEFFormat {
                     pendingZeroJumps += 1
                 } else {
                     flushPendingTrim()
-                    current = Point2D(current.x + dx, current.y + dy)
+                    current = Point2D(current.x + dx, current.y - dy)
                     commands.append(.jump(current))
                 }
             case 0x01:
@@ -312,7 +312,7 @@ public enum JEFFormat {
                 commands.append(.colorChange)
                 let dx = delta(b2), dy = delta(b3)
                 if dx != 0 || dy != 0 {
-                    current = Point2D(current.x + dx, current.y + dy)
+                    current = Point2D(current.x + dx, current.y - dy)
                     commands.append(.jump(current))
                 }
             default:

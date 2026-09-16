@@ -10,6 +10,11 @@ public enum RasterTracing {
     public struct Component {
         public var topLeftMost: (x: Int, y: Int)
         public var area: Int
+        /// Every pixel of the component, as `y * width + x` indices --
+        /// for callers that relabel whole components (`ShapeMerger.
+        /// splitThickAndThin`). Costs one Int per pixel, which every
+        /// existing caller already paid for in the BFS queue.
+        public var pixelIndices: [Int]
     }
 
     // MARK: - Connected components (8-connectivity, BFS)
@@ -48,7 +53,7 @@ public enum RasterTracing {
                 }
 
                 if area >= minAreaPixels {
-                    components.append(Component(topLeftMost: topLeftMost, area: area))
+                    components.append(Component(topLeftMost: topLeftMost, area: area, pixelIndices: queue.map { $0.1 * width + $0.0 }))
                 }
             }
         }

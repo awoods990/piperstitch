@@ -118,6 +118,142 @@ public enum ShapeMerger {
         return splitIntoPieces(traced)
     }
 
+    /// Splits one region into the parts wide enough to be an area and the
+    /// parts narrow enough to be a stroke -- what a digitizer does by hand
+    /// when one colour is both a cartoon's solid jacket and its 1 mm
+    /// keyline: fill the jacket, satin the line. Morphological opening on
+    /// the raster: everything that survives an erosion by `thinWidthMM / 2`
+    /// and grows back is `thick`; what the erosion removed is `thin`. A
+    /// square structuring element (the same `dilate` the laydown footprint
+    /// uses), so a diagonal stroke's threshold is ~1.4× nominal -- fine for
+    /// a stroke-vs-area decision.
+    ///
+    /// Slivers the opening shaves off a thick part's corners (an area's
+    /// sharp corner is, locally, thinner than the threshold) are not
+    /// strokes: any thin piece under `minThinAreaMM2` goes back to the
+    /// thick side. A thick piece under `minThickAreaMM2` is likewise not
+    /// an area (a bulge in a stroke) and goes to the thin side. Each thin
+    /// piece is then grown by `overlapMM` into the thick part it touches,
+    /// so the satin sewn over it later lands on fill, never beside it with
+    /// a registration gap -- the overlap a digitizer adds by hand.
+    ///
+    /// Either array may be empty: no thin part means an ordinary solid
+    /// area, no thick part means an ordinary stroke shape (the caller
+    /// decides satin vs fill for it as before). Nil only for degenerate
+    /// input.
+    public static func splitThickAndThin(_ shape: VectorShape, thinWidthMM: Double, overlapMM: Double,
+                                         minThinAreaMM2: Double = 2.0, minThickAreaMM2: Double = 6.0) -> (thick: [VectorShape], thin: [VectorShape])? {
+        guard !shape.subPaths.isEmpty, thinWidthMM > 0 else { return nil }
+        guard let sizing = rasterSizing(for: shape.boundingBox) else { return nil }
+        let count = sizing.width * sizing.height
+        var mask = [Bool](repeating: false, count: count)
+        rasterize(polygons: shape.subPaths.map { $0.points }, into: &mask, width: sizing.width, height: sizing.height,
+                  originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        let radius = Int((thinWidthMM / 2 * sizing.scale).rounded())
+        guard radius >= 1 else { return nil }
+
+        // Erosion as dilation of the complement (the raster has a 1 mm
+        // margin, so the complement reaches the border everywhere).
+        func erode(_ source: [Bool], by r: Int) -> [Bool] {
+            var result = source.map { !$0 }
+            dilate(&result, width: sizing.width, height: sizing.height, radius: r)
+            for i in 0..<count { result[i] = !result[i] }
+            return result
+        }
+        // A shape that is nowhere much wider than the threshold is one
+        // stroke of varying width, not an area with lines attached -- a
+        // 2.5-4 mm halo round a letter, split at 3 mm, came out as eleven
+        // fill patches alternating with ten satin pieces. If an erosion at
+        // `wholeStrokeFactor` x the radius leaves nothing, the whole shape
+        // is a stroke and the caller treats it as one.
+        if erode(mask, by: Int((Double(radius) * wholeStrokeFactor).rounded())).allSatisfy({ !$0 }) { return ([], [shape]) }
+        let eroded = erode(mask, by: radius)
+        var thick = eroded
+        dilate(&thick, width: sizing.width, height: sizing.height, radius: radius)
+        for i in 0..<count { thick[i] = thick[i] && mask[i] }
+
+        var thin = [Bool](repeating: false, count: count)
+        for i in 0..<count { thin[i] = mask[i] && !thick[i] }
+        let pixelsPerMM2 = sizing.scale * sizing.scale
+        // Corner slivers back to thick; stroke bulges back to thin.
+        for component in RasterTracing.connectedComponents(mask: thin, width: sizing.width, height: sizing.height)
+        where Double(component.area) < minThinAreaMM2 * pixelsPerMM2 {
+            for i in component.pixelIndices { thin[i] = false; thick[i] = true }
+        }
+        for component in RasterTracing.connectedComponents(mask: thick, width: sizing.width, height: sizing.height)
+        where Double(component.area) < minThickAreaMM2 * pixelsPerMM2 {
+            for i in component.pixelIndices { thick[i] = false; thin[i] = true }
+        }
+        // A thin piece is a *stroke* by topology, not just by width: an
+        // area's tapering tip (a tail, a leg, a leaf point) is thin near
+        // its end too, but it is a dead end hanging off exactly one area.
+        // A keyline network encloses things (has holes), or runs between
+        // two or more areas, or stands free of any area; a very thin piece
+        // (under `strokeMeanWidthFraction` of the threshold in mean width,
+        // 2 x area / perimeter) is a stroke whatever it touches. Anything
+        // else is a tip and rejoins its area.
+        let thickComponents = RasterTracing.connectedComponents(mask: thick, width: sizing.width, height: sizing.height)
+        var thickLabel = [Int](repeating: -1, count: count)
+        for (label, component) in thickComponents.enumerated() { for i in component.pixelIndices { thickLabel[i] = label } }
+        for component in RasterTracing.connectedComponents(mask: thin, width: sizing.width, height: sizing.height) {
+            var perimeter = 0
+            var touchedAreas = Set<Int>()
+            var componentMask = [Bool](repeating: false, count: count)
+            for i in component.pixelIndices {
+                componentMask[i] = true
+                let x = i % sizing.width, y = i / sizing.width
+                var onEdge = x == 0 || y == 0 || x == sizing.width - 1 || y == sizing.height - 1
+                if !onEdge {
+                    for j in [i - 1, i + 1, i - sizing.width, i + sizing.width] {
+                        if !thin[j] { onEdge = true }
+                        if thickLabel[j] >= 0 { touchedAreas.insert(thickLabel[j]) }
+                    }
+                }
+                if onEdge { perimeter += 1 }
+            }
+            let meanWidthMM = perimeter > 0 ? 2 * Double(component.area) / Double(perimeter) / sizing.scale : 0
+            let veryThin = meanWidthMM <= thinWidthMM * strokeMeanWidthFraction
+            let enclosesSomething = !RasterTracing.findEnclosedRegionBoundaries(foregroundMask: componentMask, width: sizing.width, height: sizing.height, minAreaPixels: Int(pixelsPerMM2)).isEmpty
+            // A very thin piece still needs some length to be a line: a
+            // letter's serif or a pointed tip is thin and short, and
+            // belongs to its area.
+            var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
+            for i in component.pixelIndices { let x = i % sizing.width, y = i / sizing.width; minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y) }
+            let extentMM = Double(max(maxX - minX, maxY - minY)) / sizing.scale
+            let isStroke = enclosesSomething || touchedAreas.count != 1 || (veryThin && extentMM >= minimumStrokeExtentMM)
+            if !isStroke {
+                for i in component.pixelIndices { thin[i] = false; thick[i] = true }
+            }
+        }
+        let thinCount = thin.reduce(0) { $0 + ($1 ? 1 : 0) }, thickCount = thick.reduce(0) { $0 + ($1 ? 1 : 0) }
+        if thinCount == 0 { return ([shape], []) }
+        if thickCount == 0 { return ([], [shape]) }
+
+        // Overlap band: thin grows into thick (never outside the shape).
+        let overlapRadius = Int((overlapMM * sizing.scale).rounded())
+        if overlapRadius > 0 {
+            var grown = thin
+            dilate(&grown, width: sizing.width, height: sizing.height, radius: overlapRadius)
+            for i in 0..<count { thin[i] = grown[i] && mask[i] }
+        }
+
+        guard let thickShape = traceMask(thick, sizing: sizing), let thinShape = traceMask(thin, sizing: sizing) else { return nil }
+        return (splitIntoPieces(thickShape), splitIntoPieces(thinShape))
+    }
+
+    /// See `splitThickAndThin`: a very thin piece attached to one area
+    /// must span at least this far to count as a line rather than a tip.
+    private static let minimumStrokeExtentMM = 6.0
+
+    /// See `splitThickAndThin`: nothing in the shape survives an erosion
+    /// at this multiple of the split radius means the shape is all stroke.
+    private static let wholeStrokeFactor = 1.6
+
+    /// See `splitThickAndThin`: a thin piece under this fraction of the
+    /// split threshold in mean width is a stroke regardless of topology
+    /// -- a 1 mm line hanging off a 4 mm-threshold area is a line.
+    private static let strokeMeanWidthFraction = 0.4
+
     /// One shape per outer boundary, each with the holes that lie inside
     /// it. `traceMask` lists outers first, then every hole; an outer is a
     /// subpath not inside any other subpath.

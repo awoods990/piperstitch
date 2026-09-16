@@ -1414,6 +1414,7 @@ final class AppState: ObservableObject {
         // outline confused the width heuristics) that landed on
         // running/triple-run stitch back to whatever its bulkier siblings
         // actually sew as. See each pass's own doc comment.
+        objects = StitchTypeClassifier.separateStrokesFromAreas(objects)
         objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
         objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
         document = StitchDocument(name: lastName, physicalWidthMM: physicalWidthMM, physicalHeightMM: physicalHeightMM, objects: objects)

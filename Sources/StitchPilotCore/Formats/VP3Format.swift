@@ -31,23 +31,17 @@ import Foundation
 /// than trusting the arithmetic implied by the source alone.
 ///
 /// **Coordinate convention — the one place VP3 differs from DST/EXP/JEF:**
-/// StitchPilot's internal `Point2D` is Y-down, and DST/EXP/JEF's on-disk
-/// convention already matches it directly (see their own "Coordinate
-/// convention" notes). VP3 does not: its stitch-delta bytes carry
-/// `pyembroidery`'s own *internal* Y sign directly with no adjustment
-/// (confirmed by inspecting `Vp3Writer.py`'s stitch-encoding loop, which
-/// writes `y - last_y` completely unnegated), and that internal
-/// representation is itself the negation of StitchPilot's Y (see
-/// `validate_dst.py`'s own comment: "pyembroidery stores tenths of a
-/// millimeter, Y-up internally"). Net effect: `write` must negate the Y
-/// component of every stitch delta; the header/position fields do NOT
-/// need an extra negation, because the reference source already applies
-/// its own explicit sign flip there (`* -100` for the "top"/"bottom"/
-/// center/start-position Y fields) which exactly cancels the internal
-/// flip when re-derived in terms of StitchPilot's own bounding box —
-/// verified against a real DST file (StitchPilot's own already-trusted
-/// Y-down oracle) fed into `pyembroidery`'s VP3 writer and compared byte
-/// for byte, not derived by algebra alone.
+/// StitchPilot's internal `Point2D` is Y-down, as is pyembroidery's
+/// internal model (see `DSTFormat`'s "Coordinate convention" note for how
+/// that was established). VP3's stitch-delta bytes are Y-down too --
+/// `Vp3Writer.py` writes `y - last_y` unnegated -- so stitch deltas go out
+/// with NO sign change, unlike DST/EXP/JEF. The header/position fields are
+/// the reverse: the reference negates every Y there (`* -100` on "top"/
+/// "bottom", the design centre, and each block's start-from-centre and
+/// shift), and since our Y is its Y, we negate the same fields. An earlier
+/// version of this writer had both halves inverted (deltas negated, header
+/// not) on the belief that pyembroidery was Y-up internally; the result
+/// sewed upside-down.
 ///
 /// **No jump command exists.** VP3 has no distinct "needle up, travel"
 /// record at all (per `Vp3Writer.py`'s own comment: "VP3 has no jump
@@ -158,7 +152,7 @@ public enum VP3Format {
             case .stitch(let p):
                 noteAnyPoint(p)
                 let dxMM = p.x - deltaBaseline.x
-                let dyMM = -(p.y - deltaBaseline.y) // see "Coordinate convention" above
+                let dyMM = p.y - deltaBaseline.y // VP3 deltas are Y-down like us; see "Coordinate convention" above
                 deltaBaseline = p
                 try appendStitchDelta(dxMM: dxMM, dyMM: dyMM, into: &blocks[currentIndex()].stitchBytes)
             case .jump(let p):
@@ -201,17 +195,13 @@ public enum VP3Format {
         var body = Data()
         body.append(utf16String: "") // global notes/settings
 
-        // Extends: the reference's own explicit Y negation (`* -100` on
-        // pyembroidery's internally-already-negated Y) exactly cancels
-        // back to StitchPilot's own Y-down bounding box directly -- no
-        // extra sign flip needed here, unlike the in-stream stitch deltas.
-        // See this file's top doc comment; verified against a real DST
-        // file of known StitchPilot-convention bounds fed through
-        // pyembroidery's own VP3 writer.
-        body.append(bigEndian32(headerUnits(box.maxX)))  // "right"
-        body.append(bigEndian32(headerUnits(box.maxY)))  // "-top"
-        body.append(bigEndian32(headerUnits(box.minX)))  // "left"
-        body.append(bigEndian32(headerUnits(box.minY)))  // "-bottom"
+        // Extends, with the reference's Y negation (`extends[1] * -100`,
+        // `extends[3] * -100`): the file stores the top and bottom edges
+        // with Y pointing up. See this file's top doc comment.
+        body.append(bigEndian32(headerUnits(box.maxX)))   // right
+        body.append(bigEndian32(-headerUnits(box.minY)))  // -top
+        body.append(bigEndian32(headerUnits(box.minX)))   // left
+        body.append(bigEndian32(-headerUnits(box.maxY)))  // -bottom
 
         let stitchCount = blocks.reduce(0) { $0 + countPlainStitches($1) }
         body.append(bigEndian32(Int32(stitchCount)))
@@ -256,7 +246,7 @@ public enum VP3Format {
                                           centerX: Double, centerY: Double, halfWidth: Double, halfHeight: Double, box: BoundingBox) throws -> Data {
         var body = Data()
         body.append(bigEndian32(headerUnits(centerX)))
-        body.append(bigEndian32(headerUnits(centerY)))
+        body.append(bigEndian32(-headerUnits(centerY))) // `center_y * -100` in the reference
         body.append(contentsOf: [0, 0, 0])
 
         body.append(bigEndian32(-headerUnits(halfWidth)))
@@ -293,14 +283,14 @@ public enum VP3Format {
     private static func writeColorBlock(_ block: ColorBlock, isFirst: Bool, centerX: Double, centerY: Double, color: RGBColor) -> Data {
         var body = Data()
         let startFromCenterX = block.firstPos.x - centerX
-        let startFromCenterY = block.firstPos.y - centerY
+        let startFromCenterY = -(block.firstPos.y - centerY) // negated like the reference
         body.append(bigEndian32(headerUnits(startFromCenterX)))
         body.append(bigEndian32(headerUnits(startFromCenterY)))
 
         body.append(writeThread(color))
 
         let shiftX = block.lastPos.x - block.firstPos.x
-        let shiftY = block.lastPos.y - block.firstPos.y
+        let shiftY = -(block.lastPos.y - block.firstPos.y) // negated like the reference
         body.append(bigEndian32(headerUnits(shiftX)))
         body.append(bigEndian32(headerUnits(shiftY)))
 
@@ -429,7 +419,7 @@ public enum VP3Format {
                 let b1 = try cursor.readUInt8()
                 let dx = Double(Int8(bitPattern: b0)) / stitchUnitsPerMM
                 let dy = Double(Int8(bitPattern: b1)) / stitchUnitsPerMM
-                runningPos = Point2D(runningPos.x + dx, runningPos.y - dy) // inverse of write's Y negation
+                runningPos = Point2D(runningPos.x + dx, runningPos.y + dy) // deltas are Y-down, same as internal
                 commands.append(.stitch(runningPos))
                 continue
             }
@@ -441,7 +431,7 @@ public enum VP3Format {
                 _ = try cursor.take(2) // trailing \x80\x02 closer
                 let dx = Double(dxRaw) / stitchUnitsPerMM
                 let dy = Double(dyRaw) / stitchUnitsPerMM
-                runningPos = Point2D(runningPos.x + dx, runningPos.y - dy)
+                runningPos = Point2D(runningPos.x + dx, runningPos.y + dy)
                 commands.append(.stitch(runningPos))
             case 0x03:
                 commands.append(.trim)

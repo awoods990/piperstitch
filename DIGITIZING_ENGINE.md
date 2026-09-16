@@ -939,6 +939,124 @@ shape). 347 tests pass. `allowBranchingSatin` remains default `false`;
 `DigitizeCLI` gained an `ALLOW_BRANCHING_SATIN=1` diagnostic toggle
 alongside its existing `ONLY_OBJECT`/`DEBUG_SATIN` ones.
 
+## Professional samples -- five hand-digitized references (September 2026)
+
+Five designs digitized by professionals (Wilcom, "Karen's Digitizing" and
+two production shops) arrived as original artwork plus the finished
+DST/PES and production worksheets: a golfing alligator (76 x 74 mm, 13 861
+st, 6 colours), a rooster weathervane (59 x 76 mm, 6 450 st), a tribal sea
+turtle (71 x 63 mm, 9 384 st, one colour, all satin), a pink elephant with
+a cocktail (98 x 64 mm, 5 992 st, 7 colours) and "SIESTA KEY" block
+lettering (121 x 26 mm, 4 479 st). `DigitizeCLI --analyze <dst|pes>
+<out.png>` reads a finished file, prints a structural profile (stitch
+lengths, per-colour-run stitch count and *reversal share* -- a satin column
+reverses direction on every stitch, a fill only at row ends -- and
+stitches per mm2) and renders it with our renderer; `PROFILE=1` prints the
+same profile for our own output, so the two sit side by side. What the
+comparison found, in the order it mattered:
+
+**Every DST, EXP, JEF and VP3 we had ever written was upside-down.** The
+alligator's DST and PES decoded to mirror images of each other through our
+readers; pyembroidery read both identically. DST/EXP/JEF store Y pointing
+up and we wrote our Y-down coordinates unflipped; VP3 stores deltas Y-down
+and we flipped them. Every format note had reasoned from "pyembroidery is
+Y-up internally", which is false (its PEC code applies no flip and PEC is
+Y-down), and the test oracles negated Y on the same premise, so the
+cross-validation agreed with the mirrored writers. Fixed in all four
+writers and readers, the oracles corrected, FORMATS.md rewritten, and
+`ThirdPartySampleTests.dstAndPESDecodeTheSameDesignInTheSameOrientation`
+added: the vendored `scene.dst`/`scene.pes` pair must decode to the same
+occupancy grid, not its vertical mirror.
+
+**Keyline networks are strokes, not silhouettes.** The alligator's dark
+green is both its jacket and the 1 mm keyline round every other colour. The
+importer's "strip a hole that another shape covers, sew the field solid
+underneath" rule (right for text on a banner) turned that keyline into a
+solid 76 mm silhouette sewn under the whole design: twice the stitches,
+the outline's character gone, and the base fill's rows showing through
+every seam between the colours on top -- the "stray lines" first blamed on
+travel routing. The rule now applies only to shapes that are mostly solid
+(`minimumSolidFractionForHoleRemoval`, 35 % of the outer area); a line
+drawing keeps its holes. The 96-px Red Sox "B" changed the same way: its
+navy keyline is now a satin ring with open counters instead of a solid
+disc under the letter.
+
+**Strokes and areas in one colour are separated.** The pro fills the
+jacket and runs a satin outline over everything -- the outline is 46 % of
+their stitches. `ShapeMerger.splitThickAndThin` does a morphological
+opening on the shape at `StitchTypeClassifier.strokeSplitWidthMM` (3 mm):
+what survives erosion and regrowth is area, what it removed is stroke,
+with the stroke grown 0.4 mm back over the area so the satin lands on fill.
+A thin piece counts as a stroke only by topology -- it encloses something,
+or touches two or more areas, or none, or is very thin (under 40 % of the
+threshold) and at least 6 mm long; a tapering tail tip or a serif touches
+exactly one area and rejoins it. A shape nowhere much wider than the
+threshold (a 2.5-4 mm halo) is one stroke, never split (it came out as
+eleven fill patches alternating with ten satin pieces before that rule).
+`StitchTypeClassifier.separateStrokesFromAreas` runs in all three
+front-ends before the sibling-consensus passes, emits areas (fill, first)
+then strokes, marks both `stitchTypeIsManualOverride` so those passes
+leave them alone, and gives strokes `allowBranchingSatin` and a 1 mm
+minimum satin width (the pro's keyline is ~1.2 mm). A stroke that can't be
+satin is a bean stitch along its edges, never fill. A shape that is all
+stroke (a letter, a keyline with nothing solid attached) is not split but
+gets the branching allowance -- measured thinness is the gate for that
+path now, not hole count. Enabling branching satin on an unsplit
+area-plus-keyline object was tried first and is the cautionary picture:
+satin fans across the 25 mm jacket.
+
+**Branching satin hardened on real stroke networks.** A loop segment whose
+radial ring rails fail (an irregular enclosed region, a tribal spiral)
+falls back to the perpendicular skeleton rails every open segment uses;
+adjacent crossings that scissor are repaired (swap sides, else drop, up to
+15 % of a segment) instead of failing the shape; a skeleton stub under
+2 mm that can't be railed is skipped; a shape with no junction is
+accepted (one edge, perpendicular rails) so a long curved ribbon the
+single-column rails can't fit still gets satin; and
+`StrokeTopologyAnalyzer` keeps a skeleton walk that dead-ends without
+reaching a node (a two-pixel staircase, a pixel another walk claimed) as
+an edge with a synthetic endpoint -- dropping it silently lost the 40 mm
+arm of the Oholi ribbon. The ring rule in `classify` now requires the
+radial sweep to reach the whole outline (`ringRailsReachOutline`); a
+ribbon with a loop at one end is not a ring, whatever its hole count. The
+branching path's underlay follows its skeleton, travelling between edges
+along the skeleton (BFS over the topology) rather than in a straight line
+-- the single-column centre-run underlay drew a hook past each end of an
+"H". `DigitizePipeline` sews a branching-classified satin with the
+branching generator first: the single-column `generatePartial` does not
+throw on such a shape, it succeeds on whatever its rails reach and drops
+the rest.
+
+**Blurry sources.** The turtle arrived as a 110-px phone screenshot; every
+2-4 px negative space inside the shell was blend pixels with no clean
+white, the grey outnumbered the dark colour (so the size guard on the ramp
+test let it through), and a JPEG-pink corner pixel had been taken as *the*
+background colour (so the colour-line test failed). Every hole was
+stitched solid in white thread. The background is now the per-channel
+median of all border pixels; a cluster on the background/foreground colour
+line is a ramp whatever its size when nearly all its pixels sit within 2 px
+of another label AND at least half within 2 px of the design colour it
+blends from (the second test is what keeps a genuine thin pale line -- the
+Oholi ribbon beside navy letters -- from being dissolved); and a ramp pixel
+decisively nearer the background than any design colour (Delta-E ratio
+under 0.6) resolves to background outright rather than by neighbour vote,
+which alone fills an all-blend hole with the surrounding colour.
+
+**Also:** a shape whose average width is past 1.5x `maxSatinWidthMM`
+classifies fill outright (a 100 mm disc came back "satin" and only sewed
+as fill because the generator converted every over-wide crossing).
+
+**Where we stand against the five.** Alligator: same structure as the pro
+(fill bodies, satin keyline on top), 12 300 st vs 13 861, keyline ~1.2 mm
+vs their deliberately bold ~2 mm. Turtle: all satin like the pro, but the
+source is too small for the shapes to be right; the pro had the vector.
+Rooster: the photo's dark corners import as objects -- photo backgrounds
+are a separate problem. Elephant: the screenshot of an *embroidered*
+sample is a poor source (31 sub-2 mm fragments); not pursued. Siesta Key
+has no original to run. The CLI renderer's white highlight line makes
+0.32 mm fill rows look sparse at 12 px/mm; the stitch data is right, the
+renderer exaggerates -- left as is, noted.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

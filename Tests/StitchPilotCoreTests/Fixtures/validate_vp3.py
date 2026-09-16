@@ -8,11 +8,11 @@ test to compare against its own StitchPlan.
 Not part of the shipped app. Never invoked outside `swift test`.
 
 Unlike DST/EXP/JEF, pyembroidery's VP3 reader converts its own internal
-0.1mm/Y-up units back to real millimeters itself (dividing by 100, since
+0.1mm/Y-down units back to real millimeters itself (dividing by 100, since
 the on-disk header/position scale is 0.001mm/unit -- see VP3Format.swift's
 own doc comment) before the values ever reach `pattern.stitches` here --
 but the *stitch-delta* bytes it decodes are still pyembroidery's native
-0.1mm/Y-up units, same as every other format. This script negates Y and
+0.1mm/Y-down units, same as every other format. This script simply
 divides by 10 for those, exactly like every other format's own oracle
 script, since that part of the convention is unchanged.
 """
@@ -37,7 +37,7 @@ def main() -> None:
 
     for x, y, command in pattern.stitches:
         mm_x = x / 10.0
-        mm_y = -y / 10.0
+        mm_y = y / 10.0  # pyembroidery is Y-down internally, same as StitchPilot
         if command == pyembroidery.STITCH:
             stitch_count += 1
             points.append([mm_x, mm_y])
