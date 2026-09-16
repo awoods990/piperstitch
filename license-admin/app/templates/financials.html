@@ -28,13 +28,13 @@
     <div style="overflow-x:auto">
     <table>
       <tr>
-        <th>Period</th><th>Payments</th><th>Revenue</th><th>Stripe fees</th><th>Refunds</th><th>Net revenue</th>
+        <th>Period</th><th>Payments</th><th>Revenue</th><th class="muted">PiperStitch</th><th class="muted">Proofs</th><th>Stripe fees</th><th>Refunds</th><th>Net revenue</th>
         {% for c in categories %}<th>{{ c }}</th>{% endfor %}
         <th>All expenses</th><th>Net</th><th class="muted">Share accrued</th><th class="muted">Subs +/−</th>
       </tr>
       {% for r in rows %}
       <tr {% if r.is_total %}style="font-weight:600; border-top:2px solid var(--border)"{% endif %}>
-        <td>{{ r.label }}</td><td>{{ r.payments }}</td><td>{{ r.revenue_cents|money }}</td><td class="muted">{{ r.stripe_fees_cents|money }}</td><td class="muted">{{ r.refunds_cents|money }}</td><td>{{ r.net_revenue_cents|money }}</td>
+        <td>{{ r.label }}</td><td>{{ r.payments }}</td><td>{{ r.revenue_cents|money }}</td><td class="muted">{{ r.revenue_core_cents|money }}</td><td class="muted">{{ r.revenue_proofs_cents|money }}</td><td class="muted">{{ r.stripe_fees_cents|money }}</td><td class="muted">{{ r.refunds_cents|money }}</td><td>{{ r.net_revenue_cents|money }}</td>
         {% for c in categories %}<td class="muted">{{ r.expenses_by_category.get(c, 0)|money }}</td>{% endfor %}
         <td>{{ r.total_expenses_cents|money }}</td>
         <td style="color: {{ '#2f6b41' if r.net_cents >= 0 else '#a3312a' }}"><strong>{{ r.net_cents|money }}</strong></td>

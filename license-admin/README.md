@@ -77,6 +77,7 @@ cp .env.example .env    # then fill in .env — see below
 | `SESSION_COOKIE_SECURE` | `false` locally, **`true` in any real deployment.** |
 | `STRIPE_PUBLISHABLE_KEY` / `STRIPE_SECRET_KEY` | Stripe Dashboard → Developers → API keys. A **new Stripe account** for PiperStitch, or a separate product in the existing one — either way, test keys until you go live. |
 | `STRIPE_PRICE_MONTHLY` | `python3 scripts/create_stripe_prices.py` (needs `STRIPE_SECRET_KEY`). Once in test mode, once more in live mode. |
+| `STRIPE_PRICE_PROOFS_MONTHLY` | The same script prints it: the PiperStitch Proofs monthly price ($25 by default, `PROOFS_MONTHLY_PRICE_CENTS`). Proofs is sold and tracked here as a second product on the same customer — three free proofs (`PROOFS_FREE_PROOFS`), then this subscription. `PROOFS_APP_URL` is where its checkout returns to. |
 | `STRIPE_WEBHOOK_SECRET` | See "Stripe webhook" below. |
 | `SMTP_*` (fallback, not what's live) | A Microsoft 365 mailbox, same pattern as Amerus's setup: `smtp.office365.com`, port 587, `SMTP_USE_SSL=false`, the mailbox's address/app password. Only used when `POSTMARK_API_TOKEN` is unset. |
 | `POSTMARK_*` | **This is what actually sends production email.** Postmark server token + `POSTMARK_FROM=PiperStitch <hello@piperstitch.com>`. See "Email deliverability" below — Postmark needs its own DNS records added before mail from hello@ will actually arrive anywhere. |

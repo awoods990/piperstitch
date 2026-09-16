@@ -30,6 +30,19 @@
         {% if trial_ends %}Downloaded {{ customer.downloaded_at|short_date }} &mdash; in-app trial ends around <strong>{{ trial_ends }}</strong>{% if trial_ends < today %} (past){% endif %}.{% else %}Registered but hasn't downloaded yet.{% endif %}
       {% endif %}
     </div>
+    <div class="status-line" style="margin-top:6px">
+      <strong>Proofs:</strong>
+      {% if proofs.subscribed %}
+        <span class="pill {{ proofs.status }}">{{ proofs.status.replace('_', ' ') }}</span>
+        Subscribed to PiperStitch Proofs{% if proofs.period_end %} &mdash; {% if proofs.cancel_at_period_end or proofs.status == 'comp' %}ends{% else %}renews{% endif %} <strong>{{ proofs.period_end.date().isoformat() }}</strong>{% endif %}.
+      {% elif proofs.status == 'ended' %}
+        <span class="pill ended">ended</span> Proofs subscription ended{% if proofs.period_end %} on {{ proofs.period_end.date().isoformat() }}{% endif %} &middot; {{ proofs.free_used }} of {{ proofs.free_granted }} free proofs used.
+      {% else %}
+        <span class="pill {{ 'trialing' if proofs.free_left else 'not-yet' }}">{{ 'free proofs' if proofs.free_left else 'free proofs used up' }}</span>
+        {{ proofs.free_used }} of {{ proofs.free_granted }} free proofs used{% if proofs.free_used == 0 %} (hasn't sent one yet){% endif %}.
+      {% endif %}
+      <form method="post" action="/admin/customers/{{ customer.id }}/free-proofs" style="display:inline-flex; gap:4px; margin-left:8px"><input type="number" name="count" value="3" style="width:64px; padding:4px 6px; font-size:12px"><button class="small secondary" type="submit">Add free proofs</button></form>
+    </div>
     <div class="muted small">
       Registered {{ customer.created_at|short_dt }} via {{ customer.source.replace('_', ' ') }}
       {% if customer.consent_terms_version %}&middot; accepted Terms v{{ customer.consent_terms_version }} at {{ customer.consent_accepted_at|short_dt }}{% endif %}
@@ -45,6 +58,7 @@
         <div style="padding:10px 0; border-bottom:1px solid var(--border)">
           <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start">
             <div>
+              <span class="pill {{ 'proofs' if s.product == 'proofs' else 'core' }}">{{ 'Proofs' if s.product == 'proofs' else 'PiperStitch' }}</span>
               <span class="pill {{ s.status }}">{{ s.status.replace('_', ' ') }}</span>
               <span class="pill {{ s.source }}">{{ s.source }}</span>
               {% if s.cancel_at_period_end and s.status in ('active','trialing','past_due') %}<span class="pill cancelling">ends at period end</span>{% endif %}
@@ -141,6 +155,8 @@
             <div><label for="comp_months">Months from today</label><input type="number" id="comp_months" name="months" value="1" min="1" max="120"></div>
             <div><label for="comp_until">…or through a date</label><input type="date" id="comp_until" name="until"></div>
           </div>
+          <label for="comp_product">For</label>
+          <select id="comp_product" name="product"><option value="core">PiperStitch (the app)</option><option value="proofs">PiperStitch Proofs</option></select>
           <label for="comp_note">Note (why)</label>
           <input type="text" id="comp_note" name="note" placeholder="e.g. review copy, support make-good">
           <div style="margin-top:12px; display:flex; gap:14px; align-items:center">

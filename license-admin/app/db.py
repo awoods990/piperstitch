@@ -68,6 +68,17 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id);
 
+CREATE TABLE IF NOT EXISTS proofs_uses (
+    -- One row per proof the customer has sent on the free plan of
+    -- PiperStitch Proofs, keyed by the proof's own id so a retry never
+    -- counts twice. The count against PROOFS_FREE_PROOFS is the trial.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    proof_ref TEXT NOT NULL UNIQUE,
+    used_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_proofs_uses_customer ON proofs_uses(customer_id);
+
 CREATE TABLE IF NOT EXISTS subscription_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subscription_id INTEGER REFERENCES subscriptions(id),
@@ -414,6 +425,9 @@ def init_db() -> None:
         _add_column_if_missing(conn, "payments", "balance_transaction_id", "TEXT")
         _add_column_if_missing(conn, "customers", "marketing_opt_out", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "customers", "last_active_at", "TEXT")   # last web sign-in / app use, for "we miss you"
+        # Which product a subscription is for: the app ('core') or PiperStitch Proofs ('proofs').
+        _add_column_if_missing(conn, "subscriptions", "product", "TEXT NOT NULL DEFAULT 'core'")
+        _add_column_if_missing(conn, "customers", "proofs_free_extra", "INTEGER NOT NULL DEFAULT 0")   # extra free proofs an admin has granted
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -532,11 +546,14 @@ def set_customer_notes(customer_id: int, notes: str) -> None:
 # list pages can show status without a query per row.
 _CUSTOMERS_WITH_STATUS = """
 SELECT customers.*,
-       (SELECT status FROM subscriptions s WHERE s.customer_id = customers.id
+       (SELECT status FROM subscriptions s WHERE s.customer_id = customers.id AND s.product = 'core'
           ORDER BY (s.status IN ('active','trialing','past_due','comp')) DESC, s.current_period_end DESC LIMIT 1) AS sub_status,
-       (SELECT current_period_end FROM subscriptions s WHERE s.customer_id = customers.id
+       (SELECT current_period_end FROM subscriptions s WHERE s.customer_id = customers.id AND s.product = 'core'
           ORDER BY (s.status IN ('active','trialing','past_due','comp')) DESC, s.current_period_end DESC LIMIT 1) AS sub_period_end,
-       (SELECT COUNT(*) FROM subscriptions s WHERE s.customer_id = customers.id) AS subscription_count,
+       (SELECT status FROM subscriptions s WHERE s.customer_id = customers.id AND s.product = 'proofs'
+          ORDER BY (s.status IN ('active','trialing','past_due','comp')) DESC, s.current_period_end DESC LIMIT 1) AS proofs_status,
+       (SELECT COUNT(*) FROM proofs_uses u WHERE u.customer_id = customers.id) AS proofs_used,
+       (SELECT COUNT(*) FROM subscriptions s WHERE s.customer_id = customers.id AND s.product = 'core') AS subscription_count,
        (SELECT COUNT(*) FROM devices d WHERE d.customer_id = customers.id AND d.revoked_at IS NULL) AS device_count
 FROM customers
 """
@@ -647,6 +664,7 @@ def upsert_subscription(
     source: str,
     amount_cents: Optional[int],
     notes: str = "",
+    product: str = "core",
 ) -> int:
     """Insert-or-update keyed on stripe_subscription_id. Manual comps
     (stripe_subscription_id NULL) are always inserted fresh — there is
@@ -660,14 +678,14 @@ def upsert_subscription(
         if existing:
             conn.execute(
                 "UPDATE subscriptions SET customer_id = ?, stripe_customer_id = ?, status = ?, current_period_start = ?, current_period_end = ?, "
-                "cancel_at_period_end = ?, canceled_at = ?, ended_at = ?, amount_cents = COALESCE(?, amount_cents), updated_at = ? WHERE id = ?",
-                (customer_id, stripe_customer_id, status, current_period_start, current_period_end, int(cancel_at_period_end), canceled_at, ended_at, amount_cents, now, existing["id"]),
+                "cancel_at_period_end = ?, canceled_at = ?, ended_at = ?, amount_cents = COALESCE(?, amount_cents), product = ?, updated_at = ? WHERE id = ?",
+                (customer_id, stripe_customer_id, status, current_period_start, current_period_end, int(cancel_at_period_end), canceled_at, ended_at, amount_cents, product, now, existing["id"]),
             )
             return existing["id"]
         cur = conn.execute(
             "INSERT INTO subscriptions (customer_id, stripe_subscription_id, stripe_customer_id, status, current_period_start, current_period_end, "
-            "cancel_at_period_end, canceled_at, ended_at, source, amount_cents, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (customer_id, stripe_subscription_id, stripe_customer_id, status, current_period_start, current_period_end, int(cancel_at_period_end), canceled_at, ended_at, source, amount_cents, notes, now, now),
+            "cancel_at_period_end, canceled_at, ended_at, source, amount_cents, notes, product, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (customer_id, stripe_subscription_id, stripe_customer_id, status, current_period_start, current_period_end, int(cancel_at_period_end), canceled_at, ended_at, source, amount_cents, notes, product, now, now),
         )
         return cur.lastrowid
 
@@ -701,16 +719,37 @@ def list_subscriptions_for_customer(customer_id: int) -> list[sqlite3.Row]:
         return conn.execute("SELECT * FROM subscriptions WHERE customer_id = ? ORDER BY created_at DESC", (customer_id,)).fetchall()
 
 
-def best_subscription_for_customer(customer_id: int) -> Optional[sqlite3.Row]:
-    """The subscription that decides this person's access: an entitled one
+def best_subscription_for_customer(customer_id: int, product: str = "core") -> Optional[sqlite3.Row]:
+    """The subscription that decides this person's access to `product`
+    (the app by default; 'proofs' for PiperStitch Proofs): an entitled one
     with the latest period end if there is one, otherwise whichever ended
     most recently (so the account page can say *when* access lapsed)."""
     with connection() as conn:
         return conn.execute(
-            "SELECT * FROM subscriptions WHERE customer_id = ? "
+            "SELECT * FROM subscriptions WHERE customer_id = ? AND product = ? "
             "ORDER BY (status IN ('active','trialing','past_due','comp')) DESC, COALESCE(current_period_end, '') DESC, created_at DESC LIMIT 1",
-            (customer_id,),
+            (customer_id, product),
         ).fetchone()
+
+
+def count_proofs_used(customer_id: int) -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM proofs_uses WHERE customer_id = ?", (customer_id,)).fetchone()[0]
+
+
+def record_proof_use(customer_id: int, proof_ref: str) -> bool:
+    """True when this proof is newly counted; False when it was already."""
+    with connection() as conn:
+        try:
+            conn.execute("INSERT INTO proofs_uses (customer_id, proof_ref, used_at) VALUES (?, ?, ?)", (customer_id, proof_ref, _now()))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def add_free_proofs(customer_id: int, count: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE customers SET proofs_free_extra = proofs_free_extra + ?, updated_at = ? WHERE id = ?", (int(count), _now(), customer_id))
 
 
 _SUBSCRIPTIONS_WITH_CUSTOMER = (
@@ -719,8 +758,11 @@ _SUBSCRIPTIONS_WITH_CUSTOMER = (
 )
 
 
-def list_subscriptions(query: str = "", status: str = "", limit: int = 300) -> list[sqlite3.Row]:
+def list_subscriptions(query: str = "", status: str = "", limit: int = 300, product: str = "") -> list[sqlite3.Row]:
     clauses, params = [], []
+    if product:
+        clauses.append("subscriptions.product = ?")
+        params.append(product)
     if query:
         like = f"%{query}%"
         clauses.append("(customers.name LIKE ? OR customers.email LIKE ? OR subscriptions.stripe_subscription_id LIKE ?)")
@@ -856,9 +898,19 @@ def subscriber_counts() -> dict:
             "SUM(CASE WHEN status IN ('active','trialing','past_due') AND source = 'stripe' THEN COALESCE(amount_cents, ?) ELSE 0 END) AS mrr_cents, "
             "SUM(CASE WHEN source = 'stripe' AND created_at >= ? THEN 1 ELSE 0 END) AS new_this_month, "
             "SUM(CASE WHEN source = 'stripe' AND ended_at IS NOT NULL AND ended_at >= ? THEN 1 ELSE 0 END) AS churned_this_month "
-            "FROM subscriptions",
+            "FROM subscriptions WHERE product = 'core'",
             (config.MONTHLY_PRICE_CENTS, month_start, month_start),
         ).fetchone()
+        proofs_row = conn.execute(
+            "SELECT "
+            "SUM(CASE WHEN status IN ('active','trialing','past_due') AND source = 'stripe' THEN 1 ELSE 0 END) AS paying, "
+            "SUM(CASE WHEN status = 'comp' THEN 1 ELSE 0 END) AS comps, "
+            "SUM(CASE WHEN status IN ('active','trialing','past_due') AND source = 'stripe' THEN COALESCE(amount_cents, ?) ELSE 0 END) AS mrr_cents, "
+            "SUM(CASE WHEN source = 'stripe' AND created_at >= ? THEN 1 ELSE 0 END) AS new_this_month "
+            "FROM subscriptions WHERE product = 'proofs'",
+            (config.PROOFS_MONTHLY_PRICE_CENTS, month_start),
+        ).fetchone()
+        proofs_trialists = conn.execute("SELECT COUNT(DISTINCT customer_id) FROM proofs_uses").fetchone()[0]
         now_iso = _now()
         trials = conn.execute(
             "SELECT SUM(CASE WHEN current_period_end > ? THEN 1 ELSE 0 END) AS active, "
@@ -886,6 +938,11 @@ def subscriber_counts() -> dict:
         "trials_started_this_month": trials["started_this_month"] or 0,
         "trials_converted": converted or 0,
         "failed_payments_this_month": failed or 0,
+        "proofs_paying": proofs_row["paying"] or 0,
+        "proofs_comps": proofs_row["comps"] or 0,
+        "proofs_mrr_cents": proofs_row["mrr_cents"] or 0,
+        "proofs_new_this_month": proofs_row["new_this_month"] or 0,
+        "proofs_trialists": proofs_trialists or 0,
     }
 
 
@@ -1411,6 +1468,9 @@ def period_financials(start: str, end: str) -> dict:
         rev = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents), 0) AS cents FROM payments WHERE status = 'paid' AND paid_at IS NOT NULL AND substr(paid_at, 1, 10) >= ? AND substr(paid_at, 1, 10) <= ?", (start, end)).fetchone()
         by_cat = conn.execute("SELECT category, COALESCE(SUM(amount_cents), 0) AS cents FROM expenses WHERE date >= ? AND date <= ? GROUP BY category", (start, end)).fetchall()
         share = conn.execute("SELECT COALESCE(SUM(share_cents), 0) FROM promo_payouts WHERE substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?", (start, end)).fetchone()[0]
+        by_product = conn.execute(
+            "SELECT COALESCE(s.product, 'core') AS product, COALESCE(SUM(p.amount_cents), 0) AS cents FROM payments p LEFT JOIN subscriptions s ON s.id = p.subscription_id "
+            "WHERE p.status = 'paid' AND p.paid_at IS NOT NULL AND substr(p.paid_at, 1, 10) >= ? AND substr(p.paid_at, 1, 10) <= ? GROUP BY COALESCE(s.product, 'core')", (start, end)).fetchall()
         started = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE source = 'stripe' AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?", (start, end)).fetchone()[0]
         ended = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE source = 'stripe' AND ended_at IS NOT NULL AND substr(ended_at, 1, 10) >= ? AND substr(ended_at, 1, 10) <= ?", (start, end)).fetchone()[0]
     categories = {r["category"]: r["cents"] for r in by_cat}
@@ -1421,6 +1481,8 @@ def period_financials(start: str, end: str) -> dict:
     return {
         "start": start, "end": end,
         "payments": rev["n"], "revenue_cents": rev["cents"],
+        "revenue_core_cents": next((r["cents"] for r in by_product if r["product"] == "core"), 0),
+        "revenue_proofs_cents": next((r["cents"] for r in by_product if r["product"] == "proofs"), 0),
         "stripe_fees_cents": stripe_fees, "refunds_cents": refunds,
         "net_revenue_cents": rev["cents"] - stripe_fees - refunds,
         "expenses_by_category": other, "other_expenses_cents": sum(other.values()),

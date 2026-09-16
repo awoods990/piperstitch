@@ -52,6 +52,21 @@ def _period_start_from_stripe(sub: dict) -> Optional[int]:
     return items[0].get("current_period_start") if items else None
 
 
+def product_from_stripe(sub: dict) -> str:
+    """Which product a Stripe subscription is for: the metadata we set at
+    checkout, else the price id, else the app."""
+    metadata = sub.get("metadata") or {}
+    if metadata.get("product") in ("core", "proofs"):
+        return metadata["product"]
+    items = (sub.get("items") or {}).get("data") or []
+    for item in items:
+        price = item.get("price") or {}
+        price_id = price.get("id") if isinstance(price, dict) else price
+        if price_id and price_id == config.STRIPE_PRICE_PROOFS_MONTHLY:
+            return "proofs"
+    return "core"
+
+
 def _amount_from_stripe(sub: dict) -> Optional[int]:
     items = (sub.get("items") or {}).get("data") or []
     if not items:
@@ -131,8 +146,10 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
     previous = db.get_subscription_by_stripe_id(sub["id"])
 
     status = sub.get("status", "active")
+    product = product_from_stripe(sub)
     period_end = db.iso_from_timestamp(_period_end_from_stripe(sub))
     subscription_id = db.upsert_subscription(
+        product=product,
         customer_id=customer_id,
         stripe_subscription_id=sub["id"],
         stripe_customer_id=stripe_customer_id,
@@ -152,7 +169,9 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
         kinds.append("created")
         db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="created", detail=f"Subscription started ({status}).", stripe_event_id=stripe_event_id)
         promotions.attribute_subscription(sub, subscription_id=subscription_id, customer_id=customer_id)
-        if status in db.ENTITLED_STATUSES:
+        if status in db.ENTITLED_STATUSES and product == "proofs":
+            _try_email(email_sender.send_proofs_welcome_email, to_email=customer["email"], customer_name=customer["name"])
+        elif status in db.ENTITLED_STATUSES:
             _try_email(email_sender.send_welcome_email, to_email=customer["email"], customer_name=customer["name"])
             emails.skip_pending(customer_id, "trial", "subscribed")
             emails.enroll(customer_id, "subscriber")
@@ -165,7 +184,8 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
             db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="status_changed", detail=f"{previous['status']} → {status}.", stripe_event_id=stripe_event_id)
             if status in ("canceled", "unpaid", "incomplete_expired"):
                 db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="ended", detail="Access ended.", stripe_event_id=stripe_event_id)
-                emails.skip_pending(customer_id, "subscriber", "subscription ended")
+                if product == "core":
+                    emails.skip_pending(customer_id, "subscriber", "subscription ended")
         now_cancelling = bool(sub.get("cancel_at_period_end"))
         if now_cancelling != bool(previous["cancel_at_period_end"]):
             if now_cancelling:
@@ -225,12 +245,14 @@ def record_invoice(invoice: dict, *, paid: bool, stripe_event_id: Optional[str] 
 # ------------------------------------------------------------ admin actions ---
 
 
-def grant_comp(*, customer_id: int, months: int = 0, until: Optional[datetime] = None, note: str = "", send_email: bool = True) -> tuple[int, Optional[str]]:
+def grant_comp(*, customer_id: int, months: int = 0, until: Optional[datetime] = None, note: str = "", send_email: bool = True,
+               product: str = "core") -> tuple[int, Optional[str]]:
     """Complimentary access with no Stripe involvement — a review copy, a
     support make-good, a friend. Returns (subscription_id, email_error)."""
     if until is None:
         until = _utcnow() + timedelta(days=30 * max(1, months))
     subscription_id = db.upsert_subscription(
+        product=product,
         customer_id=customer_id,
         stripe_subscription_id=None,
         stripe_customer_id=None,
@@ -244,10 +266,11 @@ def grant_comp(*, customer_id: int, months: int = 0, until: Optional[datetime] =
         amount_cents=0,
         notes=note,
     )
-    db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="comp_granted", detail=f"Complimentary access through {_to_iso(until)[:10]}. {note}".strip())
+    label = "Complimentary PiperStitch Proofs" if product == "proofs" else "Complimentary access"
+    db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="comp_granted", detail=f"{label} through {_to_iso(until)[:10]}. {note}".strip())
     customer = db.get_customer(customer_id)
     error = None
-    if send_email:
+    if send_email and product == "core":
         error = _try_email(email_sender.send_comp_email, to_email=customer["email"], customer_name=customer["name"], until=_to_iso(until)[:10], note=note)
     return subscription_id, error
 
@@ -313,7 +336,7 @@ class Validity:
     subscription_id: Optional[int]
 
 
-def validity_for(customer_id: int, *, now: Optional[datetime] = None) -> Validity:
+def validity_for(customer_id: int, *, now: Optional[datetime] = None, product: str = "core") -> Validity:
     """Decides, from the database alone (never a live Stripe call — the
     app's refresh must be cheap and must work while Stripe is having a
     bad day), whether this customer is entitled right now and how long
@@ -326,7 +349,7 @@ def validity_for(customer_id: int, *, now: Optional[datetime] = None) -> Validit
     a past-due one keeps working through the grace days while Stripe
     retries the card."""
     now = now or _utcnow()
-    sub = db.best_subscription_for_customer(customer_id)
+    sub = db.best_subscription_for_customer(customer_id, product)
     if sub is None:
         return Validity(False, "none", None, None, False, None)
 
@@ -369,3 +392,54 @@ def issue_entitlement(*, customer_row, device_row, now: Optional[datetime] = Non
     )
     db.touch_device(device_row["id"], entitlement_until=_to_iso(validity.valid_until))
     return token, validity
+
+
+# ------------------------------------------------------ PiperStitch Proofs ---
+
+
+@dataclass(frozen=True)
+class ProofsState:
+    """What PiperStitch Proofs needs to know about a customer: whether
+    they're subscribed, and if not, how many free proofs are left."""
+    subscribed: bool
+    status: str                 # active | trialing | past_due | comp | none | ended
+    free_granted: int
+    free_used: int
+    period_end: Optional[datetime]
+    cancel_at_period_end: bool
+    has_billing: bool           # a Stripe customer exists, so the portal works
+
+    @property
+    def free_left(self) -> int:
+        return max(0, self.free_granted - self.free_used)
+
+    @property
+    def can_send(self) -> bool:
+        return self.subscribed or self.free_left > 0
+
+    def as_dict(self) -> dict:
+        return {"subscribed": self.subscribed, "status": self.status, "free_granted": self.free_granted, "free_used": self.free_used,
+                "free_left": self.free_left, "can_send": self.can_send,
+                "period_end": _to_iso(self.period_end) if self.period_end else None, "cancel_at_period_end": self.cancel_at_period_end,
+                "has_billing": self.has_billing, "price_cents": config.PROOFS_MONTHLY_PRICE_CENTS}
+
+
+def proofs_state(customer_id: int, *, now: Optional[datetime] = None) -> ProofsState:
+    customer = db.get_customer(customer_id)
+    validity = validity_for(customer_id, now=now, product="proofs")
+    granted = config.PROOFS_FREE_PROOFS + int(customer["proofs_free_extra"] or 0)
+    return ProofsState(subscribed=validity.entitled, status=validity.status, free_granted=granted, free_used=db.count_proofs_used(customer_id),
+                       period_end=validity.period_end, cancel_at_period_end=validity.cancel_at_period_end, has_billing=bool(customer["stripe_customer_id"]))
+
+
+def record_proof_use(customer_id: int, proof_ref: str) -> ProofsState:
+    """Counts one sent proof against the free allowance (idempotent per
+    proof). Subscribers aren't counted -- there's nothing to run down."""
+    state = proofs_state(customer_id)
+    if not state.subscribed:
+        if not state.can_send:
+            from .activation import ActivationError
+            raise ActivationError("proofs_exhausted", f"All {state.free_granted} free proofs have been used -- subscribe to PiperStitch Proofs to keep sending.")
+        if db.record_proof_use(customer_id, proof_ref):
+            db.add_event(customer_id=customer_id, subscription_id=None, kind="proof_sent", detail=f"Free proof {state.free_used + 1} of {state.free_granted} sent (Proofs).")
+    return proofs_state(customer_id)

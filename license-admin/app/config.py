@@ -56,6 +56,9 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # second "renewal" price the way Amerus has — a subscription renews
 # itself; that is the whole point of the model.
 STRIPE_PRICE_MONTHLY = os.environ.get("STRIPE_PRICE_MONTHLY", "")
+# PiperStitch Proofs: the second product, sold and tracked here alongside
+# the app -- three free proofs, then its own monthly subscription.
+STRIPE_PRICE_PROOFS_MONTHLY = os.environ.get("STRIPE_PRICE_PROOFS_MONTHLY", "")
 
 # --- outgoing email (plain SMTP) ---------------------------------------
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -142,6 +145,9 @@ WEBSITE_SFTP_UPDATES_PATH = os.environ.get("WEBSITE_SFTP_UPDATES_PATH", "public_
 # all agree. The marketing site's static pages repeat the number in prose;
 # README.md's go-live checklist says to change both together.
 MONTHLY_PRICE_CENTS = _int("MONTHLY_PRICE_CENTS", 24_00)
+PROOFS_MONTHLY_PRICE_CENTS = _int("PROOFS_MONTHLY_PRICE_CENTS", 25_00)
+PROOFS_FREE_PROOFS = _int("PROOFS_FREE_PROOFS", 3)     # the trial: this many proofs sent, then subscribe
+PROOFS_APP_URL = os.environ.get("PROOFS_APP_URL", "https://proofs.piperstitch.com")
 CURRENCY = os.environ.get("CURRENCY", "usd")
 # Stripe's standard card fee, used to estimate a promoter's net revenue
 # share when the actual fee isn't on the invoice webhook (see

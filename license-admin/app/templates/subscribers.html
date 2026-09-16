@@ -29,19 +29,23 @@
         <a class="button secondary small" href="/admin/subscribers?status=cancelling">Cancelling</a>
         <a class="button secondary small" href="/admin/subscribers?status=canceled">Ended</a>
         <a class="button secondary small" href="/admin/subscribers?status=comp">Comps</a>
+        <span class="muted small" style="margin:0 4px">&middot;</span>
+        <a class="button secondary small" href="/admin/subscribers?product=core">PiperStitch</a>
+        <a class="button secondary small" href="/admin/subscribers?product=proofs">Proofs</a>
         <a class="button secondary small" href="/admin/export.csv">Export CSV</a>
       </div>
     </div>
     <form class="searchbar" method="get" action="/admin/subscribers">
-      <input type="hidden" name="status" value="{{ status }}">
+      <input type="hidden" name="status" value="{{ status }}"><input type="hidden" name="product" value="{{ product }}">
       <input type="text" name="q" placeholder="Search name, email, or Stripe subscription id…" value="{{ query }}">
       <button type="submit" class="secondary">Search</button>
     </form>
     <table>
-      <tr><th>Customer</th><th>Status</th><th>Period ends</th><th>Price</th><th>Source</th><th>Started</th><th>Stripe</th></tr>
+      <tr><th>Customer</th><th>Product</th><th>Status</th><th>Period ends</th><th>Price</th><th>Source</th><th>Started</th><th>Stripe</th></tr>
       {% for s in subscriptions %}
       <tr>
         <td><a href="/admin/customers/{{ s.customer_id }}">{{ s.customer_name }}</a><br><span class="muted">{{ s.customer_email }}</span></td>
+        <td><span class="pill {{ 'proofs' if s.product == 'proofs' else 'core' }}">{{ 'Proofs' if s.product == 'proofs' else 'PiperStitch' }}</span></td>
         <td>
           <span class="pill {{ s.status }}">{{ s.status.replace('_', ' ') }}</span>
           {% if s.cancel_at_period_end and s.status in ('active','trialing','past_due') %}<br><span class="pill cancelling">ends at period end</span>{% endif %}
@@ -53,7 +57,7 @@
         <td class="mono">{{ s.stripe_subscription_id or '—' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="muted">No subscriptions{% if query or status %} match{% else %} yet{% endif %}.</td></tr>
+      <tr><td colspan="8" class="muted">No subscriptions{% if query or status or product %} match{% else %} yet{% endif %}.</td></tr>
       {% endfor %}
     </table>
   </div>

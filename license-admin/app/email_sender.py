@@ -110,6 +110,12 @@ def send_welcome_email(*, to_email: str, customer_name: str) -> None:
     e.send_system("welcome", to_email=to_email, customer_id=_customer_id(to_email), vars=e.variables({"name": customer_name, "email": to_email, "id": _customer_id(to_email) or 0}))
 
 
+def send_proofs_welcome_email(*, to_email: str, customer_name: str) -> None:
+    """After a PiperStitch Proofs subscription starts."""
+    e = _emails()
+    e.send_system("proofs_welcome", to_email=to_email, customer_id=_customer_id(to_email), vars=e.variables({"name": customer_name, "email": to_email, "id": _customer_id(to_email) or 0}))
+
+
 def send_activation_code_email(*, to_email: str, code: str, device_name: str, sign_in_url: Optional[str] = None) -> None:
     """`sign_in_url` (web sign-in only) carries the code right in the
     link, so clicking it on the device signs it in without retyping."""

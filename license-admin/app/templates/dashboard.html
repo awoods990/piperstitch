@@ -39,6 +39,16 @@
       <div class="kpi-sub">Started, not yet paid</div>
     </div>
     <div class="kpi-tile">
+      <div class="kpi-value">{{ counts.proofs_paying }}</div>
+      <div class="kpi-label">Proofs subscribers</div>
+      <div class="kpi-sub">{{ counts.proofs_mrr_cents|money }} MRR &middot; +{{ counts.proofs_new_this_month }} this month &middot; {{ counts.proofs_comps }} comp &middot; <a href="/admin/subscribers?product=proofs">see them &rarr;</a></div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{{ counts.proofs_trialists }}</div>
+      <div class="kpi-label">Trying Proofs</div>
+      <div class="kpi-sub">Have sent at least one free proof</div>
+    </div>
+    <div class="kpi-tile">
       <div class="kpi-value" style="font-size:20px">{{ latest_update.version if latest_update else '—' }}</div>
       <div class="kpi-label">Live app version</div>
       <div class="kpi-sub"><a href="/admin/updates">Publish an update &rarr;</a></div>

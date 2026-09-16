@@ -230,3 +230,45 @@ def test_project_view_requires_a_reason_and_logs_it(isolated_db, test_keypair, f
     assert r.status_code == 200 and "Traced artwork" in r.text and "<polyline" in r.text and "Satin" in r.text and "manual" in r.text and "knit" in r.text
     events = [e for e in db.list_events_for_customer(cid) if e["kind"] == "project_viewed"]
     assert len(events) == 1 and "ring came out as satin" in events[0]["detail"]
+
+
+def test_proofs_trial_then_subscription_is_tracked_next_to_the_app(isolated_db, test_keypair, fake_smtp):
+    from app import db as _db, subscriptions
+
+    a = _sign_in(fake_smtp, email="proofs-a@example.com")
+    state = web_access.proofs_state(token=a.token)
+    assert state["subscribed"] is False and state["free_left"] == 3 and state["can_send"] is True
+    # Three free proofs, counted once each even if the send is retried.
+    for ref in ("p1", "p1", "p2", "p3"):
+        state = web_access.proofs_use(token=a.token, proof_ref=ref)
+    assert state["free_used"] == 3 and state["free_left"] == 0 and state["can_send"] is False
+    with pytest.raises(activation.ActivationError) as exc:
+        web_access.proofs_use(token=a.token, proof_ref="p4")
+    assert exc.value.code == "proofs_exhausted"
+    # An admin can top up the trial.
+    customer = _db.get_customer_by_email("proofs-a@example.com")
+    _db.add_free_proofs(customer["id"], 2)
+    assert web_access.proofs_state(token=a.token)["free_left"] == 2
+    # A Proofs subscription arriving from Stripe is its own product: it
+    # entitles Proofs and leaves the app's own entitlement (the web trial
+    # that sign-in started) exactly as it was.
+    core_before = subscriptions.validity_for(customer["id"])
+    sub = {"id": "sub_proofs1", "customer": "cus_p1", "status": "active", "cancel_at_period_end": False, "metadata": {"customer_id": str(customer["id"]), "product": "proofs"},
+           "items": {"data": [{"price": {"id": "price_proofs", "unit_amount": 2500}, "current_period_start": 1_800_000_000, "current_period_end": 1_802_600_000}]}}
+    subscriptions.sync_from_stripe(sub)
+    state = web_access.proofs_state(token=a.token)
+    assert state["subscribed"] is True and state["status"] == "active" and state["can_send"] is True and state["has_billing"] is True
+    core_after = subscriptions.validity_for(customer["id"])
+    assert core_after == core_before and core_after.status == "trialing" and core_after.subscription_id != state and _db.get_subscription(core_after.subscription_id)["product"] == "core"
+    assert _db.best_subscription_for_customer(customer["id"], "proofs")["product"] == "proofs"
+    # Subscribers aren't counted against the allowance.
+    assert web_access.proofs_use(token=a.token, proof_ref="p9")["free_used"] == 3
+    # The admin lists show it under the right product; the app's subscriber KPIs don't include it.
+    rows = _db.list_subscriptions(product="proofs")
+    assert [r["stripe_subscription_id"] for r in rows] == ["sub_proofs1"] and all(r["product"] == "core" for r in _db.list_subscriptions(product="core"))
+    counts = _db.subscriber_counts()
+    assert counts["paying"] == 0 and counts["proofs_paying"] == 1 and counts["proofs_mrr_cents"] == 2500 and counts["proofs_trialists"] == 1
+    listed = [c for c in _db.list_customers() if c["id"] == customer["id"]][0]
+    assert listed["proofs_status"] == "active" and listed["proofs_used"] == 3 and listed["sub_status"] == "trialing"
+    # The Proofs welcome went out, not the app's.
+    assert any("Proofs" in (m["Subject"] or "") for m in fake_smtp.sent)

@@ -211,6 +211,22 @@ class WebPromoIn(BaseModel):
     code: str
 
 
+class WebProofsUseIn(BaseModel):
+    token: str
+    proof_ref: str
+
+
+class WebProofsCheckoutIn(BaseModel):
+    token: str
+    success_url: str = ""
+    cancel_url: str = ""
+
+
+class WebProofsPortalIn(BaseModel):
+    token: str
+    return_url: str = ""
+
+
 class WebPreferencesIn(BaseModel):
     token: str
     preferences: dict
@@ -671,6 +687,54 @@ def api_web_billing_portal(body: WebTokenIn, x_api_key: Optional[str] = Header(N
     return {"url": url}
 
 
+# PiperStitch Proofs: the same customer, tracked here -- three free
+# proofs, then its own monthly subscription. The Proofs service calls
+# these with the customer's web session token.
+@app.post("/api/web/proofs/state")
+def api_web_proofs_state(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.proofs_state(token=body.token)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+
+
+@app.post("/api/web/proofs/use")
+def api_web_proofs_use(body: WebProofsUseIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.proofs_use(token=body.token, proof_ref=body.proof_ref)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else (402 if e.code == "proofs_exhausted" else 400))
+
+
+@app.post("/api/web/proofs/checkout")
+def api_web_proofs_checkout(body: WebProofsCheckoutIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return {"url": web_access.proofs_checkout_url(token=body.token, success_url=body.success_url, cancel_url=body.cancel_url)}
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
+    except stripe.error.StripeError as e:
+        log.error("Proofs checkout session creation failed: %s", e)
+        return JSONResponse({"error": "stripe", "message": "Payment setup failed — please try again in a moment."}, status_code=502)
+
+
+@app.post("/api/web/proofs/billing-portal")
+def api_web_proofs_billing_portal(body: WebProofsPortalIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        url = web_access.proofs_billing_portal_url(token=body.token, return_url=body.return_url)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+    except stripe.error.StripeError as e:
+        log.error("Proofs billing portal session failed: %s", e)
+        return JSONResponse({"error": "stripe", "message": "Couldn't open the billing page right now."}, status_code=502)
+    if url is None:
+        return JSONResponse({"error": "no_billing", "message": "There's no billing to manage yet."}, status_code=404)
+    return {"url": url}
+
+
 @app.post("/api/web/preferences/get")
 def api_web_preferences_get(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
@@ -837,13 +901,14 @@ def dashboard(request: Request):
 
 
 @app.get("/admin/subscribers", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
-def subscribers(request: Request, q: str = "", status: str = "", message: str = "", error: str = ""):
+def subscribers(request: Request, q: str = "", status: str = "", product: str = "", message: str = "", error: str = ""):
     return templates.TemplateResponse(request, "subscribers.html", {
         "active_nav": "subscribers",
-        "subscriptions": db.list_subscriptions(q, status=status),
+        "subscriptions": db.list_subscriptions(q, status=status, product=product),
         "pending_checkouts": db.list_pending_checkouts(),
         "query": q,
         "status": status,
+        "product": product,
         "message": message or None,
         "error": error or None,
     })
@@ -878,6 +943,7 @@ def customer_detail(request: Request, customer_id: int, message: str = "", error
         "active_nav": "subscribers",
         "customer": customer,
         "validity": validity,
+        "proofs": subscriptions.proofs_state(customer_id),
         "subscriptions": db.list_subscriptions_for_customer(customer_id),
         "devices": db.list_active_devices(customer_id),
         "web_sessions": db.list_active_web_sessions(customer_id),
@@ -899,7 +965,7 @@ def customer_detail(request: Request, customer_id: int, message: str = "", error
 
 
 @app.post("/admin/customers/{customer_id}/comp", dependencies=[Depends(auth.require_admin)])
-def customer_comp(customer_id: int, months: str = Form("1"), until: str = Form(""), note: str = Form(""), send_email: str = Form("")):
+def customer_comp(customer_id: int, months: str = Form("1"), until: str = Form(""), note: str = Form(""), send_email: str = Form(""), product: str = Form("core")):
     if db.get_customer(customer_id) is None:
         return RedirectResponse("/admin/subscribers", status_code=303)
     until_dt = None
@@ -909,11 +975,24 @@ def customer_comp(customer_id: int, months: str = Form("1"), until: str = Form("
         except ValueError:
             return _customer_redirect(customer_id, error="The end date must look like 2026-12-31.")
     months_n = int(months) if months.strip().isdigit() else 1
-    _, email_error = subscriptions.grant_comp(customer_id=customer_id, months=months_n, until=until_dt, note=note.strip(), send_email=bool(send_email))
-    msg = "Complimentary access granted."
+    product = "proofs" if product == "proofs" else "core"
+    _, email_error = subscriptions.grant_comp(customer_id=customer_id, months=months_n, until=until_dt, note=note.strip(), send_email=bool(send_email), product=product)
+    msg = "Complimentary PiperStitch Proofs granted." if product == "proofs" else "Complimentary access granted."
     if send_email:
         msg += " Email sent." if not email_error else f" Email NOT sent: {email_error}"
     return _customer_redirect(customer_id, message=msg)
+
+
+@app.post("/admin/customers/{customer_id}/free-proofs", dependencies=[Depends(auth.require_admin)])
+def customer_free_proofs(customer_id: int, count: str = Form("3")):
+    if db.get_customer(customer_id) is None:
+        return RedirectResponse("/admin/subscribers", status_code=303)
+    n = int(count) if count.strip().lstrip("-").isdigit() else 0
+    if n == 0:
+        return _customer_redirect(customer_id, error="How many extra free proofs? A whole number, e.g. 3.")
+    db.add_free_proofs(customer_id, n)
+    db.add_event(customer_id=customer_id, subscription_id=None, kind="free_proofs", detail=f"{'+' if n > 0 else ''}{n} free proof{'s' if abs(n) != 1 else ''} (Proofs).")
+    return _customer_redirect(customer_id, message=f"{n:+d} free proofs.")
 
 
 @app.post("/admin/subscriptions/{subscription_id}/cancel", dependencies=[Depends(auth.require_admin)])

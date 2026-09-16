@@ -23,7 +23,7 @@ stripe.api_key = config.STRIPE_SECRET_KEY
 
 
 def create_subscription_checkout(*, customer_name: str, customer_email: str, customer_id: int, success_url: Optional[str] = None, cancel_url: Optional[str] = None,
-                                 promotion: Optional[dict] = None) -> "stripe.checkout.Session":
+                                 promotion: Optional[dict] = None, product: str = "core") -> "stripe.checkout.Session":
     """Starts a hosted Checkout for the one monthly Price. `customer_id`
     (our own database id) rides along in the subscription's metadata so
     every later webhook about it can be tied back to our record even if
@@ -34,7 +34,8 @@ def create_subscription_checkout(*, customer_name: str, customer_email: str, cus
     promotion id, which is how the redemption is attributed afterwards.
     Codes are entered in our own app / pricing page and validated there,
     so Stripe's own code field stays off."""
-    metadata = {"customer_id": str(customer_id), "customer_email": customer_email}
+    metadata = {"customer_id": str(customer_id), "customer_email": customer_email, "product": product}
+    price = config.STRIPE_PRICE_PROOFS_MONTHLY if product == "proofs" else config.STRIPE_PRICE_MONTHLY
     if promotion is not None:
         metadata["promotion_id"] = str(promotion["id"])
         metadata["promo_code"] = promotion["code"]
@@ -46,12 +47,12 @@ def create_subscription_checkout(*, customer_name: str, customer_email: str, cus
             extra["payment_method_collection"] = "if_required"
     return stripe.checkout.Session.create(
         mode="subscription",
-        line_items=[{"price": config.STRIPE_PRICE_MONTHLY, "quantity": 1}],
+        line_items=[{"price": price, "quantity": 1}],
         customer_email=customer_email,
         allow_promotion_codes=False,
         success_url=success_url or f"{config.PUBLIC_BASE_URL}/subscribe/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=cancel_url or f"{config.PUBLIC_BASE_URL}/subscribe/cancel",
-        metadata={"customer_id": str(customer_id), "customer_name": customer_name, "customer_email": customer_email},
+        metadata={"customer_id": str(customer_id), "customer_name": customer_name, "customer_email": customer_email, "product": product},
         subscription_data={"metadata": metadata},
         **extra,
         # Stripe's Managed Payments (merchant-of-record mode, higher fees,

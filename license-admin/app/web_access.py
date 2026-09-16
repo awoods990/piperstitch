@@ -231,6 +231,47 @@ def billing_portal_url(*, token: str) -> Optional[str]:
     return stripe_client.create_billing_portal_session(stripe_customer_id=customer["stripe_customer_id"], return_url=f"{config.WEB_APP_URL}/").url
 
 
+# ------------------------------------------------------------- proofs ---
+
+
+def proofs_state(*, token: str) -> dict:
+    session = _session(token)
+    return subscriptions.proofs_state(session["customer_id"]).as_dict()
+
+
+def proofs_use(*, token: str, proof_ref: str) -> dict:
+    session = _session(token)
+    if not proof_ref or len(proof_ref) > 64:
+        raise ActivationError("invalid_proof", "That proof reference isn't valid.")
+    return subscriptions.record_proof_use(session["customer_id"], f"{session['customer_id']}:{proof_ref}").as_dict()
+
+
+def proofs_checkout_url(*, token: str, success_url: str = "", cancel_url: str = "") -> str:
+    """Stripe Checkout for the Proofs plan. Same customer record, its own
+    subscription; the app's own plan is untouched either way."""
+    session = _session(token)
+    customer = db.get_customer(session["customer_id"])
+    state = subscriptions.proofs_state(customer["id"])
+    if state.subscribed and state.status in ("active", "past_due"):
+        raise ActivationError("already_subscribed", "This account already has an active Proofs subscription — use Manage billing instead.")
+    if not config.STRIPE_PRICE_PROOFS_MONTHLY:
+        raise ActivationError("not_configured", "Proofs billing isn't set up on this server yet (STRIPE_PRICE_PROOFS_MONTHLY).")
+    checkout = stripe_client.create_subscription_checkout(
+        customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"], product="proofs",
+        success_url=success_url or f"{config.PROOFS_APP_URL}/settings?subscribed=1", cancel_url=cancel_url or f"{config.PROOFS_APP_URL}/settings?subscribed=0",
+    )
+    db.create_checkout_session(stripe_session_id=checkout.id, customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"])
+    return checkout.url
+
+
+def proofs_billing_portal_url(*, token: str, return_url: str = "") -> Optional[str]:
+    session = _session(token)
+    customer = db.get_customer(session["customer_id"])
+    if not customer["stripe_customer_id"]:
+        return None
+    return stripe_client.create_billing_portal_session(stripe_customer_id=customer["stripe_customer_id"], return_url=return_url or f"{config.PROOFS_APP_URL}/settings").url
+
+
 # ------------------------------------------------------------ projects ---
 
 

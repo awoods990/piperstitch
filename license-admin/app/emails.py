@@ -40,6 +40,18 @@ Your plan is {price} a month and renews automatically. Update your card, see inv
 
 If anything doesn't work, just reply to this email.""",
          cta_label="Open PiperStitch", cta_url="{app_url}", preheader="Your subscription is active — sign in with this email.", placeholders=COMMON_PLACEHOLDERS),
+    dict(key="proofs_welcome", name="Proofs welcome (subscription started)", description="Sent automatically the moment a PiperStitch Proofs subscription starts (Stripe webhook).",
+         subject="PiperStitch Proofs is on — unlimited proofs from here",
+         body="""Hi {first_name},
+
+Thanks for subscribing to PiperStitch Proofs. Your free proofs are behind you and there's no limit from here: send as many proofs as your customers need, with the automatic reminders, texting and art-by-email all switched on.
+
+Nothing changes for jobs already in flight — every link you've sent keeps working.
+
+Your Proofs plan is {proofs_price} a month and renews automatically, separately from PiperStitch itself. Update your card, see invoices, or cancel any time from your account page.
+
+If anything doesn't work, just reply to this email.""",
+         cta_label="Open PiperStitch Proofs", cta_url="{proofs_url}", preheader="Your Proofs subscription is active.", placeholders=COMMON_PLACEHOLDERS + ", proofs_price, proofs_url"),
     dict(key="sign_in_code", name="Sign-in code", description="The six-digit code, sent every time someone signs in. Keep {code} in it.",
          subject="{code} is your PiperStitch sign-in code",
          body="""Your PiperStitch sign-in code:
@@ -363,6 +375,8 @@ def variables(customer=None, **extra) -> dict:
         "price": _price(),
         "trial_days": config.TRIAL_DAYS,
         "unsubscribe_url": unsubscribe_url(customer["id"]) if customer else "",
+        "proofs_price": f"${config.PROOFS_MONTHLY_PRICE_CENTS / 100:.0f}",
+        "proofs_url": config.PROOFS_APP_URL,
     }
     v.update(extra)
     return v

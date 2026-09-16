@@ -49,9 +49,23 @@ def main() -> None:
         recurring={"interval": "month"},
         nickname="PiperStitch monthly",
     )
-    print("\nPut this line in .env:\n")
+    proofs_product = stripe.Product.create(
+        name="PiperStitch Proofs",
+        description="Customer proof approval for embroidery shops. Monthly subscription, cancel any time.",
+        tax_code="txcd_10103000",
+    )
+    proofs_price = stripe.Price.create(
+        product=proofs_product.id,
+        unit_amount=config.PROOFS_MONTHLY_PRICE_CENTS,
+        currency=config.CURRENCY,
+        recurring={"interval": "month"},
+        nickname="PiperStitch Proofs monthly",
+    )
+    print("\nPut these lines in .env:\n")
     print(f"STRIPE_PRICE_MONTHLY={price.id}")
-    print(f"\n(product: {product.id}, ${config.MONTHLY_PRICE_CENTS / 100:.2f} {config.CURRENCY.upper()} / month)")
+    print(f"STRIPE_PRICE_PROOFS_MONTHLY={proofs_price.id}")
+    print(f"\n(product: {product.id}, ${config.MONTHLY_PRICE_CENTS / 100:.2f} {config.CURRENCY.upper()} / month; "
+          f"Proofs product: {proofs_product.id}, ${config.PROOFS_MONTHLY_PRICE_CENTS / 100:.2f} / month)")
 
 
 if __name__ == "__main__":
