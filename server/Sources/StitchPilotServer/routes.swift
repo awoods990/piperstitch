@@ -31,6 +31,28 @@ func routes(_ app: Application) throws {
                                 stats: WireStats(plan),
                                 elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
     }
+
+    // Server-to-server: PiperStitch Proofs exports the machine files for a
+    // proof version from the exact document it rendered, so the released
+    // file and the proof share their bytes. Same key guard as above; same
+    // writer as the signed-in `export` route below.
+    api.post("internal", "export", ":format") { req -> Response in
+        let key = req.application.auth.webAPIKey
+        guard req.application.auth.enabled, !key.isEmpty, req.headers.first(name: "X-API-Key") == key else {
+            throw Abort(.unauthorized, reason: "Invalid API key")
+        }
+        guard let format = req.parameters.get("format").flatMap({ ExportFormat(rawValue: $0.lowercased()) }) else {
+            throw Abort(.notFound, reason: "Unknown export format. Use one of: \(ExportFormat.allCases.map(\.rawValue).joined(separator: ", ")).")
+        }
+        let body = try req.content.decode(ExportRequest.self)
+        let data = try await Engine.run { () throws -> Data in
+            let (plan, colors) = try DigitizePipeline.flattenWithColors(body.document)
+            return try format.write(plan, designName: body.document.name, threadColors: colors.map(\.rgb))
+        }
+        let response = Response(status: .ok, body: .init(data: data))
+        response.headers.contentType = HTTPMediaType(type: "application", subType: "octet-stream")
+        return response
+    }
     let engine = api.grouped(EntitlementGate())
     editRoutes(engine)
 

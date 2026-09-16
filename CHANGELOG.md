@@ -4,6 +4,15 @@ All notable progress is recorded here, grouped by the phase plan in
 `ARCHITECTURE.md`. This file is the source of truth for "what actually
 works" — `README.md`'s feature list is aspirational/target state.
 
+## Added: `POST /api/v1/internal/export/{format}` on the app server (for PiperStitch Proofs)
+
+- A key-guarded, server-to-server twin of the signed-in `export` route,
+  exactly like `internal/digitize`: PiperStitch Proofs (a separate
+  service, see `~/Desktop/PiperStitch Proofs`) exports a proof version's
+  machine files from the same document it rendered, so the released file
+  and the proof share their bytes. Refuses when accounts are off or the
+  `X-API-Key` doesn't match `WEB_API_KEY`. No other Core change.
+
 ## Changed: fills travel instead of trimming — the cap "B" sews in one thread
 
 The item the Wilcom review left open: on a fill with holes or concave
