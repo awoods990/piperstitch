@@ -145,7 +145,7 @@ WEBSITE_SFTP_UPDATES_PATH = os.environ.get("WEBSITE_SFTP_UPDATES_PATH", "public_
 # all agree. The marketing site's static pages repeat the number in prose;
 # README.md's go-live checklist says to change both together.
 MONTHLY_PRICE_CENTS = _int("MONTHLY_PRICE_CENTS", 24_00)
-PROOFS_MONTHLY_PRICE_CENTS = _int("PROOFS_MONTHLY_PRICE_CENTS", 25_00)
+PROOFS_MONTHLY_PRICE_CENTS = _int("PROOFS_MONTHLY_PRICE_CENTS", 24_00)
 PROOFS_FREE_PROOFS = _int("PROOFS_FREE_PROOFS", 3)     # the trial: this many proofs sent, then subscribe
 PROOFS_APP_URL = os.environ.get("PROOFS_APP_URL", "https://proofs.piperstitch.com")
 CURRENCY = os.environ.get("CURRENCY", "usd")

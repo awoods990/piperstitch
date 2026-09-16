@@ -69,7 +69,7 @@ on …:8080" line confirms it). Note the URL — something like
 | `SESSION_COOKIE_SECURE` | `true` |
 | `STRIPE_PUBLISHABLE_KEY` / `STRIPE_SECRET_KEY` | Stripe → Developers → API keys (test keys first) |
 | `STRIPE_PRICE_MONTHLY` | see step 4 |
-| `STRIPE_PRICE_PROOFS_MONTHLY` | see step 4 — the PiperStitch Proofs price, sold on the same customer (3 free proofs, then $25/month) |
+| `STRIPE_PRICE_PROOFS_MONTHLY` | see step 4 — the PiperStitch Proofs price, sold on the same customer (3 free proofs, then $24/month) |
 | `PROOFS_APP_URL` | the Proofs service's URL, e.g. `https://piperstitch-proofs-production.up.railway.app` (its checkout returns there) |
 | `STRIPE_WEBHOOK_SECRET` | see step 5 |
 | `POSTMARK_API_TOKEN` / `POSTMARK_FROM` | Postmark server token and a verified From address — **or** the `SMTP_*` set from `license-admin/README.md` |
@@ -140,7 +140,7 @@ cd license-admin && ./.venv/bin/python scripts/create_stripe_prices.py
 Put the two printed `price_…` ids into license-admin's `STRIPE_PRICE_MONTHLY`
 and `STRIPE_PRICE_PROOFS_MONTHLY`. (Already have the app's price? Create just
 the Proofs one in the Stripe Dashboard: product "PiperStitch Proofs",
-recurring, $25.00 / month, and paste its id.)
+recurring, $24.00 / month, and paste its id.)
 
 ## 5. Stripe: the webhook
 
