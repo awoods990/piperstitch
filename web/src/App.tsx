@@ -352,6 +352,20 @@ export default function App() {
     setDocument(doc); setDigitized(null); setPhase("editor"); setStatus(`Opened ${project.name}.`);
     await digitizeNow(doc, hoop);
   });
+  /** `?project=<id>` opens a saved project straight from a link (PiperStitch
+   *  Proofs sends the embroiderer here to adjust a digitized design before
+   *  the proof goes out). Waits for the catalog and a signed-in, entitled
+   *  session, then strips the parameter so a reload doesn't reopen it. */
+  useEffect(() => {
+    if (!catalog || !signedInAndEntitled || phase !== "start") return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("project");
+    if (!id) return;
+    params.delete("project");
+    window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+    onOpenProject({ id, name: "", widthMM: 0, heightMM: 0, objectCount: 0, createdAt: "", updatedAt: "" });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, signedInAndEntitled, phase]);
   const onSaveProject = () => withBusy("Saving…", async () => {
     if (!document) return;
     const id = projectId ?? crypto.randomUUID();
