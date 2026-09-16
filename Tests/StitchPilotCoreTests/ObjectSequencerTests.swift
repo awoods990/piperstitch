@@ -27,6 +27,32 @@ struct ObjectSequencerTests {
         #expect(sequenced.map { $0.name } == ["halo", "letter"])
     }
 
+    /// A satin border round a fill: the border's outer boundary encloses
+    /// the fill, but there is no border material under it -- the fill
+    /// sits in the border's hole. The border must sew AFTER the fill, so
+    /// its satin lands on the fill's edge rather than the fill sewing over
+    /// the border's inner edge. Found on a sewn-out cap-logo "B" whose red
+    /// fill was the last thing stitched, its edge travel riding on top of
+    /// the border. Two borders (an inner navy ring, an outer white one)
+    /// sew inside-out after the fill.
+    @Test func aRingAroundAFillSewsAfterTheFillNotBefore() {
+        func ring(_ inset: Double, name: String, color: UInt32) -> EmbroideryObject {
+            let o = inset, i = inset + 4
+            let outer = SubPath(points: [Point2D(o, o), Point2D(100 - o, o), Point2D(100 - o, 100 - o), Point2D(o, 100 - o)], closed: true)
+            let hole = SubPath(points: [Point2D(i, i), Point2D(100 - i, i), Point2D(100 - i, 100 - i), Point2D(i, 100 - i)], closed: true)
+            return EmbroideryObject(name: name, shape: VectorShape(subPaths: [outer, hole]), stitchType: .satin, threadColor: .generic(RGBColor(hex: color)))
+        }
+        let fill = square(8, 8, 84, name: "fill", color: 0xC02020)          // 8...92, inside the inner ring's hole
+        let inner = ring(4, name: "inner", color: 0x102040)                   // 4...96 with hole 8...92
+        let outer = ring(0, name: "outer", color: 0xFFFFFF)                   // 0...100 with hole 4...96
+
+        let sequenced = ObjectSequencer.sequence([outer, inner, fill])
+        #expect(sequenced.map { $0.name } == ["fill", "inner", "outer"])
+        // A solid background that genuinely covers the fill still sews first.
+        let background = square(0, 0, 100, name: "background", color: 0xEEEEEE)
+        #expect(ObjectSequencer.sequence([fill, background]).map { $0.name } == ["background", "fill"])
+    }
+
     @Test func movesContainingObjectBeforeTheObjectItContains() {
         // Small foreground square authored first, large background square second -- backwards.
         let inner = square(45, 45, 10, name: "inner") // 45...55

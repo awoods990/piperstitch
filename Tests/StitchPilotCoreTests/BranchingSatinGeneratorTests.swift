@@ -449,4 +449,44 @@ struct BranchingSatinGeneratorTests {
         }
         #expect(total > 1000, "expected dense real coverage across the whole letter, got \(total) points in \(runs.count) runs")
     }
+
+    /// The same letter's centre-run underlay: its skeleton is three
+    /// separate loops (the stem-and-bowls network plus one ring round each
+    /// counter), and walking from one to the next used to stitch a 3 mm
+    /// running line straight across the counter -- found as one blue
+    /// thread across each counter of a sewn-out sample. Each such hop
+    /// must be a run break; every stitch of every underlay run stays on
+    /// the letter's own material.
+    @Test func realCapLogoBUnderlayNeverRunsAcrossItsCounters() throws {
+        // The outlined cut of the logo: its navy border is a ring round
+        // the letter plus a separate ring round each counter -- three
+        // skeleton loops with no skeleton path between them.
+        let data = try Data(contentsOf: testArtworkURL("boston-red-sox-logo.png"))
+        let imported = try ImageImporter.importShapes(from: data, maxColors: 4)
+        var combined = BoundingBox.empty
+        for shape in imported.shapes { combined = combined.union(shape.boundingBox) }
+        let index = try #require(imported.shapes.indices.max { imported.shapes[$0].subPaths.count < imported.shapes[$1].subPaths.count })
+        let fitted = imported.shapes[index].fitToPhysicalSize(widthMM: 55.6, heightMM: 80.1, within: combined)
+        var p = params()
+        p.allowBranchingSatin = true
+        p.underlayType = .centerRun
+
+        let runs = SatinColumnGenerator.branchingCenterRunUnderlayRuns(for: fitted, parameters: p)
+        let polygons = fitted.subPaths.map { $0.points }
+        #expect(runs.count >= 2, "the counters' rings can't be reached along the skeleton, so the underlay must break into runs; got \(runs.count)")
+        for run in runs {
+            for i in 1..<run.count {
+                let a = run[i - 1], b = run[i]
+                // Sub-1.5 mm stitches can't be a stray line (the artwork
+                // also carries two 1 mm specks whose jagged outlines a
+                // stitch along their own skeleton can just miss).
+                guard a.distance(to: b) >= 1.5 else { continue }
+                let mid = Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
+                #expect(PolygonGeometry.pointInPolygons(mid, polygons: polygons),
+                        "a \(String(format: "%.1f", a.distance(to: b)))mm underlay stitch crosses open fabric, midpoint (\(mid.x), \(mid.y))")
+            }
+        }
+        // The flat form is unchanged for callers that want one polyline.
+        #expect(SatinColumnGenerator.branchingCenterRunUnderlay(for: fitted, parameters: p).count == runs.reduce(0) { $0 + $1.count })
+    }
 }

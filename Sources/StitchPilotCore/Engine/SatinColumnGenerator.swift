@@ -1022,6 +1022,32 @@ public enum SatinColumnGenerator {
     /// Empty when the shape has no skeleton (the caller then sews no
     /// underlay rather than a wrong one).
     public static func branchingCenterRunUnderlay(for shape: VectorShape, parameters: StitchGenerationParameters) -> [Point2D] {
+        branchingCenterRunUnderlayRuns(for: shape, parameters: parameters).flatMap { $0 }
+    }
+
+    /// `branchingCenterRunUnderlay` as separate runs: the walk is broken
+    /// wherever the next skeleton edge can't be reached *along* the
+    /// skeleton and the straight hop to it would leave the shape. A ring
+    /// around a letter's counters has one skeleton loop per ring, none
+    /// of them connected; walking straight from one to the next stitched
+    /// a 3 mm running line across the open counter (and, for the outer
+    /// ring, across the fabric beside the letter) that nothing sewn later
+    /// covers -- found directly on a sewn-out cap-logo "B", one straight
+    /// blue thread across each counter. Each break becomes a real
+    /// trim+jump in `DigitizePipeline`, like a fill's.
+    public static func branchingCenterRunUnderlayRuns(for shape: VectorShape, parameters: StitchGenerationParameters) -> [[Point2D]] {
+        let polygons = shape.subPaths.map { $0.points }
+        var runs: [[Point2D]] = []
+        for centerline in branchingCenterlineRuns(for: shape, parameters: parameters, polygons: polygons) {
+            let run = RunningStitchGenerator.generate(for: SubPath(points: centerline, closed: false),
+                                                      stitchLengthMM: parameters.underlayStitchLengthMM,
+                                                      minStitchLengthMM: parameters.minStitchLengthMM)
+            if !run.isEmpty { runs.append(run) }
+        }
+        return runs
+    }
+
+    private static func branchingCenterlineRuns(for shape: VectorShape, parameters: StitchGenerationParameters, polygons: [[Point2D]]) -> [[Point2D]] {
         guard parameters.underlayType != UnderlayType.none,
               let topology = StrokeTopologyAnalyzer.analyze(shape: shape), !topology.edges.isEmpty else { return [] }
         let edges = orderedEdges(topology).filter { $0.polyline.count >= 2 }
@@ -1056,30 +1082,42 @@ public enum SatinColumnGenerator {
             }
             return path
         }
-        var centerline: [Point2D] = []
+        var centerlines: [[Point2D]] = [[]]
         var currentNode: Int? = nil
+        // A closed loop (a hole's own ring, or a plain ring with no
+        // nodes at all, ids -1) is never "connected" to what came before
+        // just because two loops share the same placeholder id: two rings
+        // of one letter are separate pieces of material, and walking from
+        // one to the other is a real hop that has to be checked.
+        func isLoop(_ edge: StrokeTopologyAnalyzer.Edge) -> Bool { edge.isClosedLoop || edge.startNodeID < 0 || edge.startNodeID == edge.endNodeID }
         for edge in edges {
             var polyline = edge.polyline
-            if let current = currentNode, edge.startNodeID != current {
-                if edge.endNodeID == current {
-                    polyline.reverse()
-                } else {
-                    let viaStart = skeletonPath(from: current, to: edge.startNodeID)
-                    let viaEnd = skeletonPath(from: current, to: edge.endNodeID)
-                    if !viaEnd.isEmpty, viaStart.isEmpty || PolygonGeometry.pathLength(viaEnd) < PolygonGeometry.pathLength(viaStart) {
-                        centerline.append(contentsOf: viaEnd); polyline.reverse()
-                    } else {
-                        centerline.append(contentsOf: viaStart)
-                    }
+            let current = currentNode
+            let connected = current != nil && !isLoop(edge) && (edge.startNodeID == current || edge.endNodeID == current)
+            if !connected, !centerlines[centerlines.count - 1].isEmpty {
+                let viaStart = (isLoop(edge) || current == nil) ? [] : skeletonPath(from: current!, to: edge.startNodeID)
+                let viaEnd = (isLoop(edge) || current == nil) ? [] : skeletonPath(from: current!, to: edge.endNodeID)
+                if !viaEnd.isEmpty, viaStart.isEmpty || PolygonGeometry.pathLength(viaEnd) < PolygonGeometry.pathLength(viaStart) {
+                    centerlines[centerlines.count - 1].append(contentsOf: viaEnd); polyline.reverse()
+                } else if !viaStart.isEmpty {
+                    centerlines[centerlines.count - 1].append(contentsOf: viaStart)
+                } else if let last = centerlines[centerlines.count - 1].last, let first = polyline.first,
+                          !hopStaysOnShape(from: last, to: first, polygons: polygons) {
+                    // No skeleton route and the straight hop crosses open
+                    // fabric: a new run (a trim), not a stray line.
+                    centerlines.append([])
                 }
+            } else if connected, edge.endNodeID == current {
+                polyline.reverse()
             }
-            centerline.append(contentsOf: polyline)
-            currentNode = polyline.last == edge.polyline.last ? edge.endNodeID : edge.startNodeID
-            if edge.startNodeID == edge.endNodeID { currentNode = edge.startNodeID }
+            centerlines[centerlines.count - 1].append(contentsOf: polyline)
+            if isLoop(edge) {
+                currentNode = edge.startNodeID >= 0 && !edge.isClosedLoop ? edge.startNodeID : nil
+            } else {
+                currentNode = polyline.last == edge.polyline.last ? edge.endNodeID : edge.startNodeID
+            }
         }
-        return RunningStitchGenerator.generate(for: SubPath(points: centerline, closed: false),
-                                               stitchLengthMM: parameters.underlayStitchLengthMM,
-                                               minStitchLengthMM: parameters.minStitchLengthMM)
+        return centerlines.filter { $0.count >= 2 }
     }
 
     /// Why `canRepresentAsBranchingSatinColumn` said no, for diagnostics
@@ -1378,7 +1416,18 @@ public enum SatinColumnGenerator {
         for nodeID in patchedNodeIDs {
             guard let node = nodesByID[nodeID] else { continue }
             let radius = patchRadiusByNode[nodeID] ?? junctionTrimRadius(for: node)
-            if let patch = junctionPatchFill(node: node, radius: radius, shapePolygons: polygons, parameters: parameters) {
+            // The patch's grain follows the widest arm leaving this node.
+            var axis: Point2D? = nil
+            var widest = -1.0
+            for segment in segments where segment.edge.startNodeID == nodeID || segment.edge.endNodeID == nodeID {
+                let polyline = segment.edge.polyline
+                guard polyline.count >= 2 else { continue }
+                let width = segment.edge.widthsMM.max() ?? 0
+                guard width > widest else { continue }
+                let tangent = segment.edge.startNodeID == nodeID ? polyline[1] - polyline[0] : polyline[polyline.count - 1] - polyline[polyline.count - 2]
+                if tangent.length > 1e-9 { axis = tangent * (1 / tangent.length); widest = width }
+            }
+            if let patch = junctionPatchFill(node: node, radius: radius, axis: axis, shapePolygons: polygons, parameters: parameters) {
                 patchByNode[nodeID] = patch
             }
         }
@@ -1436,7 +1485,7 @@ public enum SatinColumnGenerator {
     /// already 6mm out -- the whole letter fell back to tatami over that
     /// one untrimmed fan. The PATCH's own radius is derived from what
     /// actually got trimmed (see `branchingPlan`), not from this directly.
-    private static let junctionTrimRadiusFactor = 0.5
+    private static let junctionTrimRadiusFactor = 0.75
 
     private static func junctionTrimRadius(for node: StrokeTopologyAnalyzer.Node) -> Double {
         max(node.widthMM, 1.0) * junctionTrimRadiusFactor
@@ -1480,31 +1529,66 @@ public enum SatinColumnGenerator {
     /// concave notch -- using all of it as spokes directly would sew far
     /// more stitches, all piling onto the same center point, than the
     /// small patch's own size calls for).
-    private static func junctionPatchFill(node: StrokeTopologyAnalyzer.Node, radius: Double, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> [Point2D]? {
-        var boundary: [Point2D] = []
-        for i in 0..<junctionPatchSampleCount {
-            let theta = 2 * Double.pi * Double(i) / Double(junctionPatchSampleCount)
-            let direction = Point2D(cos(theta), sin(theta))
-            let hit = rayPolygonsIntersection(origin: node.position, direction: direction, polygons: shapePolygons)
-            let distance = hit.map { node.position.distance(to: $0) } ?? radius
-            let clamped = min(distance, radius)
-            boundary.append(Point2D(node.position.x + direction.x * clamped, node.position.y + direction.y * clamped))
-        }
-        guard boundary.count >= 3 else { return nil }
-        boundary.append(boundary[0])
-
+    /// The junction disc sewn as a small satin column: chords across the
+    /// disc, perpendicular to `axis` (the widest arm's direction, so the
+    /// grain continues through the junction), stepping along the axis at
+    /// satin density, each chord clamped to the shape's own boundary. Two
+    /// rails on the rim, no point shared by more than two stitches.
+    ///
+    /// This replaced a radial fan -- every spoke from the node centre to
+    /// the rim and back -- after the first sew-out: with ~38 spokes on a
+    /// 2 mm patch, the centre took 38 needle penetrations in one spot, a
+    /// hard knot at every serif of the Red Sox halo that the customer
+    /// could not pick out. A fan looks right in a render and is wrong on
+    /// fabric.
+    private static func junctionPatchFill(node: StrokeTopologyAnalyzer.Node, radius: Double, axis: Point2D?, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> [Point2D]? {
+        guard radius > 0 else { return nil }
+        let along = axis ?? Point2D(1, 0)
+        let across = Point2D(-along.y, along.x)
         let density = parameters.effectiveSatinDensityMM
-        let perimeter = PolygonGeometry.pathLength(boundary)
-        guard perimeter > 0 else { return nil }
-        let spokeCount = max(6, Int((perimeter / density).rounded()))
-        let spokes = PolygonGeometry.resampleByCount(boundary, count: spokeCount)
-
-        var stitches: [Point2D] = []
-        for spoke in spokes {
-            stitches.append(node.position)
-            stitches.append(spoke)
+        let steps = max(2, Int((2 * radius / density).rounded()))
+        // Clamp a chord end to the shape: cast from the axis point out along
+        // ±across to the nearest boundary, never past the disc's rim.
+        func chordEnd(from origin: Point2D, side: Double) -> Point2D {
+            let direction = across * side
+            let toRim = (radius * radius - origin.distance(to: node.position) * origin.distance(to: node.position)).squareRoot()
+            var reach = toRim
+            if let hit = rayPolygonsIntersection(origin: origin, direction: direction, polygons: shapePolygons) {
+                // A hair inside the boundary, so the short rim stitch
+                // between two adjacent chord ends stays on the material.
+                reach = min(reach, max(0, origin.distance(to: hit) - 0.05))
+            }
+            return origin + direction * reach
         }
-        return stitches
+        var stitches: [Point2D] = []
+        var side = 1.0
+        for i in 0...steps {
+            let t = -radius + Double(i) / Double(steps) * 2 * radius
+            let clampedT = max(-radius + 1e-6, min(radius - 1e-6, t))
+            let origin = node.position + along * clampedT
+            // Skip a chord whose midpoint lies outside the shape (the disc
+            // can overhang a concave junction's notch).
+            guard PolygonGeometry.pointInPolygons(origin, polygons: shapePolygons) else { continue }
+            stitches.append(chordEnd(from: origin, side: side))
+            stitches.append(chordEnd(from: origin, side: -side))
+            side = -side
+        }
+        guard stitches.count >= 4 else { return nil }
+        // Enter and leave via the node centre: the arms end at the disc's
+        // edge in their own directions, and a straight hop from there to
+        // a rim point on the axis can cut across a concave notch. The same
+        // for any rim step between two chords that would cross a notch --
+        // it detours through the centre. A few penetrations at the centre
+        // where the shape is concave, not one per spoke as the fan had.
+        var sequence: [Point2D] = [node.position]
+        for point in stitches {
+            let previous = sequence[sequence.count - 1]
+            let mid = Point2D((previous.x + point.x) / 2, (previous.y + point.y) / 2)
+            if !PolygonGeometry.pointInPolygons(mid, polygons: shapePolygons) { sequence.append(node.position) }
+            sequence.append(point)
+        }
+        sequence.append(node.position)
+        return sequence
     }
 
     /// For each `polyline` sample (a stroke segment's own centerline, from

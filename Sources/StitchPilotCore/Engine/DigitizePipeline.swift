@@ -369,10 +369,7 @@ public enum DigitizePipeline {
                 // The underlay follows the branching skeleton, not the
                 // single column's principal axis -- see
                 // `branchingCenterRunUnderlay`.
-                let skeletonUnderlay = SatinColumnGenerator.branchingCenterRunUnderlay(for: object.shape, parameters: object.parameters)
-                var runs: [[Point2D]] = [skeletonUnderlay + firstRun]
-                runs.append(contentsOf: branchingRuns.dropFirst())
-                return runs
+                return joinBranchingUnderlay(to: branchingRuns, firstRun: firstRun, object: object, breakThresholdMM: breakThresholdMM)
             }
             do {
                 return [Array(underlay.reversed()) + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
@@ -399,10 +396,7 @@ public enum DigitizePipeline {
                     // would otherwise be sewn straight across a counter) and
                     // become real trim+jumps in `flattenWithColors`, like a
                     // fill's.
-                    let skeletonUnderlay = SatinColumnGenerator.branchingCenterRunUnderlay(for: object.shape, parameters: object.parameters)
-                    var runs: [[Point2D]] = [skeletonUnderlay + firstRun]
-                    runs.append(contentsOf: branchingRuns.dropFirst())
-                    return runs
+                    return joinBranchingUnderlay(to: branchingRuns, firstRun: firstRun, object: object, breakThresholdMM: breakThresholdMM)
                 }
                 // `StitchTypeClassifier` picks satin from a shape's average
                 // width alone, which is a real width measurement but no
@@ -434,6 +428,29 @@ public enum DigitizePipeline {
                 return [fillUnderlay + fill]
             }
         }
+    }
+
+    /// A branching satin's skeleton underlay followed by its crossings, as
+    /// runs. The underlay walks the skeleton in the same order the satin
+    /// will, so sewn as-is it ends at the far end of the walk while the
+    /// first crossings begin back at its start: one "stitch" spanning the
+    /// whole skeleton, which `StitchFilter` chops into a straight line of
+    /// 11 mm segments across whatever lies between -- on a cap-logo "B",
+    /// a 46 mm line down the open fabric beside the letter and a diagonal
+    /// clean across it (both found on the sewn-out sample). Reversed, the
+    /// underlay ends where the crossings start (the same fix the single
+    /// column has); every remaining seam -- between underlay runs, into
+    /// the first crossings -- is sewn only when it stays on the shape and
+    /// otherwise becomes a trim+jump, exactly like a fill's layers.
+    private static func joinBranchingUnderlay(to branchingRuns: [[Point2D]], firstRun: [Point2D], object: EmbroideryObject, breakThresholdMM: Double) -> [[Point2D]] {
+        let polygons = object.shape.subPaths.map { $0.points }
+        let underlayRuns = SatinColumnGenerator.branchingCenterRunUnderlayRuns(for: object.shape, parameters: object.parameters)
+            .reversed().map { Array($0.reversed()) }
+        var runs: [[Point2D]] = []
+        for run in underlayRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false) }
+        appendJoiningIfCovered(firstRun, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false)
+        runs.append(contentsOf: branchingRuns.dropFirst())
+        return runs
     }
 
     /// Appends `run` to the last run in `runs` when the connector from

@@ -215,6 +215,12 @@ public enum ObjectSequencer {
             for j in 0..<n where j != i {
                 if isBackground(shapes[j], relativeTo: shapes[i]) {
                     predecessors[i].append(j)
+                } else if sitsInHole(of: shapes[j], shape: shapes[i]), !predecessors[j].contains(i) {
+                    // j is a ring around i (a border round a fill, a
+                    // halo round a letter): the ring sews AFTER what it
+                    // surrounds, so its satin lands on top of the fill's
+                    // edge and the fill's own edge travel is buried.
+                    predecessors[j].append(i)
                 }
             }
         }
@@ -447,13 +453,45 @@ public enum ObjectSequencer {
               candidateBox.maxX + tolerance >= otherBox.maxX, candidateBox.maxY + tolerance >= otherBox.maxY else {
             return false
         }
-        guard otherOuter.allSatisfy({ PolygonGeometry.pointInPolygon($0, polygon: candidateOuter) || distance(from: $0, toBoundaryOf: candidateOuter) <= tolerance }) else {
+        // Containment is by the candidate's *material* -- outer boundary
+        // minus its holes -- not its outer boundary alone: a satin border
+        // round a fill has an outer boundary that encloses the fill but no
+        // material under it, and is not the fill's background (it sews
+        // after the fill; see `sitsInHole`). Even-odd over every sub-path.
+        let material = candidate.subPaths.map { $0.points }.filter { $0.count >= 3 }
+        guard otherOuter.allSatisfy({ PolygonGeometry.pointInPolygons($0, polygons: material) || distance(from: $0, toBoundaryOf: candidateOuter) <= tolerance }) else {
             return false
         }
 
         let outerArea = abs(PolygonGeometry.signedArea(candidateOuter))
         let innerArea = abs(PolygonGeometry.signedArea(otherOuter))
         return outerArea > innerArea * 1.05
+    }
+
+    /// True when `shape`'s outer boundary lies inside one of `ring`'s
+    /// holes: `ring` surrounds `shape` without covering it. The outer-
+    /// boundary containment `isBackground` tests would call such a ring
+    /// "background" and sew it first, which is exactly backwards for a
+    /// satin border round a fill -- the fill then sews over the border's
+    /// inner edge. Found on a sewn-out cap-logo "B": the red fill was the
+    /// last thing sewn, its edge travel riding on top of the border.
+    private static func sitsInHole(of ring: VectorShape, shape: VectorShape) -> Bool {
+        guard ring.subPaths.count >= 2, let outer = ring.subPaths.first?.points, outer.count >= 3,
+              let shapeOuter = shape.subPaths.first?.points, shapeOuter.count >= 3 else { return false }
+        let box = ring.boundingBox, shapeBox = shape.boundingBox
+        guard !box.isEmpty, !shapeBox.isEmpty, box.minX <= shapeBox.minX, box.minY <= shapeBox.minY, box.maxX >= shapeBox.maxX, box.maxY >= shapeBox.maxY else { return false }
+        let holes = ring.subPaths.dropFirst().map { $0.points }.filter { $0.count >= 3 }
+        let tolerance = max(0.2, min(1.5, max(box.width, box.height) * 0.01))
+        for hole in holes {
+            let holeBox = BoundingBox(points: hole)
+            guard holeBox.minX - tolerance <= shapeBox.minX, holeBox.minY - tolerance <= shapeBox.minY,
+                  holeBox.maxX + tolerance >= shapeBox.maxX, holeBox.maxY + tolerance >= shapeBox.maxY else { continue }
+            // Nearly every point of the shape's outline inside the hole
+            // (a fill's outline may touch the ring's inner edge).
+            let inside = shapeOuter.filter { PolygonGeometry.pointInPolygon($0, polygon: hole) || distance(from: $0, toBoundaryOf: hole) <= tolerance }.count
+            if Double(inside) >= Double(shapeOuter.count) * 0.9 { return true }
+        }
+        return false
     }
 
     private static func distance(from p: Point2D, toBoundaryOf polygon: [Point2D]) -> Double {

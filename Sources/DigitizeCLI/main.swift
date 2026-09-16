@@ -333,6 +333,22 @@ do {
     if ProcessInfo.processInfo.environment["DUMP_PLAN"] != nil {
         for (i, c) in plan.commands.prefix(400).enumerated() { print("  \(i): \(c)") }
     }
+    // DUMP_BREAKS=1: every non-stitch command with the gap it spans, plus
+    // any stitch over 6 mm -- the things a sew-out shows as loose thread.
+    if ProcessInfo.processInfo.environment["DUMP_BREAKS"] != nil {
+        var last: Point2D? = nil
+        for (i, c) in plan.commands.enumerated() {
+            switch c {
+            case .stitch(let p):
+                if let l = last, l.distance(to: p) > 6 { print(String(format: "  %d: LONG STITCH %.1fmm (%.1f,%.1f)->(%.1f,%.1f)", i, l.distance(to: p), l.x, l.y, p.x, p.y)) }
+                last = p
+            case .jump(let p):
+                if let l = last { print(String(format: "  %d: jump %.1fmm (%.1f,%.1f)->(%.1f,%.1f)", i, l.distance(to: p), l.x, l.y, p.x, p.y)) } else { print("  \(i): jump to (\(p.x), \(p.y))") }
+                last = p
+            default: print("  \(i): \(c)")
+            }
+        }
+    }
     for issue in report.issues {
         print("  [\(issue.severity.rawValue)] \(issue.message)")
     }
@@ -368,6 +384,23 @@ do {
         let box = object.shape.boundingBox
         print(String(format: "  - %@: %@, color %@, bbox=(%.1f,%.1f)-(%.1f,%.1f)",
                       object.name, object.stitchType.rawValue, object.threadColor.name, box.minX, box.minY, box.maxX, box.maxY))
+    }
+
+    // EXPORT=/path/file.pes (or .dst/.exp/.jef/.vp3): also write the
+    // machine file, exactly as the app would.
+    if let exportPath = ProcessInfo.processInfo.environment["EXPORT"] {
+        let url = URL(fileURLWithPath: exportPath)
+        let threadRGBs = colors.map { $0.rgb }
+        let data: Data
+        switch url.pathExtension.lowercased() {
+        case "pes": data = try PESFormat.write(plan, designName: document.name, threadColors: threadRGBs)
+        case "exp": data = try EXPFormat.write(plan, designName: document.name)
+        case "jef": data = try JEFFormat.write(plan, designName: document.name, threadColors: threadRGBs)
+        case "vp3": data = try VP3Format.write(plan, designName: document.name, threadColors: threadRGBs)
+        default: data = try DSTFormat.write(plan, designName: document.name)
+        }
+        try data.write(to: url)
+        print("Exported \(url.path)")
     }
 
     var renderOptions = StitchRenderer.Options()
