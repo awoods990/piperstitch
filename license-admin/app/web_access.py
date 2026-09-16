@@ -249,6 +249,25 @@ def get_project(*, token: str, project_id: str) -> Optional[dict]:
     return out
 
 
+MAX_PREFERENCES_BYTES = 256 * 1024
+
+
+def get_preferences(*, token: str) -> dict:
+    session = _session(token)
+    row = db.get_preferences(session["customer_id"])
+    if row is None:
+        return {"preferences": None, "updated_at": None}
+    return {"preferences": json.loads(row["preferences"]), "updated_at": row["updated_at"]}
+
+
+def save_preferences(*, token: str, preferences: dict) -> dict:
+    session = _session(token)
+    encoded = json.dumps(preferences, separators=(",", ":"))
+    if len(encoded) > MAX_PREFERENCES_BYTES:
+        raise ActivationError("preferences_too_large", "Those preferences are too large to save.")
+    return {"updated_at": db.save_preferences(session["customer_id"], encoded)}
+
+
 def save_project(*, token: str, project_id: str, name: str, document: dict) -> dict:
     session = _session(token)
     if not project_id or len(project_id) > 64 or not project_id.replace("-", "").isalnum():

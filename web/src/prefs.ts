@@ -46,7 +46,7 @@ export function loadPrefs(): Preferences {
 }
 
 export function savePrefs(p: Preferences) {
-  try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* private mode etc. */ }
+  try { localStorage.setItem(KEY, JSON.stringify(p)); localStorage.setItem(KEY + ".savedAt", String(Date.now())); } catch { /* private mode etc. */ }
 }
 
 export const rgbHex = (c: RGBColor) => "#" + [c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, "0")).join("");

@@ -47,6 +47,13 @@ export const api = {
   validatePromo: (code: string) => postJSON<PromoValidation>("/auth/promo", { code }),
   billingPortalURL: async () => (await postJSON<{ url: string }>("/auth/billing-portal", {})).url,
 
+  // --- preferences (mirrored to the account when signed in) ---
+  getPreferences: async (): Promise<{ preferences: Record<string, unknown> | null; updatedAt: string | null }> =>
+    (await check(await fetch(`${BASE}/auth/preferences`))).json(),
+  savePreferences: async (preferences: Record<string, unknown>): Promise<{ updatedAt: string }> => {
+    const res = await fetch(`${BASE}/auth/preferences`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preferences }) });
+    return (await check(res)).json();
+  },
   // --- projects ---
   listProjects: async (): Promise<ProjectSummary[]> => (await check(await fetch(`${BASE}/projects`))).json(),
   getProject: async (id: string): Promise<{ id: string; name: string; updatedAt: string; document: StitchDocument }> =>

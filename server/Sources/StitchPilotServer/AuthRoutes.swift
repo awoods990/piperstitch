@@ -139,6 +139,28 @@ func authRoutes(_ api: RoutesBuilder) {
         return ["url": try await req.licenseAdmin.post("/api/web/billing-portal", TokenIn(token: session.token), as: Out.self).url]
     }
 
+    // Preferences: the browser's per-user settings (default hoop, thread
+    // library...) mirrored to the account so they follow the user between
+    // browsers. Opaque JSON both ways.
+    auth.get("preferences") { req -> Response in
+        let session = try await requireSession(req)
+        struct TokenIn: Content { var token: String }
+        struct Out: Decodable { var preferences: AnyJSON; var updated_at: String? }
+        let out = try await req.licenseAdmin.post("/api/web/preferences/get", TokenIn(token: session.token), as: Out.self)
+        let response = Response(status: .ok)
+        try response.content.encode(["preferences": out.preferences, "updatedAt": out.updated_at.map(AnyJSON.string) ?? .null])
+        return response
+    }
+
+    auth.put("preferences") { req -> [String: String] in
+        let session = try await requireSession(req)
+        struct Body: Content { var preferences: AnyJSON }
+        let body = try req.content.decode(Body.self)
+        struct In: Content { var token: String; var preferences: AnyJSON }
+        struct Out: Decodable { var updated_at: String }
+        return ["updatedAt": try await req.licenseAdmin.post("/api/web/preferences/save", In(token: session.token, preferences: body.preferences), as: Out.self).updated_at]
+    }
+
     // Projects: the StitchDocument JSON, kept by License Admin per account.
     let projects = api.grouped("projects").grouped(EntitlementGate())
 

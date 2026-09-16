@@ -96,6 +96,23 @@ def test_projects_round_trip_and_isolation(isolated_db, test_keypair, fake_smtp)
     assert web_access.delete_project(token=a.token, project_id=listed[0]["id"]) is True
 
 
+def test_preferences_mirror_per_account(isolated_db, test_keypair, fake_smtp):
+    a = _sign_in(fake_smtp, email="prefs-a@example.com")
+    b = _sign_in(fake_smtp, email="prefs-b@example.com")
+    assert web_access.get_preferences(token=a.token) == {"preferences": None, "updated_at": None}
+    prefs = {"defaultHoopName": "Mighty Hoop 5.5\" × 5.5\"", "threadLibrary": [{"name": "Madeira 1147", "rgb": {"r": 200, "g": 30, "b": 40}}]}
+    saved = web_access.save_preferences(token=a.token, preferences=prefs)
+    assert saved["updated_at"]
+    got = web_access.get_preferences(token=a.token)
+    assert got["preferences"] == prefs and got["updated_at"] == saved["updated_at"]
+    # Overwrites in place; another account sees nothing.
+    web_access.save_preferences(token=a.token, preferences={"defaultHoopName": "4\" × 4\""})
+    assert web_access.get_preferences(token=a.token)["preferences"] == {"defaultHoopName": "4\" × 4\""}
+    assert web_access.get_preferences(token=b.token)["preferences"] is None
+    with pytest.raises(activation.ActivationError):
+        web_access.save_preferences(token=a.token, preferences={"blob": "x" * (web_access.MAX_PREFERENCES_BYTES + 1)})
+
+
 def test_feedback_submission_is_stored_and_acknowledged_by_email(isolated_db, test_keypair, fake_smtp):
     from app import db as _db
 

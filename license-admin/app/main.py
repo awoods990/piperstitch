@@ -211,6 +211,11 @@ class WebPromoIn(BaseModel):
     code: str
 
 
+class WebPreferencesIn(BaseModel):
+    token: str
+    preferences: dict
+
+
 class WebProjectIn(BaseModel):
     token: str
     id: str
@@ -664,6 +669,24 @@ def api_web_billing_portal(body: WebTokenIn, x_api_key: Optional[str] = Header(N
     if url is None:
         return JSONResponse({"error": "no_billing", "message": "There's no billing to manage yet — this account is on a free trial."}, status_code=404)
     return {"url": url}
+
+
+@app.post("/api/web/preferences/get")
+def api_web_preferences_get(body: WebTokenIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.get_preferences(token=body.token)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+
+
+@app.post("/api/web/preferences/save")
+def api_web_preferences_save(body: WebPreferencesIn, x_api_key: Optional[str] = Header(None)):
+    _require_web_key(x_api_key)
+    try:
+        return web_access.save_preferences(token=body.token, preferences=body.preferences)
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
 
 
 @app.post("/api/web/projects/list")

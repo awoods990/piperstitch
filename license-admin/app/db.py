@@ -164,6 +164,16 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE INDEX IF NOT EXISTS idx_projects_customer ON projects(customer_id, updated_at);
 
+CREATE TABLE IF NOT EXISTS web_preferences (
+    -- The web app's per-user preferences (default hoop, thread library,
+    -- suppliers...) mirrored from the browser so they follow the account
+    -- between browsers and so PiperStitch Proofs can offer the same
+    -- hoops and threads. Opaque JSON: the app owns the shape.
+    customer_id INTEGER PRIMARY KEY REFERENCES customers(id),
+    preferences TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS feedback_submissions (
     -- A customer's "send this to PiperStitch" from the web editor: the
     -- original artwork and a rendered picture of the digitized result,
@@ -1084,6 +1094,22 @@ def count_projects(customer_id: int) -> int:
 def get_project(customer_id: int, project_id: str) -> Optional[sqlite3.Row]:
     with connection() as conn:
         return conn.execute("SELECT * FROM projects WHERE id = ? AND customer_id = ?", (project_id, customer_id)).fetchone()
+
+
+def get_preferences(customer_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT preferences, updated_at FROM web_preferences WHERE customer_id = ?", (customer_id,)).fetchone()
+
+
+def save_preferences(customer_id: int, preferences: str) -> str:
+    now = _now()
+    with connection() as conn:
+        conn.execute(
+            "INSERT INTO web_preferences (customer_id, preferences, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(customer_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at",
+            (customer_id, preferences, now),
+        )
+    return now
 
 
 def save_project(*, customer_id: int, project_id: str, name: str, document: str, width_mm: float, height_mm: float, object_count: int) -> bool:
