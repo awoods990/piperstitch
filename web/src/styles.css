@@ -430,3 +430,6 @@ button, input, select { font: inherit; color: inherit; }
   .setup-sub { font-size: 13px; }
   .setup-note { display: none; }
 }
+
+/* "Back to Proofs" when the editor was opened from PiperStitch Proofs */
+.return-to { white-space: nowrap; text-decoration: none; }

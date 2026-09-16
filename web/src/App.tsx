@@ -66,7 +66,16 @@ export default function App() {
   const generation = useRef(0);
   const digitizeTimer = useRef<number | null>(null);
 
-  const setPrefs = (p: Preferences) => { setPrefsState(p); savePrefs(p); };
+  const prefsSyncTimer = useRef<number | null>(null);
+  const setPrefs = (p: Preferences) => {
+    setPrefsState(p); savePrefs(p);
+    // Mirror to the account (debounced) so the same hoops and thread
+    // library show up in another browser and in PiperStitch Proofs.
+    if (me?.signedIn) {
+      if (prefsSyncTimer.current) window.clearTimeout(prefsSyncTimer.current);
+      prefsSyncTimer.current = window.setTimeout(() => { api.savePreferences(p as unknown as Record<string, unknown>).catch(() => { /* local copy still stands */ }); }, 800);
+    }
+  };
   const palette: ThreadColor[] = prefs.threadLibrary.length > 0 ? prefs.threadLibrary : (catalog?.threadPalette ?? []);
   const matchToThreadLibrary = prefs.matchToThreadLibrary;
 
@@ -78,6 +87,7 @@ export default function App() {
     if (subscribed !== null) window.history.replaceState(null, "", window.location.pathname);
     api.me(subscribed !== null).then((m) => {
       setMe(m);
+      if (m.signedIn) pullPreferences();
       if (subscribed === "1" && m.account?.status === "active") setNotice("You're subscribed — thank you! Everything's unlocked.");
     }).catch((e) => setError(`Couldn't reach the PiperStitch server: ${e.message}`));
   }, []);
@@ -87,8 +97,24 @@ export default function App() {
     if (signedInAndEntitled && me?.authEnabled && phase === "start") api.listProjects().then(setProjects).catch(() => setProjects([]));
   }, [signedInAndEntitled, me?.authEnabled, phase]);
 
+  /** The account's mirrored preferences win over this browser's copy when
+   *  they're newer than the last local save, so a hoop or thread added on
+   *  another machine shows up here; a browser that has never synced pushes
+   *  its own copy up instead. */
+  const pullPreferences = async () => {
+    try {
+      const { preferences, updatedAt } = await api.getPreferences();
+      const localStamp = Number(localStorage.getItem("piperstitch.preferences.savedAt") || 0);
+      if (preferences && updatedAt && (!localStamp || Date.parse(updatedAt) > localStamp)) {
+        const merged = { ...loadPrefs(), ...(preferences as Partial<Preferences>) };
+        setPrefsState(merged); savePrefs(merged);
+      } else {
+        api.savePreferences(loadPrefs() as unknown as Record<string, unknown>).catch(() => { /* best effort */ });
+      }
+    } catch { /* offline or auth off: local preferences are fine */ }
+  };
   const refreshMe = async () => { try { setMe(await api.me(true)); } catch (e) { fail(e); } };
-  const onSignedIn = (account: AccountState) => { setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); };
+  const onSignedIn = (account: AccountState) => { setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences(); };
   const onSignOut = async () => {
     try { await api.signOut(); } catch { /* cookie is cleared regardless */ }
     onStartOver(); setProjects(null); setSheet(null);
@@ -366,6 +392,24 @@ export default function App() {
     onOpenProject({ id, name: "", widthMM: 0, heightMM: 0, objectCount: 0, createdAt: "", updatedAt: "" });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalog, signedInAndEntitled, phase]);
+
+  /** `?return=<url>` (sent along with `?project=`) puts a "Back to Proofs"
+   *  button in the top bar for the rest of this tab's session. Only a
+   *  PiperStitch address (or a local dev server) is accepted. */
+  const [returnTo, setReturnTo] = useState<string | null>(() => { try { return sessionStorage.getItem("piperstitch.returnTo"); } catch { return null; } });
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("return");
+    if (!raw) return;
+    params.delete("return");
+    window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+    try {
+      const u = new URL(raw);
+      const host = u.hostname;
+      const ok = (u.protocol === "https:" || u.protocol === "http:") && (host === "piperstitch.com" || host.endsWith(".piperstitch.com") || host === "localhost" || host === "127.0.0.1");
+      if (ok) { setReturnTo(u.toString()); try { sessionStorage.setItem("piperstitch.returnTo", u.toString()); } catch { /* fine */ } }
+    } catch { /* not a URL */ }
+  }, []);
   const onSaveProject = () => withBusy("Saving…", async () => {
     if (!document) return;
     const id = projectId ?? crypto.randomUUID();
@@ -421,7 +465,12 @@ export default function App() {
   if (me.authEnabled && !me.signedIn) return <SignIn onSignedIn={onSignedIn} />;
   if (me.authEnabled && me.account && !me.account.entitled) return <SubscribeWall account={me.account} onSignOut={onSignOut} onRefresh={refreshMe} />;
 
-  const accountMenu = me.authEnabled && me.account ? <AccountMenu account={me.account} onSignOut={onSignOut} /> : null;
+  const accountMenu = (
+    <>
+      {returnTo && <a className="btn primary return-to" href={returnTo} title="Save here first; the proof is built from the saved project">← Back to Proofs</a>}
+      {me.authEnabled && me.account ? <AccountMenu account={me.account} onSignOut={onSignOut} /> : null}
+    </>
+  );
   const sheets = (
     <>
       {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} />}
