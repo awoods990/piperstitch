@@ -70,7 +70,7 @@ on …:8080" line confirms it). Note the URL — something like
 | `STRIPE_PUBLISHABLE_KEY` / `STRIPE_SECRET_KEY` | Stripe → Developers → API keys (test keys first) |
 | `STRIPE_PRICE_MONTHLY` | see step 4 |
 | `STRIPE_PRICE_PROOFS_MONTHLY` | see step 4 — the PiperStitch Proofs price, sold on the same customer (3 free proofs, then $24/month) |
-| `PROOFS_APP_URL` | the Proofs service's URL, e.g. `https://piperstitch-proofs-production.up.railway.app` (its checkout returns there) |
+| `PROOFS_APP_URL` | the Proofs service's URL, e.g. `https://piperstitch-proofs-production.up.railway.app` (its checkout returns there). **Set the same variable on the app service too** — the sign-in page's "Sign in to Proofs" link and Settings' Proofs buttons point there. |
 | `STRIPE_WEBHOOK_SECRET` | see step 5 |
 | `POSTMARK_API_TOKEN` / `POSTMARK_FROM` | Postmark server token and a verified From address — **or** the `SMTP_*` set from `license-admin/README.md` |
 | `PUBLIC_BASE_URL` | this service's URL (no trailing slash) |

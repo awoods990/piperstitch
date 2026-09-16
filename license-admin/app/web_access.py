@@ -189,6 +189,9 @@ def state(*, token: str) -> dict:
         "price_cents": config.MONTHLY_PRICE_CENTS,
         "currency": config.CURRENCY,
         "trial_days": config.TRIAL_DAYS,
+        # PiperStitch Proofs, the second product on this customer, so the
+        # app can offer it and open it.
+        "proofs": {**subscriptions.proofs_state(customer["id"]).as_dict(), "url": config.PROOFS_APP_URL},
     }
 
 

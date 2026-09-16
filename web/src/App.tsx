@@ -462,7 +462,7 @@ export default function App() {
   if (!catalog || !me) {
     return <div className="start"><div className="start-brand"><img src="/icon.png" alt="" width={64} height={64} /><h1>PiperStitch</h1>{error ? <p className="error-text">{error}</p> : <p>Loading…</p>}</div></div>;
   }
-  if (me.authEnabled && !me.signedIn) return <SignIn onSignedIn={onSignedIn} />;
+  if (me.authEnabled && !me.signedIn) return <SignIn onSignedIn={onSignedIn} proofsURL={me.proofsURL} />;
   if (me.authEnabled && me.account && !me.account.entitled) return <SubscribeWall account={me.account} onSignOut={onSignOut} onRefresh={refreshMe} />;
 
   const accountMenu = (

@@ -9,6 +9,8 @@ struct MeResponse: Content {
     var authEnabled: Bool
     var signedIn: Bool
     var account: AccountState?
+    /// PiperStitch Proofs' address, so the sign-in page can point there.
+    var proofsURL: String
 }
 
 struct ProjectSummary: Content {
@@ -31,12 +33,13 @@ func authRoutes(_ api: RoutesBuilder) {
     let auth = api.grouped("auth")
 
     auth.get("me") { req -> Response in
+        let proofsURL = req.application.auth.proofsURL
         guard req.application.auth.enabled else {
-            return try await MeResponse(authEnabled: false, signedIn: false, account: nil).encodeResponse(for: req)
+            return try await MeResponse(authEnabled: false, signedIn: false, account: nil, proofsURL: proofsURL).encodeResponse(for: req)
         }
         let force = (try? req.query.get(Bool.self, at: "refresh")) ?? false
         let session = await req.session(forceRefresh: force)
-        let response = try await MeResponse(authEnabled: true, signedIn: session != nil, account: session?.account).encodeResponse(for: req)
+        let response = try await MeResponse(authEnabled: true, signedIn: session != nil, account: session?.account, proofsURL: proofsURL).encodeResponse(for: req)
         if let session, req.storage[RefreshedSessionKey.self] == true {
             SessionCookie.set(session, on: response, app: req.application)
         } else if session == nil, req.cookies[SessionCookie.name] != nil {
@@ -65,7 +68,7 @@ func authRoutes(_ api: RoutesBuilder) {
                                                   In(email: body.email.trimmingCharacters(in: .whitespaces), code: body.code.trimmingCharacters(in: .whitespaces), user_agent: userAgent),
                                                   as: VerifyOut.self)
         let payload = SessionPayload(token: raw.token, account: raw.account, checkedAt: Int(Date().timeIntervalSince1970))
-        let response = try await MeResponse(authEnabled: true, signedIn: true, account: raw.account).encodeResponse(for: req)
+        let response = try await MeResponse(authEnabled: true, signedIn: true, account: raw.account, proofsURL: req.application.auth.proofsURL).encodeResponse(for: req)
         SessionCookie.set(payload, on: response, app: req.application)
         return response
     }
@@ -98,7 +101,7 @@ func authRoutes(_ api: RoutesBuilder) {
         struct In: Content { var token: String; var name: String }
         let account = try await req.licenseAdmin.post("/api/web/profile", In(token: session.token, name: body.name), as: AccountState.self)
         var updated = session; updated.account = account; updated.checkedAt = Int(Date().timeIntervalSince1970)
-        let response = try await MeResponse(authEnabled: true, signedIn: true, account: account).encodeResponse(for: req)
+        let response = try await MeResponse(authEnabled: true, signedIn: true, account: account, proofsURL: req.application.auth.proofsURL).encodeResponse(for: req)
         SessionCookie.set(updated, on: response, app: req.application)
         return response
     }
@@ -130,6 +133,17 @@ func authRoutes(_ api: RoutesBuilder) {
         let body = try req.content.decode(Body.self)
         struct In: Content { var token: String; var code: String }
         return try await req.licenseAdmin.post("/api/web/promo/validate", In(token: session.token, code: body.code), as: PromoValidation.self)
+    }
+
+    /// Start (or resume) the PiperStitch Proofs subscription from inside
+    /// the app: License Admin's Checkout for the Proofs price, returning
+    /// to Proofs' own Settings page when paid.
+    auth.post("proofs-checkout") { req -> [String: String] in
+        let session = try await requireSession(req)
+        struct In: Content { var token: String; var success_url: String; var cancel_url: String }
+        struct Out: Decodable { var url: String }
+        let proofs = req.application.auth.proofsURL
+        return ["url": try await req.licenseAdmin.post("/api/web/proofs/checkout", In(token: session.token, success_url: "\(proofs)/settings?subscribed=1", cancel_url: "\(proofs)/settings"), as: Out.self).url]
     }
 
     auth.post("billing-portal") { req -> [String: String] in

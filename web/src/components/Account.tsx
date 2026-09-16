@@ -74,7 +74,7 @@ export function PromoBox({ onChange }: { onChange: (code: string | null, descrip
 
 // --- sign in ----------------------------------------------------------------
 
-export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => void }) {
+export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: AccountState) => void; proofsURL?: string }) {
   // The marketing site's "Start your free trial" form hands the address
   // over as ?email= so the visitor doesn't type it twice; the sign-in
   // email's own "Sign in instantly" link hands over ?email= and &code=
@@ -180,6 +180,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (account: AccountState) => 
       </form>
       <div className="start-hints">
         <div><strong>No password:</strong> a fresh code is emailed each time you sign in.</div>
+        {proofsURL && <div className="proofs-signin-link">Looking for <strong>PiperStitch Proofs</strong> — customer proof approval? <a href={`${proofsURL}/signin`}>Sign in to Proofs →</a></div>}
       </div>
     </div>
   );
@@ -243,6 +244,9 @@ export function AccountMenu({ account, onSignOut }: { account: AccountState; onS
           <div className="menu-head"><b>{account.name}</b><span>{account.email}</span><span className="menu-status">{statusLine(account)}</span></div>
           {trial && <button onClick={() => go(api.checkoutURL)}>Subscribe · {price(account)}</button>}
           {account.has_billing && <button onClick={() => go(api.billingPortalURL)}>Manage billing</button>}
+          {account.proofs && (account.proofs.subscribed || account.proofs.free_used > 0) && (
+            <button onClick={() => window.open(account.proofs!.url, "_blank", "noopener")}>Open PiperStitch Proofs ↗</button>
+          )}
           <button onClick={onSignOut}>Sign out</button>
           {error && <div className="error-text menu-error">{error}</div>}
         </div>

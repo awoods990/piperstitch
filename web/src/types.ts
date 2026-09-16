@@ -152,13 +152,29 @@ export interface AccountState {
   has_billing: boolean;
   price_cents: number;
   currency: string;
+  proofs?: ProofsState | null;
   trial_days: number;
+}
+
+/** PiperStitch Proofs on the same account: subscribed, or the free trial
+ *  (`free_used` of `free_granted` proofs sent). `url` is where it lives. */
+export interface ProofsState {
+  subscribed: boolean;
+  status: string;
+  free_granted: number;
+  free_used: number;
+  free_left: number;
+  can_send: boolean;
+  has_billing: boolean;
+  price_cents: number;
+  url: string;
 }
 
 export interface MeResponse {
   authEnabled: boolean;
   signedIn: boolean;
   account?: AccountState | null;
+  proofsURL?: string;
 }
 
 export interface ProjectSummary {

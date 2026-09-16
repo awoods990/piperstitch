@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import glossary from "../glossary.json";
-import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, ProjectSummary, RGBColor, ThreadColor } from "../types";
+import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, ProjectSummary, ProofsState, RGBColor, ThreadColor } from "../types";
 import { LETTERING_FONTS, ensureFontFaces, fontFaceFamily, generateLetteringShapes, type LetteringSpec } from "../lettering";
 import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
 import { AccountMenu, PromoBox, price, statusLine } from "./Account";
@@ -438,6 +438,33 @@ export function SendSheet({ designName, onClose, onSend }: { designName: string;
 
 // --- Settings ---------------------------------------------------------------------
 
+/** PiperStitch Proofs on the account tab: start the free trial, see how
+ *  much of it is left, upgrade, or open it. Billing is the same customer
+ *  and card as the app's, so "Manage billing" above covers both. */
+function ProofsPlan({ proofs, go }: { proofs: ProofsState | null; go: (fn: () => Promise<string>) => void }) {
+  if (!proofs) return null;
+  const dollars = `$${(proofs.price_cents / 100).toFixed(0)}/month`;
+  const open = () => window.open(proofs.url, "_blank", "noopener");
+  let line: string;
+  if (proofs.subscribed) line = proofs.status === "past_due" ? "Subscribed — the last payment didn't go through, please update your card." : `Subscribed · ${dollars}`;
+  else if (proofs.free_used === 0) line = `Not started — your first ${proofs.free_granted} proofs are free.`;
+  else if (proofs.free_left > 0) line = `Free trial: ${proofs.free_used} of ${proofs.free_granted} free proofs used, ${proofs.free_left} left.`;
+  else line = `All ${proofs.free_granted} free proofs used — subscribe to keep sending.`;
+  return (
+    <div className="proofs-plan">
+      <div className="kv"><span>PiperStitch Proofs</span><b>{line}</b></div>
+      <p className="hint">Send customers a stitch-accurate proof to approve on their phone: garment mockup, thread colours in order, measured placement, a signed approval certificate, automatic reminders, and a production sheet for the machine. Billed on the same card as PiperStitch.</p>
+      <div className="btn-row">
+        {proofs.subscribed || proofs.free_used > 0
+          ? <button className="btn primary" onClick={open}>Open Proofs ↗</button>
+          : <button className="btn primary" onClick={open}>Start your free trial — {proofs.free_granted} proofs free ↗</button>}
+        {!proofs.subscribed && <button className="btn" onClick={() => go(api.proofsCheckoutURL)}>{proofs.free_left > 0 ? `Upgrade to Proofs · ${dollars}` : `Subscribe to Proofs · ${dollars}`}</button>}
+      </div>
+    </div>
+  );
+}
+
+
 export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount, onAccount }: {
   catalog: Catalog; prefs: Preferences; account: AccountState | null; onPrefs: (p: Preferences) => void; onClose: () => void; onSignOut: () => void; onRefreshAccount: () => void;
   onAccount: (a: AccountState) => void;
@@ -477,6 +504,7 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
             <button className="btn ghost" onClick={onRefreshAccount}>Refresh status</button>
           </div>
           <p className="hint">Card, invoices, and cancelling are handled on Stripe's secure billing page. Cancelling keeps the app working until the end of the paid period; downloaded files keep working forever.</p>
+          <ProofsPlan proofs={account.proofs ?? null} go={go} />
           {error && <div className="error-text">{error}</div>}
           <div><button className="btn ghost" onClick={onSignOut}>Sign out</button></div>
         </div>

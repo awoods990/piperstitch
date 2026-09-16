@@ -17,6 +17,9 @@ struct AuthConfig {
     let webAPIKey: String
     let sessionSecret: SymmetricKey
     let secureCookies: Bool
+    /// Where PiperStitch Proofs lives, for the sign-in page's link and
+    /// the Settings offer (PROOFS_APP_URL).
+    let proofsURL: String
 
     var enabled: Bool { licenseAdminURL != nil }
 
@@ -33,7 +36,8 @@ struct AuthConfig {
             licenseAdminURL: url,
             webAPIKey: Environment.get("WEB_API_KEY") ?? "",
             sessionSecret: SymmetricKey(data: Data((secret.isEmpty ? "development-only-secret-not-for-production" : secret).utf8)),
-            secureCookies: app.environment == .production
+            secureCookies: app.environment == .production,
+            proofsURL: (Environment.get("PROOFS_APP_URL").flatMap { $0.isEmpty ? nil : $0 } ?? "https://proofs.piperstitch.com").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         )
     }
 }
@@ -63,11 +67,32 @@ struct AccountState: Content {
     var priceCents: Int
     var currency: String
     var trialDays: Int
+    /// PiperStitch Proofs on the same customer (nil from an older cookie).
+    var proofs: ProofsState?
 
     enum CodingKeys: String, CodingKey {
         case customerId = "customer_id", email, name, status, entitled
         case validUntil = "valid_until", periodEnd = "period_end", cancelAtPeriodEnd = "cancel_at_period_end"
-        case hasBilling = "has_billing", priceCents = "price_cents", currency, trialDays = "trial_days"
+        case hasBilling = "has_billing", priceCents = "price_cents", currency, trialDays = "trial_days", proofs
+    }
+}
+
+/// The Proofs plan as License Admin reports it: subscribed, or so many
+/// free proofs used of the trial. Carried through untouched.
+struct ProofsState: Content {
+    var subscribed: Bool
+    var status: String
+    var freeGranted: Int
+    var freeUsed: Int
+    var freeLeft: Int
+    var canSend: Bool
+    var hasBilling: Bool
+    var priceCents: Int
+    var url: String
+
+    enum CodingKeys: String, CodingKey {
+        case subscribed, status, url
+        case freeGranted = "free_granted", freeUsed = "free_used", freeLeft = "free_left", canSend = "can_send", hasBilling = "has_billing", priceCents = "price_cents"
     }
 }
 

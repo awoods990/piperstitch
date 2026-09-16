@@ -46,6 +46,7 @@ export const api = {
   checkoutURL: async (promoCode?: string) => (await postJSON<{ url: string }>("/auth/checkout", { promoCode: promoCode ?? "" })).url,
   validatePromo: (code: string) => postJSON<PromoValidation>("/auth/promo", { code }),
   billingPortalURL: async () => (await postJSON<{ url: string }>("/auth/billing-portal", {})).url,
+  proofsCheckoutURL: async () => (await postJSON<{ url: string }>("/auth/proofs-checkout", {})).url,
 
   // --- preferences (mirrored to the account when signed in) ---
   getPreferences: async (): Promise<{ preferences: Record<string, unknown> | null; updatedAt: string | null }> =>
