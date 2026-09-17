@@ -35,9 +35,16 @@ interface Props {
   /** Re-running from Settings: no welcome screen, back out to the app. */
   rerun?: boolean;
   onCancel?: () => void;
+  /** Signed out and starting a free trial: the account is created inside
+   *  the flow (email, then the emailed code). `verifyCode` resolves once the
+   *  app is signed in and the account's preferences have been pulled. */
+  signUp?: { requestCode: (email: string) => Promise<void>; verifyCode: (email: string, code: string) => Promise<void> };
+  /** Where "Already a member? Sign in" goes. */
+  onSignInInstead?: () => void;
 }
 
 const TITLES: Record<StepId, string> = {
+  account: "First, your email",
   products: "Will you also use Proofs?",
   business: "Tell us about your business",
   hoops: "Which hoops do you have?",
@@ -59,8 +66,20 @@ export default function Onboarding(props: Props) {
   const { account, catalog, prefs } = props;
   const [welcome, setWelcome] = useState(!props.rerun);
   const [products, setProducts] = useState<Product[]>(prefs.onboarding?.products ?? ["core"]);
-  const steps = useMemo(() => stepsFor(products), [products]);
-  const [step, setStep] = useState<StepId>("products");
+  // Creating the account is the first step when the visitor arrived signed
+  // out; it stays in the step count after they're in, so "Step 2 of 6"
+  // doesn't turn into "Step 1 of 5" the moment the code is accepted.
+  const [startedSignedOut] = useState(!!props.signUp && !account);
+  const needsAccount = startedSignedOut && !account;
+  const steps = useMemo(() => stepsFor(products, startedSignedOut), [products, startedSignedOut]);
+  const [step, setStep] = useState<StepId>(needsAccount ? "account" : "products");
+  // "Jump right in" chosen before the account existed: finish right after the code.
+  const [jumpAfterSignUp, setJumpAfterSignUp] = useState(false);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
+  const latestPrefs = useRef(prefs);
+  latestPrefs.current = prefs;
   const stepIndex = Math.max(0, steps.indexOf(step));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,8 +138,37 @@ export default function Onboarding(props: Props) {
   const goBack = () => setStep(steps[Math.max(0, stepIndex - 1)]);
 
   const skipAll = () => {
+    if (needsAccount) { setJumpAfterSignUp(true); setWelcome(false); setStep("account"); return; }
     commit({ ...draft, onboarding: { version: ONBOARDING_VERSION, completedAt: null, skippedAt: new Date().toISOString(), products } });
     props.onSkip();
+  };
+
+  // The account step: request the code, then verify it. Once verified the
+  // app is signed in and has pulled the account's preferences, so the
+  // draft is re-seeded from them (an existing member using the trial door
+  // keeps their business, hoops and threads).
+  const requestCode = async () => {
+    setSaving(true); setError(null);
+    try { await props.signUp!.requestCode(email.trim()); setCodeSent(true); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+  const verifyCode = async () => {
+    setSaving(true); setError(null);
+    try {
+      await props.signUp!.verifyCode(email.trim(), code.trim());
+      // Let React commit the pulled preferences before reading them.
+      await new Promise((r) => setTimeout(r, 0));
+      const fresh = latestPrefs.current;
+      setDraft(fresh);
+      if (jumpAfterSignUp) {
+        commit({ ...fresh, onboarding: { version: ONBOARDING_VERSION, completedAt: null, skippedAt: new Date().toISOString(), products } });
+        props.onSkip();
+        return;
+      }
+      setStep("products");
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
   };
 
   // PiperStitch is the base subscription; Proofs is an add-on to it.
@@ -141,21 +189,26 @@ export default function Onboarding(props: Props) {
         <div className="setup-card welcome-card">
           <div className="welcome-brand">
             <img src="/icon.png" alt="" width={56} height={56} />
-            <h2>Welcome to PiperStitch{account?.name ? `, ${account.name.split(" ")[0]}` : ""}</h2>
-            <p className="setup-sub">A few questions and PiperStitch opens already set up for your business — machines, hoops, thread and defaults filled in, and Proofs too if you add it. Or skip this and set things up as you go.</p>
+            <h2>{needsAccount ? "Welcome — let's start your free trial" : `Welcome to PiperStitch${account?.name ? `, ${account.name.split(" ")[0]}` : ""}`}</h2>
+            <p className="setup-sub">{needsAccount
+              ? `${trialDays} days of everything, no card needed. Your email is your account — we send a code, no password to remember. Then a few questions set PiperStitch up for your business, or skip them and set things up as you go.`
+              : "A few questions and PiperStitch opens already set up for your business — machines, hoops, thread and defaults filled in, and Proofs too if you add it. Or skip this and set things up as you go."}</p>
           </div>
           <div className="choices two welcome-choices">
-            <Choice title={`Set up PiperStitch for my business · about ${estimateMinutes(["core", "proofs"])} minutes`}
+            <Choice title={`Set up PiperStitch for my business · about ${estimateMinutes(["core", "proofs"], needsAccount)} minutes`}
               subtitle="Recommended. Machines, hoops, thread library, defaults — and Proofs, if you'll use it." selected={false} onClick={() => setWelcome(false)} />
-            <Choice title="Jump right in" subtitle="Start with a design now. Everything here is in Settings whenever you want it." selected={false} onClick={skipAll} />
+            <Choice title="Jump right in" subtitle={needsAccount ? "Just your email, then start with a design. Everything here is in Settings whenever you want it." : "Start with a design now. Everything here is in Settings whenever you want it."} selected={false} onClick={skipAll} />
           </div>
-          <p className="hint welcome-foot">Your {trialDays}-day free trial has started — no card needed. {account?.email && <>Signed in as {account.email}.</>}</p>
+          <p className="hint welcome-foot">{needsAccount
+            ? <>Already a member? <button type="button" className="linkish" onClick={props.onSignInInstead}>Sign in</button></>
+            : <>Your {trialDays}-day free trial has started — no card needed. {account?.email && <>Signed in as {account.email}.</>}</>}</p>
         </div>
       </div>
     );
   }
 
   const subtitle: Record<StepId, string> = {
+    account: codeSent ? `We emailed a six-digit code to ${email.trim()}. It's good for 15 minutes — check spam if it's slow.` : "No password: a fresh code is emailed each time you sign in. Your free trial starts as soon as you're in.",
     products: `PiperStitch digitizing is included — your ${trialDays}-day free trial has started, no card needed. Proofs is an add-on on the same account; you can add it any time.`,
     business: "This goes on the files and proofs you send, and picks the file format your machine reads.",
     hoops: draft.business.machineBrands.length > 0 ? "Pre-ticked from your machines. Untick any you don't have and add the rest — these show first everywhere." : "Tick the hoops you own — these show first everywhere.",
@@ -182,6 +235,28 @@ export default function Onboarding(props: Props) {
         {subtitle[step] && <p className="setup-sub">{subtitle[step]}</p>}
 
         <div className="setup-body" ref={bodyRef}>
+          {step === "account" && (
+            <form className="stack form-grid account-step" onSubmit={(e) => { e.preventDefault(); if (codeSent) verifyCode(); else requestCode(); }}>
+              {!codeSent ? (
+                <label className="field">Email address
+                  <input type="email" required autoFocus autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+                </label>
+              ) : (
+                <>
+                  <label className="field">Sign-in code
+                    <input inputMode="numeric" pattern="[0-9]*" maxLength={6} required autoFocus autoComplete="one-time-code" placeholder="123456" className="code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+                  </label>
+                  <div className="row-inline">
+                    <button type="button" className="btn ghost small" disabled={saving} onClick={requestCode}>Resend code</button>
+                    <button type="button" className="btn ghost small" disabled={saving} onClick={() => { setCodeSent(false); setCode(""); setError(null); }}>Use a different email</button>
+                  </div>
+                </>
+              )}
+              <p className="hint">By continuing you accept the <a href="https://www.piperstitch.com/terms.html" target="_blank" rel="noopener">Terms</a> and <a href="https://www.piperstitch.com/privacy-policy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+              <button type="submit" hidden aria-hidden="true" />
+            </form>
+          )}
+
           {step === "products" && (
             <div className="choices two">
               <Choice title="Just PiperStitch for now" subtitle="Turn artwork into stitch files and download them for your machine."
@@ -352,15 +427,20 @@ export default function Onboarding(props: Props) {
         </div>
 
         <footer className="setup-foot">
-          {step !== "done" && <button className="btn ghost" onClick={props.rerun && props.onCancel ? props.onCancel : skipAll} disabled={saving}>{props.rerun ? "Cancel" : "Skip setup"}</button>}
+          {step !== "done" && step !== "account" && <button className="btn ghost" onClick={props.rerun && props.onCancel ? props.onCancel : skipAll} disabled={saving}>{props.rerun ? "Cancel" : "Skip setup"}</button>}
+          {step === "account" && <button className="btn ghost" onClick={props.onSignInInstead} disabled={saving}>Already a member? Sign in</button>}
           <div className="grow" />
-          {stepIndex > 0 && step !== "done" && <button className="btn ghost" onClick={goBack} disabled={saving}>Back</button>}
+          {stepIndex > 0 && step !== "done" && steps[stepIndex - 1] !== "account" && <button className="btn ghost" onClick={goBack} disabled={saving}>Back</button>}
           {step !== "done" && <span className="step-count">Step {stepIndex + 1} of {steps.length - 1}</span>}
           {step === "done" ? (
             <>
               {products.includes("proofs") && <button className="btn" onClick={() => api.proofsHandoffURL().then((u) => window.location.assign(u)).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>Open Proofs ↗</button>}
               <button className="btn primary big" onClick={() => props.onDone(products)}>Start digitizing →</button>
             </>
+          ) : step === "account" ? (
+            codeSent
+              ? <button className="btn primary" onClick={verifyCode} disabled={saving || code.length !== 6}>{saving ? "Checking…" : jumpAfterSignUp ? "Start digitizing →" : "Continue"}</button>
+              : <button className="btn primary" onClick={requestCode} disabled={saving || !email.includes("@")}>{saving ? "Sending…" : "Email me a code"}</button>
           ) : (
             <button className="btn primary" onClick={goNext} disabled={saving}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Finish" : "Next"}</button>
           )}

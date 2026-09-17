@@ -79,6 +79,9 @@ export default function App() {
   // finishing the last step records the setup, which would otherwise
   // satisfy the "needs onboarding" test and unmount the finish screen.
   const [firstRunActive, setFirstRunActive] = useState(false);
+  // "Start free trial" while signed out: the account gets created inside
+  // guided setup rather than on a separate sign-in page.
+  const [signUpMode, setSignUpMode] = useState(false);
   useEffect(() => { setDisplayUnits(prefs.units); }, [prefs.units]);
   const setPrefs = (p: Preferences) => {
     setPrefsState(p); savePrefs(p);
@@ -106,6 +109,14 @@ export default function App() {
     if (params.get("setup") !== null) {
       params.delete("setup");
       window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+      setRerunOnboarding("link");
+    }
+    // ?trial=1 (every "Start free trial" button on the site): guided setup
+    // opens at once, creating the account as its first step if needed.
+    if (params.get("trial") !== null) {
+      params.delete("trial");
+      window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+      setSignUpMode(true);
       setRerunOnboarding("link");
     }
     const handoff = params.get("handoff");
@@ -146,9 +157,18 @@ export default function App() {
   const refreshMe = async () => { try { setMe(await api.me(true)); } catch (e) { fail(e); } };
   const onSignedIn = (account: AccountState, mode: "trial" | "signin" = "signin") => {
     setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences();
-    // A trial sign-up always opens guided setup, even for an existing
-    // account (they can jump right in from the welcome screen).
     if (mode === "trial") setRerunOnboarding("link");
+  };
+  /** Account creation from inside guided setup: signed in and preferences
+   *  pulled before this resolves, so the flow can re-seed from them. */
+  const signUp = {
+    requestCode: async (email: string) => { await api.requestCode(email); },
+    verifyCode: async (email: string, code: string) => {
+      const m = await api.verifyCode(email, code);
+      if (!m.account) throw new Error("Couldn't sign in.");
+      setMe({ authEnabled: true, signedIn: true, account: m.account }); setNotice(null);
+      await pullPreferences();
+    },
   };
   const onSignOut = async () => {
     try { await api.signOut(); } catch { /* cookie is cleared regardless */ }
@@ -497,7 +517,19 @@ export default function App() {
   if (!catalog || !me) {
     return <div className="start"><div className="start-brand"><img src="/icon.png" alt="" width={64} height={64} /><h1>PiperStitch</h1>{error ? <p className="error-text">{error}</p> : <p>Loading…</p>}</div></div>;
   }
-  if (me.authEnabled && !me.signedIn) return <SignIn onSignedIn={onSignedIn} proofsURL={me.proofsURL} />;
+  if (me.authEnabled && !me.signedIn && signUpMode) {
+    return (
+      <>
+        {error && <div className="error-bar floating">{error}</div>}
+        <Onboarding account={null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} signUp={signUp}
+          onSignInInstead={() => { setSignUpMode(false); setRerunOnboarding(false); }}
+          onCancel={() => { setSignUpMode(false); setRerunOnboarding(false); }}
+          onSkip={() => { setSignUpMode(false); setRerunOnboarding(false); setFirstRunActive(false); }}
+          onDone={() => { setSignUpMode(false); setRerunOnboarding(false); setFirstRunActive(false); }} />
+      </>
+    );
+  }
+  if (me.authEnabled && !me.signedIn) return <SignIn onSignedIn={onSignedIn} proofsURL={me.proofsURL} onStartTrial={() => { setSignUpMode(true); setRerunOnboarding("link"); }} />;
   if (me.authEnabled && me.account && !me.account.entitled) return <SubscribeWall account={me.account} onSignOut={onSignOut} onRefresh={refreshMe} />;
 
   const proofs = me.account?.proofs ?? null;
@@ -540,15 +572,18 @@ export default function App() {
   if (needsOnboarding && !firstRunActive) setFirstRunActive(true);
   if (rerunOnboarding || firstRunActive) {
     // The account's own preferences (an existing member's business, hoops,
-    // threads) must be in before the flow snapshots them as its draft.
-    if (me.authEnabled && me.signedIn && !prefsPulled) {
+    // threads) must be in before the flow snapshots them as its draft --
+    // unless the flow itself just created the account (signUpMode), in
+    // which case it re-seeds after the code and must not be remounted.
+    if (me.authEnabled && me.signedIn && !prefsPulled && !signUpMode) {
       return <div className="start"><div className="start-brand"><img src="/icon.png" alt="" width={64} height={64} /><h1>PiperStitch</h1><p>One moment…</p></div></div>;
     }
-    const leave = () => { setRerunOnboarding(false); setFirstRunActive(false); setSheet(null); };
+    const leave = () => { setRerunOnboarding(false); setFirstRunActive(false); setSignUpMode(false); setSheet(null); };
     return (
       <>
         {error && <div className="error-bar floating">{error}</div>}
         <Onboarding account={me.account ?? null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} rerun={rerunOnboarding === "settings"}
+          signUp={signUpMode ? signUp : undefined} onSignInInstead={() => { setSignUpMode(false); setRerunOnboarding(false); }}
           onCancel={leave} onSkip={leave} onDone={leave} />
       </>
     );

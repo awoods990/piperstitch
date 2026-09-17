@@ -62,21 +62,21 @@ export const BUSINESS_TYPES: { id: string; name: string; hint: string }[] = [
   { id: "team", name: "Uniforms & team wear", hint: "schools, clubs, corporate" },
 ];
 
-export type StepId = "products" | "business" | "hoops" | "threads" | "defaults" | "proofs" | "done";
+export type StepId = "account" | "products" | "business" | "hoops" | "threads" | "defaults" | "proofs" | "done";
 
 /** Rough reading-and-clicking time per step, in minutes, for the estimate. */
-const STEP_MINUTES: Record<StepId, number> = { products: 0.5, business: 1.5, hoops: 1, threads: 1.5, defaults: 0.5, proofs: 1, done: 0 };
+const STEP_MINUTES: Record<StepId, number> = { account: 1, products: 0.5, business: 1.5, hoops: 1, threads: 1.5, defaults: 0.5, proofs: 1, done: 0 };
 
-export function stepsFor(products: Product[]): StepId[] {
-  const steps: StepId[] = ["products", "business"];
+export function stepsFor(products: Product[], needsAccount = false): StepId[] {
+  const steps: StepId[] = needsAccount ? ["account", "products", "business"] : ["products", "business"];
   if (products.includes("core")) steps.push("hoops", "threads", "defaults");
   if (products.includes("proofs")) steps.push("proofs");
   steps.push("done");
   return steps;
 }
 
-export function estimateMinutes(products: Product[]): number {
-  return Math.round(stepsFor(products).reduce((sum, s) => sum + STEP_MINUTES[s], 0));
+export function estimateMinutes(products: Product[], needsAccount = false): number {
+  return Math.round(stepsFor(products, needsAccount).reduce((sum, s) => sum + STEP_MINUTES[s], 0));
 }
 
 export const ONBOARDING_VERSION = 1;

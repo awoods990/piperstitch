@@ -78,7 +78,7 @@ export type SignInMode = "trial" | "signin";
 
 /** `onSignedIn` gets the mode the user was in: a trial sign-up always leads
  *  into guided setup; a plain sign-in goes to the app. */
-export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: AccountState, mode: SignInMode) => void; proofsURL?: string }) {
+export function SignIn({ onSignedIn, proofsURL, onStartTrial }: { onSignedIn: (account: AccountState, mode: SignInMode) => void; proofsURL?: string; onStartTrial: () => void }) {
   // The marketing site's "Start your free trial" form hands the address
   // over as ?email= so the visitor doesn't type it twice; the sign-in
   // email's own "Sign in instantly" link hands over ?email= and &code=
@@ -174,7 +174,7 @@ export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: Accoun
             <div className="auth-switch">
               {mode === "trial"
                 ? <>Already a member? <button type="button" className="linkish" onClick={() => setMode("signin")}>Sign in</button></>
-                : <>New to PiperStitch? <button type="button" className="linkish" onClick={() => setMode("trial")}>Start your free trial</button></>}
+                : <>New to PiperStitch? <button type="button" className="linkish" onClick={onStartTrial}>Start your free trial</button></>}
             </div>
           </>
         ) : (
