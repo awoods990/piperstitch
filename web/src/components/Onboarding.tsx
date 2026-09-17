@@ -283,7 +283,7 @@ export default function Onboarding(props: Props) {
                 <span className="wf-step"><b>1</b>Digitize the artwork</span><span className="wf-arrow">→</span>
                 <span className="wf-step proofs"><b>2</b>Send a proof</span><span className="wf-arrow">→</span>
                 <span className="wf-step proofs"><b>3</b>Customer approves on their phone</span><span className="wf-arrow">→</span>
-                <span className="wf-step"><b>4</b>Sew it, paid and signed off</span>
+                <span className="wf-step"><b>4</b>Sew it, signed off</span>
               </div>
               <div className="choices two">
                 <Choice title="PiperStitch + Proofs" subtitle={`Steps 1–4. A stitch-accurate proof your customer approves on their phone — with the thread colours, size and placement — plus reminders and a signed approval record. First ${proofsFree} proofs free, then billed on the same card.`}
