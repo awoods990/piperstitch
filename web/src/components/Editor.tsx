@@ -81,7 +81,9 @@ export default function Editor(p: EditorProps) {
           <button className="pill primary" onClick={() => setDownloadOpen((o) => !o)} disabled={!digitized || !!p.busy}>⬇ Download</button>
           {downloadOpen && (
             <div className="menu" onMouseLeave={() => setDownloadOpen(false)}>
-              {FORMATS.map(([id, label, hint]) => <button key={id} onClick={() => { setDownloadOpen(false); p.onExport(id); }}>{label}{hint && <small> · {hint}</small>}</button>)}
+              {/* Their machine's format first (guided setup / Settings), the rest below it. */}
+              {[...FORMATS].sort((a, b) => (a[0] === p.prefs.defaultExportFormat ? -1 : 0) - (b[0] === p.prefs.defaultExportFormat ? -1 : 0)).map(([id, label, hint]) =>
+                <button key={id} className={id === p.prefs.defaultExportFormat ? "default-format" : ""} onClick={() => { setDownloadOpen(false); p.onExport(id); }}>{label}{id === p.prefs.defaultExportFormat ? <small> · your machine</small> : hint && <small> · {hint}</small>}</button>)}
             </div>
           )}
         </div>
@@ -103,7 +105,7 @@ export default function Editor(p: EditorProps) {
           Fabric: <select value={p.fabric} onChange={(e) => p.onFabric(e.target.value as FabricType)}>{catalog.fabrics.map((f) => <option key={f.id} value={f.id}>{f.shortName}</option>)}</select>
         </label>
         <label className="pill select-pill" title="The hoop or frame this will be sewn in. Changing it re-checks the fit and redraws the hoop outline; the design itself doesn't move.">
-          Hoop: <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} />
+          Hoop: <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} ownedNames={p.prefs.ownedHoopNames} />
         </label>
         <span className="sep" />
         <button className="pill" onClick={() => p.onOpenSheet("lettering")} title="Type text and pick a font — clean satin letters generated from the font's own outline.">Add lettering</button>
@@ -146,11 +148,11 @@ export default function Editor(p: EditorProps) {
               <span className="sheet-chevron" aria-hidden="true">{sheetOpen ? "▾" : "▴"}</span>
             </button>
             <div className="sheet-scroll">
-              <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} />
+              <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} ownedHoopNames={p.prefs.ownedHoopNames} />
             </div>
           </div>
         ) : (
-          <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} />
+          <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} ownedHoopNames={p.prefs.ownedHoopNames} />
         )}
       </div>
     </div>

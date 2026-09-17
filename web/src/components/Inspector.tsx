@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import type { Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, FillPattern, LaydownSettings, StitchDocument, StitchType, ThreadColor, ThreadWeight, UnderlayType } from "../types";
 import { THREAD_WEIGHTS } from "../types";
-import { cm, inches, formatRunTime } from "../format";
+import { cm, inches, formatRunTime, size, displayUnitLabel, toDisplay, fromDisplay } from "../format";
 import { PRESET_LABELS } from "./SetupFlow";
 import { HoopSelect } from "./HoopSelect";
 import { rgbCSS } from "../prefs";
@@ -28,6 +28,8 @@ export interface InspectorProps {
   hasSource: boolean;
   matchToThreadLibrary: boolean;
   allowExtendedDensity: boolean;
+  /** Hoops the business owns (guided setup), listed first in the picker. */
+  ownedHoopNames?: string[];
   globalSatinDensityMM: number;
   globalFillSpacingMM: number;
   onObject: (id: string, update: (o: EmbroideryObject) => EmbroideryObject) => void;
@@ -67,7 +69,7 @@ export default function Inspector(p: InspectorProps) {
       <DensitySection p={p} />
       <section className="panel">
         <h3>Hoop</h3>
-        <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} withSizes />
+        <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} withSizes ownedNames={p.ownedHoopNames} />
         <label className="check" title="The file begins with the needle at the centre of the design and returns there at the end, so you can line up on the hoop's centre mark before pressing start. Cap frames register on the centre, so it's on for caps.">
           <input type="checkbox" checked={!!doc.startAndEndAtCenter} onChange={(e) => p.onStartAtCenter(e.target.checked)} /> Start and end at hoop centre
         </label>
@@ -177,30 +179,31 @@ function MultiSection({ count, p }: { count: number; p: InspectorProps }) {
 
 function SizeSection({ p }: { p: InspectorProps }) {
   const doc = p.document;
-  const [w, setW] = useState(+(doc.physicalWidthMM / 10).toFixed(2));
-  const [h, setH] = useState(+(doc.physicalHeightMM / 10).toFixed(2));
+  // Inputs hold the display unit (cm or in); everything else is mm.
+  const [w, setW] = useState(toDisplay(doc.physicalWidthMM));
+  const [h, setH] = useState(toDisplay(doc.physicalHeightMM));
   const [lock, setLock] = useState(true);
-  useEffect(() => { setW(+(doc.physicalWidthMM / 10).toFixed(2)); setH(+(doc.physicalHeightMM / 10).toFixed(2)); }, [doc.physicalWidthMM, doc.physicalHeightMM]);
+  useEffect(() => { setW(toDisplay(doc.physicalWidthMM)); setH(toDisplay(doc.physicalHeightMM)); }, [doc.physicalWidthMM, doc.physicalHeightMM]);
   const aspect = doc.physicalHeightMM > 0 ? doc.physicalWidthMM / doc.physicalHeightMM : 1;
-  const dirty = Math.abs(w * 10 - doc.physicalWidthMM) > 0.05 || Math.abs(h * 10 - doc.physicalHeightMM) > 0.05;
+  const dirty = Math.abs(fromDisplay(w) - doc.physicalWidthMM) > 0.15 || Math.abs(fromDisplay(h) - doc.physicalHeightMM) > 0.15;
   const preset = p.catalog.garmentPresets.find((g) => Math.abs(g.widthMM - doc.physicalWidthMM) < 0.5 && Math.abs(g.heightMM - doc.physicalHeightMM) < 0.5);
   return (
     <section className="panel">
       <h3>Finished size</h3>
       <select value={preset?.name ?? ""} onChange={(e) => { const g = p.catalog.garmentPresets.find((x) => x.name === e.target.value); if (g) p.onResize(g.widthMM, g.heightMM, false); }}>
         <option value="">Custom</option>
-        {p.catalog.garmentPresets.map((g) => <option key={g.name} value={g.name}>{g.name} — {cm(g.widthMM)} × {cm(g.heightMM)} cm</option>)}
+        {p.catalog.garmentPresets.map((g) => <option key={g.name} value={g.name}>{g.name} — {size(g.widthMM, g.heightMM)}</option>)}
       </select>
       <div className="size-row">
         <label>Width <input type="number" step="0.1" min="0.5" value={w} onChange={(e) => { const v = Number(e.target.value); setW(v); if (lock && aspect > 0) setH(+(v / aspect).toFixed(2)); }} /></label>
         <span className="x">×</span>
         <label>Height <input type="number" step="0.1" min="0.5" value={h} onChange={(e) => { const v = Number(e.target.value); setH(v); if (lock && aspect > 0) setW(+(v * aspect).toFixed(2)); }} /></label>
-        <span className="unit">cm</span>
+        <span className="unit">{displayUnitLabel()}</span>
       </div>
       <label className="check"><input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} /> Lock aspect ratio</label>
       <div className="size-foot">
-        <span className="hint">{inches(doc.physicalWidthMM)}" × {inches(doc.physicalHeightMM)}"</span>
-        <button className="btn small" disabled={!dirty || p.busy} onClick={() => p.onResize(w * 10, h * 10, lock)}>Apply size</button>
+        <span className="hint">{displayUnitLabel() === "in" ? `${cm(doc.physicalWidthMM)} × ${cm(doc.physicalHeightMM)} cm` : `${inches(doc.physicalWidthMM)}" × ${inches(doc.physicalHeightMM)}"`}</span>
+        <button className="btn small" disabled={!dirty || p.busy} onClick={() => p.onResize(fromDisplay(w), fromDisplay(h), lock)}>Apply size</button>
       </div>
     </section>
   );

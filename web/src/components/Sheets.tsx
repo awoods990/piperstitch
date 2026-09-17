@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import glossary from "../glossary.json";
 import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, ProjectSummary, ProofsState, RGBColor, ThreadColor } from "../types";
 import { LETTERING_FONTS, ensureFontFaces, fontFaceFamily, generateLetteringShapes, type LetteringSpec } from "../lettering";
-import { hexRGB, rgbCSS, rgbHex, type Preferences } from "../prefs";
+import { hexRGB, rgbCSS, rgbHex, type ExportFormat, type Preferences, type Units } from "../prefs";
+import { BUSINESS_TYPES, EXPORT_FORMAT_LABELS, MACHINE_BRANDS } from "../onboarding";
+import { TIPS } from "../gettingStarted";
 import { AccountMenu, PromoBox, price, statusLine } from "./Account";
 import { THREAD_SUPPLIERS, type ThreadSupplier } from "../threadSuppliers";
-import { cm } from "../format";
+import { size } from "../format";
 import { api } from "../api";
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
@@ -42,7 +44,7 @@ export function OpenProjectsSheet({ projects, busy, onOpen, onDelete, onClose }:
               <li key={p.id}>
                 <button className="project" onClick={() => { onOpen(p); onClose(); }} disabled={!!busy}>
                   <b>{p.name}</b>
-                  <span>{cm(p.widthMM)} × {cm(p.heightMM)} cm · {p.objectCount} object{p.objectCount === 1 ? "" : "s"} · {new Date(p.updatedAt).toLocaleDateString()}</span>
+                  <span>{size(p.widthMM, p.heightMM)} · {p.objectCount} object{p.objectCount === 1 ? "" : "s"} · {new Date(p.updatedAt).toLocaleDateString()}</span>
                 </button>
                 <button className="icon-btn" title="Delete project" disabled={!!busy} onClick={() => onDelete(p)}>×</button>
               </li>
@@ -57,17 +59,22 @@ export function OpenProjectsSheet({ projects, busy, onOpen, onDelete, onClose }:
 
 // --- Help: the Mac app's glossary, verbatim (src/glossary.json) --------------
 
-export function HelpSheet({ onClose }: { onClose: () => void }) {
+export function HelpSheet({ onClose, showProofs }: { onClose: () => void; showProofs?: boolean }) {
   const [q, setQ] = useState("");
+  // The getting-started guide leads, then the glossary; the search covers both.
+  const all = useMemo(() => [
+    { title: "Getting started", entries: TIPS.filter((t) => !t.proofsOnly || showProofs).map((t) => ({ term: t.title, definition: t.body })) },
+    ...glossary,
+  ], [showProofs]);
   const sections = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return glossary;
-    return glossary.map((s) => ({ ...s, entries: s.entries.filter((e) => e.term.toLowerCase().includes(needle) || e.definition.toLowerCase().includes(needle)) })).filter((s) => s.entries.length > 0);
-  }, [q]);
+    if (!needle) return all;
+    return all.map((s) => ({ ...s, entries: s.entries.filter((e) => e.term.toLowerCase().includes(needle) || e.definition.toLowerCase().includes(needle)) })).filter((s) => s.entries.length > 0);
+  }, [q, all]);
   return (
-    <Modal title="Help — digitizing terms" onClose={onClose} wide>
-      <input className="search" autoFocus placeholder="Search terms and definitions…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <p className="hint">Every term this app uses, what it means, and why it matters for how a design sews out.</p>
+    <Modal title="Help" onClose={onClose} wide>
+      <input className="search" autoFocus placeholder="Search the guide and glossary…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <p className="hint">How to get a good result, then every term this app uses and why it matters for how a design sews out.</p>
       {sections.length === 0 && <p className="hint">Nothing matches "{q}".</p>}
       {sections.map((s) => (
         <section key={s.title} className="help-section">
@@ -465,9 +472,11 @@ function ProofsPlan({ proofs, go }: { proofs: ProofsState | null; go: (fn: () =>
 }
 
 
-export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount, onAccount }: {
+export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount, onAccount, onRunSetup }: {
   catalog: Catalog; prefs: Preferences; account: AccountState | null; onPrefs: (p: Preferences) => void; onClose: () => void; onSignOut: () => void; onRefreshAccount: () => void;
   onAccount: (a: AccountState) => void;
+  /** Re-run guided setup (only offered from the start screen). */
+  onRunSetup?: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState(account?.name ?? "");
@@ -477,7 +486,8 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
     try { const me = await api.updateName(name); if (me.account) onAccount(me.account); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setSavingName(false); }
   };
-  const [tab, setTab] = useState<"account" | "preferences" | "threads">(account ? "account" : "preferences");
+  const [tab, setTab] = useState<"account" | "business" | "preferences" | "threads">(account ? "account" : "preferences");
+  const setBusiness = (patch: Partial<Preferences["business"]>) => onPrefs({ ...prefs, business: { ...prefs.business, ...patch } });
   const [promo, setPromo] = useState<{ code: string | null; description: string | null }>({ code: null, description: null });
   const go = async (fn: () => Promise<string>) => { try { window.location.assign(await fn()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } };
   const set = <K extends keyof Preferences>(k: K, v: Preferences[K]) => onPrefs({ ...prefs, [k]: v });
@@ -485,9 +495,37 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
     <Modal title="Settings" onClose={onClose} wide>
       <div className="tabs">
         {account && <button className={tab === "account" ? "on" : ""} onClick={() => setTab("account")}>Account & billing</button>}
+        {account && <button className={tab === "business" ? "on" : ""} onClick={() => setTab("business")}>Business</button>}
         <button className={tab === "preferences" ? "on" : ""} onClick={() => setTab("preferences")}>Preferences</button>
         <button className={tab === "threads" ? "on" : ""} onClick={() => setTab("threads")}>Thread library</button>
       </div>
+      {tab === "business" && account && (
+        <div className="stack form-grid">
+          <label className="field">Business name<input value={prefs.business.name} onChange={(e) => setBusiness({ name: e.target.value })} /></label>
+          <div className="two-up">
+            <label className="field">Phone<input value={prefs.business.phone} inputMode="tel" onChange={(e) => setBusiness({ phone: e.target.value })} /></label>
+            <label className="field">Website<input value={prefs.business.website} inputMode="url" onChange={(e) => setBusiness({ website: e.target.value })} /></label>
+          </div>
+          <label className="field">City / region<input value={prefs.business.city} onChange={(e) => setBusiness({ city: e.target.value })} /></label>
+          <div>
+            <div className="section-label">Kind of business</div>
+            <div className="chip-row">{BUSINESS_TYPES.map((t) => <button key={t.id} type="button" className={"chip" + (prefs.business.type === t.id ? " on" : "")} onClick={() => setBusiness({ type: t.id })}>{t.name}</button>)}</div>
+          </div>
+          <div>
+            <div className="section-label">Machines</div>
+            <div className="chip-row">{MACHINE_BRANDS.map((m) => <button key={m.id} type="button" className={"chip" + (prefs.business.machineBrands.includes(m.id) ? " on" : "")}
+              onClick={() => setBusiness({ machineBrands: prefs.business.machineBrands.includes(m.id) ? prefs.business.machineBrands.filter((b) => b !== m.id) : [...prefs.business.machineBrands, m.id] })}>{m.name}</button>)}</div>
+            <input className="notes" value={prefs.business.machineNotes} placeholder="Model(s)" onChange={(e) => setBusiness({ machineNotes: e.target.value })} />
+          </div>
+          <div>
+            <div className="section-label">Hoops you own</div>
+            <div className="chip-row">{catalog.hoops.map((h) => <button key={h.name} type="button" className={"chip" + (prefs.ownedHoopNames.includes(h.name) ? " on" : "")}
+              onClick={() => set("ownedHoopNames", prefs.ownedHoopNames.includes(h.name) ? prefs.ownedHoopNames.filter((n) => n !== h.name) : [...prefs.ownedHoopNames, h.name])}>{h.name}</button>)}</div>
+          </div>
+          <p className="hint">Shared with PiperStitch Proofs: the business name and contact details appear on the proofs you send.</p>
+          {onRunSetup && <div><button className="btn" onClick={onRunSetup}>Run guided setup again</button></div>}
+        </div>
+      )}
       {tab === "account" && account && (
         <div className="stack">
           <div className="kv"><span>Signed in as</span><b>{account.email}</b></div>
@@ -514,6 +552,14 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
           <label className="row">Default hoop
             <select value={prefs.defaultHoopName ?? ""} onChange={(e) => set("defaultHoopName", e.target.value || null)}>
               <option value="">None</option>{catalog.hoops.map((h) => <option key={h.name} value={h.name}>{h.name}</option>)}
+            </select></label>
+          <label className="row">File format when you download
+            <select value={prefs.defaultExportFormat} onChange={(e) => set("defaultExportFormat", e.target.value as ExportFormat)}>
+              {(Object.keys(EXPORT_FORMAT_LABELS) as ExportFormat[]).map((f) => <option key={f} value={f}>{EXPORT_FORMAT_LABELS[f]}</option>)}
+            </select></label>
+          <label className="row">Measurements
+            <select value={prefs.units} onChange={(e) => set("units", e.target.value as Units)}>
+              <option value="cm">Centimetres</option><option value="in">Inches</option>
             </select></label>
           <label className="row">Default fabric
             <select value={prefs.defaultFabric} onChange={(e) => set("defaultFabric", e.target.value as FabricType)}>{catalog.fabrics.map((f) => <option key={f.id} value={f.id}>{f.displayName}</option>)}</select></label>

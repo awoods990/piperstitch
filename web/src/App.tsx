@@ -16,7 +16,9 @@ import Editor from "./components/Editor";
 import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
 import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, OpenProjectsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
 import type { Tool } from "./components/StitchCanvas";
-import { loadPrefs, savePrefs, type Preferences } from "./prefs";
+import { loadPrefs, savePrefs, withDefaults, type Preferences } from "./prefs";
+import Onboarding from "./components/Onboarding";
+import { setDisplayUnits } from "./format";
 import { transformShape } from "./geometry";
 import { generateLetteringShapes, type LetteringSpec } from "./lettering";
 import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
@@ -31,7 +33,7 @@ interface Imported {
   maxColors: number;
 }
 
-type Phase = "start" | "setup" | "editor";
+type Phase = "start" | "setup" | "editor" | "onboarding";
 type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
@@ -67,6 +69,13 @@ export default function App() {
   const digitizeTimer = useRef<number | null>(null);
 
   const prefsSyncTimer = useRef<number | null>(null);
+  // Guided setup: shown once per account, after the first sign-in on an
+  // account whose preferences carry no onboarding record; re-runnable
+  // from Settings. `prefsPulled` keeps it from flashing before the
+  // account's own copy of the preferences has arrived.
+  const [prefsPulled, setPrefsPulled] = useState(false);
+  const [rerunOnboarding, setRerunOnboarding] = useState<false | "settings" | "link">(false);
+  useEffect(() => { setDisplayUnits(prefs.units); }, [prefs.units]);
   const setPrefs = (p: Preferences) => {
     setPrefsState(p); savePrefs(p);
     // Mirror to the account (debounced) so the same hoops and thread
@@ -88,6 +97,13 @@ export default function App() {
     // Arriving from PiperStitch Proofs already signed in: ?handoff=<code>
     // becomes this app's session, no email code needed. Other parameters
     // (?project=, ?return=) stay for their own handlers.
+    // ?setup=1 opens guided setup directly (a link from the welcome email
+    // or the marketing site, and how support tells someone to re-run it).
+    if (params.get("setup") !== null) {
+      params.delete("setup");
+      window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+      setRerunOnboarding("link");
+    }
     const handoff = params.get("handoff");
     if (handoff) {
       params.delete("handoff");
@@ -115,12 +131,13 @@ export default function App() {
       const { preferences, updatedAt } = await api.getPreferences();
       const localStamp = Number(localStorage.getItem("piperstitch.preferences.savedAt") || 0);
       if (preferences && updatedAt && (!localStamp || Date.parse(updatedAt) > localStamp)) {
-        const merged = { ...loadPrefs(), ...(preferences as Partial<Preferences>) };
+        const merged = withDefaults({ ...loadPrefs(), ...(preferences as Partial<Preferences>) });
         setPrefsState(merged); savePrefs(merged);
       } else {
         api.savePreferences(loadPrefs() as unknown as Record<string, unknown>).catch(() => { /* best effort */ });
       }
     } catch { /* offline or auth off: local preferences are fine */ }
+    setPrefsPulled(true);
   };
   const refreshMe = async () => { try { setMe(await api.me(true)); } catch (e) { fail(e); } };
   const onSignedIn = (account: AccountState) => { setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences(); };
@@ -486,8 +503,9 @@ export default function App() {
   );
   const sheets = (
     <>
-      {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} />}
-      {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })} />}
+      {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} showProofs={!!me.account?.proofs} />}
+      {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })}
+        onRunSetup={me.authEnabled && phase === "start" ? () => { setSheet(null); setRerunOnboarding("settings"); } : undefined} />}
       {sheet === "send" && document && <SendSheet designName={document.name} onClose={() => setSheet(null)} onSend={async (format, toEmail, message) => { await api.sendFile(document, format, toEmail, message); setStatus(`Sent ${document.name}.${format} to ${toEmail}.`); }} />}
       {sheet === "open" && <OpenProjectsSheet projects={projects} busy={busy} onOpen={onOpenProject} onDelete={onDeleteProject} onClose={() => setSheet(null)} />}
       {sheet === "threadLibrary" && (
@@ -509,8 +527,21 @@ export default function App() {
     </>
   );
 
+  const needsOnboarding = me.authEnabled && !!me.account && prefsPulled && prefs.onboarding === null && phase === "start" && !returnTo;
+  if (rerunOnboarding || needsOnboarding) {
+    return (
+      <>
+        {error && <div className="error-bar floating">{error}</div>}
+        <Onboarding account={me.account ?? null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} rerun={rerunOnboarding === "settings"}
+          onCancel={() => setRerunOnboarding(false)}
+          onSkip={() => setRerunOnboarding(false)}
+          onDone={() => { setRerunOnboarding(false); setSheet(null); }} />
+      </>
+    );
+  }
+
   if (phase === "setup" && imported && answers) {
-    return <SetupFlow catalog={catalog} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
+    return <SetupFlow catalog={catalog} ownedHoopNames={prefs.ownedHoopNames} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
       recommendedHeightMM={imported.response.recommendedHeightMM} aspectRatio={imported.response.aspectRatio} initial={answers} busy={busy}
       matchToThreadLibrary={matchToThreadLibrary} onMatchToThreadLibraryChange={(on) => setPrefs({ ...prefs, matchToThreadLibrary: on })}
       onFinish={onSetupFinish} onCancel={onStartOver} />;
@@ -539,7 +570,8 @@ export default function App() {
       {error && <div className="error-bar floating">{error}</div>}
       {notice && <div className="notice-bar floating" onClick={() => setNotice(null)}>{notice}</div>}
       <div className="start-account">{accountMenu}<button className="btn ghost" onClick={() => setSheet("settings")}>⚙ Settings</button><button className="btn ghost" onClick={() => setSheet("help")}>? Help</button></div>
-      <DropZone onFile={onFile} busy={busy} projects={me.authEnabled ? projects : null} onOpenProject={onOpenProject} onDeleteProject={onDeleteProject} />
+      <DropZone onFile={onFile} busy={busy} projects={me.authEnabled ? projects : null} onOpenProject={onOpenProject} onDeleteProject={onDeleteProject}
+        showTips={!!prefs.onboarding?.skippedAt && !prefs.startTipsDismissed} onDismissTips={() => setPrefs({ ...prefs, startTipsDismissed: true })} onOpenHelp={() => setSheet("help")} />
       {sheets}
     </>
   );

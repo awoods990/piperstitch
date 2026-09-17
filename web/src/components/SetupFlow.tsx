@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import { THREAD_WEIGHTS, type ThreadWeight } from "../types";
 import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType } from "../types";
-import { approx, cm } from "../format";
+import { approx, len, size, displayUnitLabel, toDisplay, fromDisplay } from "../format";
 import { hoopGroups, smallestHoopThatFits } from "../hoops";
 
 
@@ -26,6 +26,8 @@ export interface SetupAnswers {
 
 interface Props {
   catalog: Catalog;
+  /** From guided setup: shown first, and preferred by "Choose one for me". */
+  ownedHoopNames?: string[];
   fileName: string;
   isVector: boolean;
   recommendedWidthMM: number;
@@ -81,6 +83,7 @@ export function predictedFabric(preset: CatalogSize): FabricType | null {
 }
 
 export default function SetupFlow(props: Props) {
+  const owned = props.ownedHoopNames ?? [];
   const { catalog, recommendedWidthMM, recommendedHeightMM, aspectRatio, isVector, busy } = props;
   const [step, setStep] = useState<Step>("placement");
   const [a, setA] = useState<SetupAnswers>(props.initial);
@@ -107,7 +110,7 @@ export default function SetupFlow(props: Props) {
     const capHoop = capPlacement ? catalog.hoops.find((h) => /cap|hat/i.test(h.name) && fits(h)) ?? null : null;
     if (capHoop) return { ...next, hoopMode: "specific", hoop: capHoop };
     if (next.hoopMode === "specific" && fits(next.hoop)) return next;
-    const smallest = smallestHoopThatFits(catalog.hoops, next.widthMM, next.heightMM);
+    const smallest = smallestHoopThatFits(catalog.hoops, next.widthMM, next.heightMM, owned);
     return smallest ? { ...next, hoopMode: "specific", hoop: smallest } : { ...next, hoopMode: "none", hoop: null };
   };
 
@@ -124,14 +127,14 @@ export default function SetupFlow(props: Props) {
       case "size":
         if (a.placement && a.placement !== "custom") {
           const p = a.placement;
-          return `Standard for ${p.name.toLowerCase()} is ${cm(p.widthMM)} × ${cm(p.heightMM)} cm. Adjust if you like — the finest detail in your artwork looks good down to about ${cm(recommendedWidthMM)} cm wide.`;
+          return `Standard for ${p.name.toLowerCase()} is ${size(p.widthMM, p.heightMM)}. Adjust if you like — the finest detail in your artwork looks good down to about ${len(recommendedWidthMM)} ${displayUnitLabel()} wide.`;
         }
-        return `Based on the finest detail in your artwork, I'd suggest about ${cm(recommendedWidthMM)} × ${cm(recommendedHeightMM)} cm. Type any size you want.`;
+        return `Based on the finest detail in your artwork, I'd suggest about ${size(recommendedWidthMM, recommendedHeightMM)}. Type any size you want.`;
       case "hoop":
         if (!chosen.hoop && a.hoopMode === "specific" && a.hoop)
           return isCap && /cap|hat/i.test(a.hoop.name)
             ? `I've picked the ${a.hoop.name} since this is going on a cap. Cap frames vary by machine — change it if yours is a different size.`
-            : `I've picked ${a.hoop.name} — it fits ${cm(a.widthMM)} × ${cm(a.heightMM)} cm. Change it if your machine uses a different one.`;
+            : `I've picked ${a.hoop.name} — it fits ${size(a.widthMM, a.heightMM)}. Change it if your machine uses a different one.`;
         return isCap
           ? "Cap frames vary by machine — pick the closest size, or let me choose one that fits."
           : "I'll warn you if the design won't fit. Not sure? Let me pick the smallest one that does.";
@@ -158,13 +161,13 @@ export default function SetupFlow(props: Props) {
 
   const placementName = a.placement === "custom" ? "Custom size" : a.placement?.name ?? "—";
   const hoopName = a.hoopMode === "none" ? "no hoop" : a.hoopMode === "recommend"
-    ? (smallestHoopThatFits(catalog.hoops, a.widthMM, a.heightMM)?.name ?? "no hoop fits") + " (chosen for you)"
+    ? (smallestHoopThatFits(catalog.hoops, a.widthMM, a.heightMM, owned)?.name ?? "no hoop fits") + " (chosen for you)"
     : a.hoop?.name ?? "no hoop";
   const fabricName = catalog.fabrics.find((f) => f.id === a.fabric)?.displayName ?? a.fabric;
 
   const finish = () => {
     const hoop = a.hoopMode === "none" ? null : a.hoopMode === "recommend"
-      ? smallestHoopThatFits(catalog.hoops, a.widthMM, a.heightMM) : a.hoop;
+      ? smallestHoopThatFits(catalog.hoops, a.widthMM, a.heightMM, owned) : a.hoop;
     props.onFinish({ ...a, hoop });
   };
 
@@ -188,7 +191,7 @@ export default function SetupFlow(props: Props) {
           {step === "placement" && (
             <div className="choices">
               {catalog.garmentPresets.map((p) => (
-                <Choice key={p.name} title={p.name} subtitle={`${cm(p.widthMM)} × ${cm(p.heightMM)} cm`}
+                <Choice key={p.name} title={p.name} subtitle={`${size(p.widthMM, p.heightMM)}`}
                   selected={a.placement !== "custom" && a.placement?.name === p.name}
                   onClick={() => {
                     const predicted = chosen.fabric ? null : predictedFabric(p);
@@ -204,21 +207,21 @@ export default function SetupFlow(props: Props) {
             <div className="stack">
               <div className="choices two">
                 {a.placement && a.placement !== "custom" && (
-                  <Choice title={`Standard ${a.placement.name.toLowerCase()}`} subtitle={`${cm(a.placement.widthMM)} × ${cm(a.placement.heightMM)} cm`}
+                  <Choice title={`Standard ${a.placement.name.toLowerCase()}`} subtitle={`${size(a.placement.widthMM, a.placement.heightMM)}`}
                     selected={approx(a.widthMM, a.placement.widthMM) && approx(a.heightMM, a.placement.heightMM)}
                     onClick={() => setSize(a.placement !== "custom" && a.placement ? a.placement.widthMM : a.widthMM, a.placement !== "custom" && a.placement ? a.placement.heightMM : undefined)} />
                 )}
-                <Choice title="Recommended for this artwork" subtitle={`${cm(recommendedWidthMM)} × ${cm(recommendedHeightMM)} cm`}
+                <Choice title="Recommended for this artwork" subtitle={`${size(recommendedWidthMM, recommendedHeightMM)}`}
                   selected={approx(a.widthMM, recommendedWidthMM) && approx(a.heightMM, recommendedHeightMM)}
                   onClick={() => setSize(recommendedWidthMM, recommendedHeightMM)} />
               </div>
               <div className="size-row">
-                <label>Width <input type="number" step="0.1" min="0.5" value={+(a.widthMM / 10).toFixed(1)}
-                  onChange={(e) => setSize(Number(e.target.value) * 10)} /></label>
+                <label>Width <input type="number" step={displayUnitLabel() === "in" ? "0.05" : "0.1"} min="0.2" value={toDisplay(a.widthMM)}
+                  onChange={(e) => setSize(fromDisplay(Number(e.target.value)))} /></label>
                 <span className="x">×</span>
-                <label>Height <input type="number" step="0.1" min="0.5" value={+(a.heightMM / 10).toFixed(1)}
-                  onChange={(e) => setA(withPredictedHoop({ ...a, heightMM: Math.max(1, Number(e.target.value) * 10), lockAspect: false }))} /></label>
-                <span className="unit">cm</span>
+                <label>Height <input type="number" step={displayUnitLabel() === "in" ? "0.05" : "0.1"} min="0.2" value={toDisplay(a.heightMM)}
+                  onChange={(e) => setA(withPredictedHoop({ ...a, heightMM: Math.max(1, fromDisplay(Number(e.target.value))), lockAspect: false }))} /></label>
+                <span className="unit">{displayUnitLabel()}</span>
                 <label className="check"><input type="checkbox" checked={a.lockAspect}
                   onChange={(e) => {
                     const lock = e.target.checked;
@@ -236,7 +239,7 @@ export default function SetupFlow(props: Props) {
                 <Choice title="Skip for now" subtitle="no fit check" selected={a.hoopMode === "none"}
                   onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "none", hoop: null }); }} />
               </div>
-              {hoopGroups(catalog.hoops).map(([group, hoops], i) => (i === 0 || moreHoops) && (
+              {hoopGroups(catalog.hoops, owned).map(([group, hoops], i) => (i === 0 || moreHoops) && (
                 <div key={group}>
                   <div className="section-label">{group}</div>
                   <div className="choices">
@@ -244,7 +247,7 @@ export default function SetupFlow(props: Props) {
                       const fits = h.widthMM >= a.widthMM && h.heightMM >= a.heightMM;
                       return (
                         <Choice key={h.name} title={h.name.replace(/^(Mighty Hoop|Durkee EZ Frame) /, "")}
-                          subtitle={fits ? `${cm(h.widthMM)} × ${cm(h.heightMM)} cm · fits` : `too small for ${cm(a.widthMM)} × ${cm(a.heightMM)} cm`}
+                          subtitle={fits ? `${size(h.widthMM, h.heightMM)} · fits` : `too small for ${size(a.widthMM, a.heightMM)}`}
                           warning={!fits} selected={a.hoopMode === "specific" && a.hoop?.name === h.name}
                           onClick={() => { setChosen({ ...chosen, hoop: true }); setA({ ...a, hoopMode: "specific", hoop: h }); }} />
                       );
@@ -252,7 +255,7 @@ export default function SetupFlow(props: Props) {
                   </div>
                 </div>
               ))}
-              {!moreHoops && hoopGroups(catalog.hoops).length > 1 && (
+              {!moreHoops && hoopGroups(catalog.hoops, owned).length > 1 && (
                 <button type="button" className="btn ghost more" onClick={() => setMoreHoops(true)}>
                   More hoops &amp; frames — Mighty Hoop, Durkee EZ Frame ▾
                 </button>
@@ -317,7 +320,7 @@ export default function SetupFlow(props: Props) {
                   : "Every satin density and fill spacing is offset for this thread (thinner sews tighter, thicker wider) while the numbers you see stay 40 wt numbers. Change it later in the Density panel."}
               </div>
               <div className="summary">
-                {placementName} · {cm(a.widthMM)} × {cm(a.heightMM)} cm · {hoopName} · {fabricName} · {isVector ? "artwork colours" : PRESET_LABELS[a.colorPreset][0]}
+                {placementName} · {size(a.widthMM, a.heightMM)} · {hoopName} · {fabricName} · {isVector ? "artwork colours" : PRESET_LABELS[a.colorPreset][0]}
               </div>
             </div>
           )}

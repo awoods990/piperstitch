@@ -438,3 +438,45 @@ button, input, select { font: inherit; color: inherit; }
 .proofs-signin-link { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .proofs-plan { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .proofs-btn { white-space: nowrap; }
+
+/* --- guided setup (onboarding) --- */
+.onboarding .setup-card { height: min(680px, calc(100vh - 48px)); }
+.welcome-card { justify-content: center; gap: 22px; text-align: center; }
+.welcome-brand { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.welcome-brand img { border-radius: 14px; margin-bottom: 6px; }
+.welcome-brand h2 { font-size: 26px; }
+.welcome-brand .setup-sub { max-width: 520px; }
+.welcome-choices { width: min(640px, 100%); margin: 0 auto; }
+.welcome-choices .choice { padding: 16px 18px; }
+.welcome-choices .choice-title { font-size: 15px; }
+.welcome-foot { text-align: center; }
+.form-grid .field input, .form-grid .field textarea { padding: 9px 11px; font-size: 14px; }
+.form-grid textarea { border: 1px solid var(--line); border-radius: 8px; resize: vertical; font: inherit; }
+.two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.optional { color: var(--label); font-weight: 400; font-size: 11px; margin-left: 4px; }
+input.notes { width: 100%; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.done-list { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--ink2); }
+.done-list li { padding: 10px 12px; background: var(--readyBG); border: 1px solid var(--readyBorder); border-radius: 8px; }
+.done-list li:last-child { background: var(--paper); border-color: var(--line); }
+.done-extras { margin-top: 4px; }
+a.choice { text-decoration: none; }
+.menu > button.default-format { font-weight: 600; color: var(--navy800); }
+@media (max-width: 760px) {
+  .two-up { grid-template-columns: 1fr; }
+  .welcome-brand h2 { font-size: 22px; }
+  .onboarding .setup-card { height: 100%; }
+}
+
+/* --- getting-started tips --- */
+.tips { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; line-height: 1.5; color: var(--ink2); }
+.tips b { color: var(--navy800); }
+.tips.compact { font-size: 13px; gap: 6px; }
+.tips-strip { width: min(640px, 100%); padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; }
+.tips-head { display: flex; align-items: center; gap: 8px; color: var(--navy800); }
+.tips-strip .linkish { align-self: flex-start; font-size: 13px; }
+.done-grid { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13.5px; color: var(--ink2); padding: 12px 14px; background: var(--readyBG); border: 1px solid var(--readyBorder); border-radius: 10px; }
+.done-grid dt { color: var(--readyText); font-weight: 600; }
+.done-grid dd { margin: 0; }
+.done-grid b { color: var(--navy800); }
+.done .hint a { color: var(--blue500); }
+@media (max-width: 760px) { .done-grid { grid-template-columns: 1fr; gap: 2px; } .done-grid dt { margin-top: 6px; } }

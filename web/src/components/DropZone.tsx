@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import type { ProjectSummary } from "../types";
-import { cm } from "../format";
+import { size } from "../format";
 import { COARSE_QUERY, useMediaQuery } from "../useMediaQuery";
+import { headlineTips } from "../gettingStarted";
 
 interface Props {
   onFile: (file: File) => void;
@@ -10,9 +11,13 @@ interface Props {
   projects: ProjectSummary[] | null;
   onOpenProject: (p: ProjectSummary) => void;
   onDeleteProject: (p: ProjectSummary) => void;
+  /** Show the "before your first design" tips (skipped guided setup, not yet dismissed). */
+  showTips?: boolean;
+  onDismissTips?: () => void;
+  onOpenHelp?: () => void;
 }
 
-export default function DropZone({ onFile, busy, projects, onOpenProject, onDeleteProject }: Props) {
+export default function DropZone({ onFile, busy, projects, onOpenProject, onDeleteProject, showTips, onDismissTips, onOpenHelp }: Props) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
@@ -66,6 +71,15 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
           <button className="btn" onClick={() => camera.current?.click()}>📷 Take a photo of the artwork</button>
         </>
       )}
+      {showTips && (
+        <div className="tips-strip">
+          <div className="tips-head"><b>Before your first design</b><span className="grow" /><button className="icon-btn" title="Dismiss" onClick={onDismissTips}>×</button></div>
+          <ol className="tips compact">
+            {headlineTips(false).map((t) => <li key={t.title}><b>{t.title}.</b> {t.body}</li>)}
+          </ol>
+          {onOpenHelp && <button className="linkish" onClick={onOpenHelp}>Read the full guide</button>}
+        </div>
+      )}
       {projects && projects.length > 0 && (
         <div className="projects">
           <div className="section-label">Your saved projects</div>
@@ -74,7 +88,7 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
               <li key={p.id}>
                 <button className="project" onClick={() => onOpenProject(p)} disabled={!!busy}>
                   <b>{p.name}</b>
-                  <span>{cm(p.widthMM)} × {cm(p.heightMM)} cm · {p.objectCount} object{p.objectCount === 1 ? "" : "s"} · {new Date(p.updatedAt).toLocaleDateString()}</span>
+                  <span>{size(p.widthMM, p.heightMM)} · {p.objectCount} object{p.objectCount === 1 ? "" : "s"} · {new Date(p.updatedAt).toLocaleDateString()}</span>
                 </button>
                 <button className="icon-btn" title="Delete project" onClick={() => onDeleteProject(p)}>×</button>
               </li>
