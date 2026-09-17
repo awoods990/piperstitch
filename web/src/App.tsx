@@ -144,7 +144,12 @@ export default function App() {
     setPrefsPulled(true);
   };
   const refreshMe = async () => { try { setMe(await api.me(true)); } catch (e) { fail(e); } };
-  const onSignedIn = (account: AccountState) => { setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences(); };
+  const onSignedIn = (account: AccountState, mode: "trial" | "signin" = "signin") => {
+    setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences();
+    // A trial sign-up always opens guided setup, even for an existing
+    // account (they can jump right in from the welcome screen).
+    if (mode === "trial") setRerunOnboarding("link");
+  };
   const onSignOut = async () => {
     try { await api.signOut(); } catch { /* cookie is cleared regardless */ }
     onStartOver(); setProjects(null); setSheet(null);
@@ -534,6 +539,11 @@ export default function App() {
   const needsOnboarding = me.authEnabled && !!me.account && prefsPulled && prefs.onboarding === null && phase === "start" && !returnTo;
   if (needsOnboarding && !firstRunActive) setFirstRunActive(true);
   if (rerunOnboarding || firstRunActive) {
+    // The account's own preferences (an existing member's business, hoops,
+    // threads) must be in before the flow snapshots them as its draft.
+    if (me.authEnabled && me.signedIn && !prefsPulled) {
+      return <div className="start"><div className="start-brand"><img src="/icon.png" alt="" width={64} height={64} /><h1>PiperStitch</h1><p>One moment…</p></div></div>;
+    }
     const leave = () => { setRerunOnboarding(false); setFirstRunActive(false); setSheet(null); };
     return (
       <>

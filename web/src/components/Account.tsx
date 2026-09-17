@@ -74,7 +74,11 @@ export function PromoBox({ onChange }: { onChange: (code: string | null, descrip
 
 // --- sign in ----------------------------------------------------------------
 
-export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: AccountState) => void; proofsURL?: string }) {
+export type SignInMode = "trial" | "signin";
+
+/** `onSignedIn` gets the mode the user was in: a trial sign-up always leads
+ *  into guided setup; a plain sign-in goes to the app. */
+export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: AccountState, mode: SignInMode) => void; proofsURL?: string }) {
   // The marketing site's "Start your free trial" form hands the address
   // over as ?email= so the visitor doesn't type it twice; the sign-in
   // email's own "Sign in instantly" link hands over ?email= and &code=
@@ -83,13 +87,17 @@ export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: Accoun
   // the URL in the same pass -- splitting this across two separate
   // useState initializers would race, since the first one's own
   // history.replaceState already wipes what the second would try to read.
+  // The marketing site sends ?trial=1 from every "Start free trial" button
+  // and ?signin=1 from "Log in", so this screen can say the right thing.
   const [initial] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const e = params.get("email")?.trim() ?? "";
     const c = params.get("code")?.trim() ?? "";
-    if (e || c) window.history.replaceState(null, "", window.location.pathname);
-    return { email: e, code: c };
+    const m: SignInMode = params.has("trial") ? "trial" : "signin";
+    if (e || c || params.has("trial") || params.has("signin")) window.history.replaceState(null, "", window.location.pathname);
+    return { email: e, code: c, mode: m };
   });
+  const [mode, setMode] = useState<SignInMode>(initial.mode);
   const [email, setEmail] = useState(initial.email);
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
@@ -103,7 +111,7 @@ export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: Accoun
     setBusy(true); setError(null);
     try {
       const me = await api.verifyCode(emailToUse, codeToUse);
-      if (me.account) onSignedIn(me.account);
+      if (me.account) onSignedIn(me.account, mode);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSent(true); // falls back to manual code entry, email already filled in
@@ -151,8 +159,10 @@ export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: Accoun
     <div className="start">
       <div className="start-brand">
         <img src="/icon.png" alt="" width={64} height={64} />
-        <h1>PiperStitch</h1>
-        <p>Turn any image into embroidery. Sign in with your email to start — every new account gets a free trial, no card needed.</p>
+        <h1>{mode === "trial" ? "Start your free trial" : "PiperStitch"}</h1>
+        <p>{mode === "trial"
+          ? "14 days of everything, no card needed. Enter your email and we'll send a code — then a few quick questions set PiperStitch up for your business."
+          : "Sign in with your email — we'll send you a code, no password to remember."}</p>
       </div>
       <form className="auth-card" onSubmit={sent ? verify : request}>
         {!sent ? (
@@ -160,7 +170,12 @@ export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: Accoun
             <label className="field">Email address
               <input type="email" required autoFocus autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
             </label>
-            <button className="btn primary wide" disabled={busy || !email.includes("@")}>{busy ? "Sending…" : "Email me a sign-in code"}</button>
+            <button className="btn primary wide" disabled={busy || !email.includes("@")}>{busy ? "Sending…" : mode === "trial" ? "Start my free trial" : "Email me a sign-in code"}</button>
+            <div className="auth-switch">
+              {mode === "trial"
+                ? <>Already a member? <button type="button" className="linkish" onClick={() => setMode("signin")}>Sign in</button></>
+                : <>New to PiperStitch? <button type="button" className="linkish" onClick={() => setMode("trial")}>Start your free trial</button></>}
+            </div>
           </>
         ) : (
           <>
@@ -180,6 +195,7 @@ export function SignIn({ onSignedIn, proofsURL }: { onSignedIn: (account: Accoun
       </form>
       <div className="start-hints">
         <div><strong>No password:</strong> a fresh code is emailed each time you sign in.</div>
+        {mode === "trial" && <div><strong>Already have an account?</strong> Same email, same code — you'll simply be signed in.</div>}
         {proofsURL && <div className="proofs-signin-link">Looking for <strong>PiperStitch Proofs</strong> — customer proof approval? <a href={`${proofsURL}/signin`}>Sign in to Proofs →</a></div>}
       </div>
     </div>

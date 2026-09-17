@@ -498,3 +498,4 @@ a.choice { text-decoration: none; }
 .done-hero .setup-sub { max-width: 520px; }
 .btn.big { padding: 11px 22px; font-size: 15px; }
 @media (prefers-reduced-motion: reduce) { .confetti, .done-piper { animation: none; } .confetti { display: none; } }
+.auth-switch { text-align: center; font-size: 13px; color: var(--muted); }
