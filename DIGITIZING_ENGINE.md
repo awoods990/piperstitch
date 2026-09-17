@@ -1057,6 +1057,64 @@ has no original to run. The CLI renderer's white highlight line makes
 0.32 mm fill rows look sparse at 12 px/mm; the stitch data is right, the
 renderer exaggerates -- left as is, noted.
 
+## Second sew-out -- the Oholi wordmark (September 2026)
+
+The Oholi mark ("OHOLI" with the bird and its thread, `TestArtwork/Oholi
+simple.png`) sewn at ~105 mm on a ten-needle Brother, PES, cotton over
+tear-away. The letters read well; the customer's note was that the "H"'s
+junctions carried too much thread, and the render at the same size showed
+why -- plus four things the sample could not show. Each fix, with what it
+was measured against:
+
+- **Junction patch grain.** The patch's axis was the arm with the widest
+  *sample*; every arm's width peaks at the junction itself (the distance
+  transform sees the merged blob), so the 2 mm crossbar out-measured the
+  3.8 mm upright and the patch was twelve 7 mm stitches laid *along* the
+  upright. Now the axis is the through stroke -- the pair of arms leaving
+  the node nearest to opposite directions (`junctionPatchAxis`), judged by
+  each arm's median width when no such pair exists. Chords cross the
+  upright like its own satin does.
+- **Patch reach and sequence.** The patch reached the trimmed crossings'
+  rail ends (a fan needed that); a chord patch is clamped sideways by the
+  boundary, so the extra reach only stacked two or three chords on each
+  arm's finished satin -- the heavy junctions on the sample. It now reaches
+  one stitch past the farthest trimmed midpoint. It is sewn on the walk's
+  *last* pass through the node (every arm already down, so it covers their
+  ends and the hops between them), oriented to start where the needle is
+  and end nearest the next piece, with no unconditional centre entry/exit
+  (that was a 3-4 mm diagonal across every patch).
+- **Dead-end arms are travel-and-cover.** An arm into a leaf with more to
+  sew is run out along its centreline and satined back to the junction
+  (`WalkLeg.outAndBack`); satin out and a bare 8-10 mm hop back down the
+  finished arm had put a straight thread over every such arm.
+- **The walk itself is searched.** Every edge as a start, both directions,
+  each fork tried within a budget (`orderedLegs`); the order with the least
+  hopping wins. The analyzer's first-listed edge had decided the order: the
+  cut "O" sewed stub, 20 mm jump, arc, 20 mm jump back; the ribbon sewed
+  past its loop to the far end and jumped 26 mm back for the loop.
+- **Specks and hairlines are not sewn.** Two slivers at the bird's head
+  (0.2 x 0.3 mm; 3.8 mm long by 0.2-0.8 mm wide) each became a triple-run
+  knot, a lock and a trim. `StitchTypeClassifier.isSewableSize`: under
+  1 mm across, under 0.6 mm2, or a closed outline under 0.45 mm mean width
+  (2A/P) is skipped by the pipeline; the objects stay in the document and
+  `QualityAnalyzer` reports how many were left out. At 100 mm the Sarasota
+  and Oholi banners lose their sub-millimetre tagline text this way -- the
+  old output was 89 and 170 unreadable triple-run letters.
+- **Seams.** A single column's underlay is oriented (and, if closed,
+  rotated) to meet its first crossing -- the letter "O" had a 13 mm seam
+  across its counter from underlay closing at the top and radial crossings
+  starting at the right; the cut "O" a 28 mm one. Between branching pieces
+  a hop under 3 mm is sewn as a connector (`visibleConnectorMM`) whether or
+  not it stays on the shape.
+- **Determinism.** `StrokeTopologyAnalyzer` iterated a dictionary for a
+  node cluster's pixels and for its node list; Swift seeds a dictionary's
+  hasher per instance, so two analyses of one shape could find different
+  edges. Sorted now; the flaky `realCapLogoBUnderlayNeverRunsAcrossItsCounters`
+  was this.
+
+Oholi simple at 105 mm: 23 trims to 14; corpus at 100 mm: cap-logo B 27
+to 14, Sigma Chi 164 to 30, Sarasota 56 to 30, no readiness score lower.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

@@ -83,7 +83,9 @@ struct EXPFormatTests {
     /// somehow produced without splitting first) must be split into
     /// multiple max-sized records, not silently truncated or thrown away.
     @Test func longJumpIsSplitAcrossMultipleRecords() throws {
-        let shape = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(0, 0.1)], closed: false)])
+        // 2 mm lines: anything under 1 mm is not sewn at all
+        // (`StitchTypeClassifier.isSewableSize`).
+        let shape = VectorShape(subPaths: [SubPath(points: [Point2D(0, 0), Point2D(0, 2)], closed: false)])
         let obj1 = EmbroideryObject(name: "A", shape: shape, stitchType: .runningStitch, threadColor: .generic(RGBColor(hex: 0xFF0000)))
         var farShape = shape
         farShape.subPaths[0].points = farShape.subPaths[0].points.map { Point2D($0.x + 50, $0.y + 50) }
@@ -104,8 +106,8 @@ struct EXPFormatTests {
             Issue.record("expected at least one decoded point")
             return
         }
-        #expect(abs(last.x - 50.1) <= 0.15)
-        #expect(abs(last.y - 50.1) <= 0.15)
+        #expect(abs(last.x - 50) <= 0.15)
+        #expect(abs(last.y - 52) <= 0.15)
     }
 
     /// Cross-validates against pyembroidery — a completely independent EXP

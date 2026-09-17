@@ -53,6 +53,7 @@ public enum QualityAnalyzer {
         checkEmptyDesign(plan, into: &issues)
         checkFabricSuitability(document, into: &issues)
         checkFragmentation(document, into: &issues)
+        checkUnsewableDetail(document, into: &issues)
         checkSameColorStitchTypeConsistency(document, into: &issues)
         addStabilizerAdvice(document, into: &issues)
         checkLaydown(document, into: &issues)
@@ -246,6 +247,25 @@ public enum QualityAnalyzer {
         issues.append(QualityIssue(
             severity: .info,
             message: "Stabilizer for \(fabric.shortName.lowercased()): \(fabric.stabilizerAdvice)",
+            scorePenalty: 0
+        ))
+    }
+
+    /// Details the pipeline will not sew at this size -- specks under
+    /// 1 mm, hairlines under 0.5 mm wide (see `StitchTypeClassifier.
+    /// droppingUnsewable`) -- are reported rather than silently missing:
+    /// a customer looking for the tagline under a logo digitized at
+    /// 100 mm needs to hear that its 0.3 mm strokes were left out and
+    /// why, not to wonder whether the import lost it. Costs no points of
+    /// its own; a design whose detail is mostly this small is already
+    /// penalised by `checkFragmentation`.
+    private static func checkUnsewableDetail(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
+        guard let document else { return }
+        let leftOut = document.objects.filter { StitchTypeClassifier.droppingUnsewable($0.shape) == nil }.count
+        guard leftOut > 0 else { return }
+        issues.append(QualityIssue(
+            severity: leftOut >= minimumFragmentCount ? .warning : .info,
+            message: "\(leftOut) \(leftOut == 1 ? "detail is" : "details are") too small to sew at this size (specks under 1 mm, lines under 0.5 mm wide) and \(leftOut == 1 ? "is" : "are") left out. Enlarge the design if \(leftOut == 1 ? "it matters" : "they matter").",
             scorePenalty: 0
         ))
     }

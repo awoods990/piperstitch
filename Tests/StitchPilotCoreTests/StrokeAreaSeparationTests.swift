@@ -33,6 +33,37 @@ struct StrokeAreaSeparationTests {
         #expect(stroke.height < 2.5, "the stroke is the 1 mm line, not a slice of the square")
     }
 
+    /// Specks and hairlines are not sewn: a 0.3 mm speck and a 0.4 mm-
+    /// wide 4 mm sliver (the two at the Oholi bird's head) go, a 1 mm dot
+    /// and a 1 mm-wide line stay, and a shape that is only slivers is nil.
+    @Test func specksAndHairlinesAreNotSewable() {
+        let speck = SubPath(points: rect(0, 0, 0.3, 0.3), closed: true)
+        let sliver = SubPath(points: rect(0, 0, 4, 0.4), closed: true)
+        let dot = SubPath(points: (0..<16).map { Point2D(0.5 + 0.5 * cos(Double($0) / 16 * .pi * 2), 0.5 + 0.5 * sin(Double($0) / 16 * .pi * 2)) }, closed: true)
+        let line = SubPath(points: rect(0, 0, 5, 1), closed: true)
+        #expect(!StitchTypeClassifier.isSewableSize(speck))
+        #expect(!StitchTypeClassifier.isSewableSize(sliver))
+        #expect(StitchTypeClassifier.isSewableSize(dot))
+        #expect(StitchTypeClassifier.isSewableSize(line))
+        #expect(StitchTypeClassifier.droppingUnsewable(VectorShape(subPaths: [speck, sliver])) == nil)
+        #expect(StitchTypeClassifier.droppingUnsewable(VectorShape(subPaths: [line, sliver]))?.subPaths.count == 1)
+    }
+
+    /// The pipeline sews nothing for an unsewable object and the readiness
+    /// report says so, rather than the detail silently vanishing.
+    @Test func unsewableObjectsProduceNoStitchesAndAreReported() throws {
+        let square = EmbroideryObject(name: "square", shape: VectorShape(subPaths: [SubPath(points: rect(0, 0, 20, 20), closed: true)]),
+                                      stitchType: .tatamiFill, threadColor: .generic(RGBColor(hex: 0x000000)))
+        let speck = EmbroideryObject(name: "speck", shape: VectorShape(subPaths: [SubPath(points: rect(30, 30, 30.3, 30.3), closed: true)]),
+                                     stitchType: .tripleRun, threadColor: .generic(RGBColor(hex: 0x000000)))
+        let doc = StitchDocument(name: "d", physicalWidthMM: 40, physicalHeightMM: 40, objects: [square, speck])
+        let plan = try DigitizePipeline.flatten(doc)
+        let box = plan.commands.compactMap { command -> Point2D? in if case .stitch(let p) = command { return p } else { return nil } }
+        #expect(box.allSatisfy { $0.x <= 21 && $0.y <= 21 }, "the speck must not be sewn")
+        let report = QualityAnalyzer.analyze(plan, document: doc)
+        #expect(report.issues.contains { $0.message.contains("too small to sew") && $0.message.hasPrefix("1 detail") })
+    }
+
     @Test func aPlainSquareIsAllArea() throws {
         let square = VectorShape(subPaths: [SubPath(points: rect(0, 0, 20, 20), closed: true)])
         let split = try #require(ShapeMerger.splitThickAndThin(square, thinWidthMM: 3.0, overlapMM: 0.4))

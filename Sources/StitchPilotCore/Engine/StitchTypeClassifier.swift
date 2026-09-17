@@ -319,6 +319,55 @@ public enum StitchTypeClassifier {
     /// sliver, not a design element.
     public static let minimumPieceDimensionMM = 1.0
 
+    /// An outline smaller than this (polygon area, mm²) or narrower than
+    /// `minimumPieceDimensionMM` in both directions is not sewn
+    /// (`DigitizePipeline` skips it; `QualityAnalyzer` reports what was
+    /// left out). The importer keeps components down to 8 image pixels,
+    /// which at a typical 15 px/mm is a 0.3 mm speck; sewn as a
+    /// triple-run outline that is three penetrations in one hole plus
+    /// lock stitches and a trim -- a knot on the fabric and a thread tail
+    /// to pick out, for a mark no one can see. Two such slivers sat at
+    /// the head of the Oholi bird (0.2 x 0.3 mm and 1.3 x 0.5 mm) on the
+    /// first sew-out; a 1 mm dot over an "i" (area ~0.8 mm²) stays. The
+    /// objects themselves stay in the document: they are the artwork,
+    /// and at a larger size they sew.
+    public static let minimumObjectAreaMM2 = 0.6
+
+    /// A sub-path whose mean width (twice its area over its perimeter)
+    /// is under this is a hairline, whatever its length: the navy of the
+    /// Oholi "O" showing along the bird's neck is 3.8 mm long and 0.2 to
+    /// 0.8 mm wide, and sewn it is a wobbling near-run stitch that reads
+    /// as a stray thread. A 1 mm dot (mean width just under 0.5) stays.
+    public static let minimumMeanWidthMM = 0.45
+
+    /// See `minimumObjectAreaMM2` and `minimumMeanWidthMM`.
+    public static func isSewableSize(_ subPath: SubPath) -> Bool {
+        let box = subPath.boundingBox
+        guard max(box.width, box.height) >= minimumPieceDimensionMM else { return false }
+        // An open path is a running-stitch line with no area of its own;
+        // its length is all that matters.
+        guard subPath.closed else { return true }
+        let area = abs(PolygonGeometry.signedArea(subPath.points))
+        guard area >= minimumObjectAreaMM2 else { return false }
+        var perimeter = 0.0
+        for i in subPath.points.indices {
+            perimeter += subPath.points[i].distance(to: subPath.points[(i + 1) % subPath.points.count])
+        }
+        return perimeter <= 0 || 2 * area / perimeter >= minimumMeanWidthMM
+    }
+
+    /// The shape without its unsewable sub-paths, or nil when nothing
+    /// sewable is left. A sub-path is judged on its own: a hairline
+    /// sliver of the Oholi "O" showing between the bird's neck and beak
+    /// (0.3 mm wide, 3 mm long) is a separate outline of the same object,
+    /// and sewn it became three satin fragments, two trims and a knot at
+    /// the crossing. A hole that small is below the fill's own
+    /// `TatamiFillGenerator.minHoleAreaMM2` and was being ignored anyway.
+    public static func droppingUnsewable(_ shape: VectorShape) -> VectorShape? {
+        let kept = shape.subPaths.filter(isSewableSize)
+        return kept.isEmpty ? nil : VectorShape(subPaths: kept)
+    }
+
     /// Splits each fill-classified object into its area (fill) and its
     /// strokes (satin), the way a digitizer treats a colour that is both
     /// a solid and a line -- a cartoon whose dark green is the jacket AND
@@ -338,6 +387,7 @@ public enum StitchTypeClassifier {
     /// the shape's hole count, and the same alligator shows what it does to
     /// an area (see DIGITIZING_ENGINE.md, "professional samples"). Strokes
     /// that still can't be satin fall back to fill, as before.
+    ///
     public static func separateStrokesFromAreas(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
         var result: [EmbroideryObject] = []
         for object in objects {

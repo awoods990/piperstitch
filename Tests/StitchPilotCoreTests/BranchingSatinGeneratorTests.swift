@@ -97,6 +97,59 @@ struct BranchingSatinGeneratorTests {
         }
     }
 
+    /// The junction patch's grain follows the through stroke: on an "H"
+    /// the uprights pass through and the crossbar is the branch, so every
+    /// stitch at the junction crosses the 3 mm upright rather than
+    /// running the length of the patch. Found on the Oholi wordmark's
+    /// first render, where the crossbar's junction-inflated width made
+    /// it the "widest arm" and the patch was a dozen 7 mm stitches laid
+    /// along the upright.
+    @Test func junctionPatchStitchesCrossTheThroughStrokeOfAnH() throws {
+        let h = hShape()
+        let runs = try SatinColumnGenerator.generateBranchingRuns(for: h, parameters: params())
+        var longest = 0.0
+        for run in runs {
+            for i in 1..<run.count { longest = max(longest, run[i - 1].distance(to: run[i])) }
+        }
+        // The uprights are 3 mm wide and a patch chord reaches at most a
+        // little way into the crossbar; the seam from a patch's pole to
+        // the crossbar's first crossing is the longest thing left. A
+        // chord laid along the upright would be 6-7 mm.
+        #expect(longest <= 5.0, "longest stitch \(longest)mm -- junction patch stitches should cross the 3 mm upright, not run along it")
+    }
+
+    /// A stroke network whose walk has to hop somewhere sews the loop
+    /// first and hops last, so the hop is short: a ribbon with a loop
+    /// (Oholi's, in miniature) has one 0.8 mm hop rather than a 26 mm
+    /// jump back to the loop after sewing past it to the far end.
+    @Test func branchingWalkSewsALoopBeforeContinuingRatherThanJumpingBack() throws {
+        // A 2 mm-wide bar from x=0 to x=60 with a ring hanging under it at
+        // x=30 -- the ring's two junctions with the bar are 4 mm apart.
+        var points: [Point2D] = [Point2D(0, 0), Point2D(60, 0), Point2D(60, 2), Point2D(32, 2)]
+        // Outer ring boundary, clockwise from the bar's underside.
+        for step in 0...20 {
+            let angle = Double.pi / 2 - Double(step) / 20 * Double.pi * 2 * 0.86 - 0.44
+            points.append(Point2D(30 + 6 * cos(angle), 7 + 6 * sin(angle)))
+        }
+        points.append(contentsOf: [Point2D(28, 2), Point2D(0, 2)])
+        var hole: [Point2D] = []
+        for step in 0..<24 {
+            let angle = Double(step) / 24 * Double.pi * 2
+            hole.append(Point2D(30 + 4 * cos(angle), 7 + 4 * sin(angle)))
+        }
+        let shape = VectorShape(subPaths: [SubPath(points: points, closed: true), SubPath(points: hole, closed: true)])
+        var p = params()
+        p.allowBranchingSatin = true
+        let runs = try SatinColumnGenerator.generateBranchingRuns(for: shape, parameters: p)
+        // Every hop the walk could not avoid is either sewn (one run) or
+        // short; a 30 mm jump back would show as a second run starting
+        // far from where the first ended.
+        for i in 1..<runs.count {
+            guard let end = runs[i - 1].last, let start = runs[i].first else { continue }
+            #expect(end.distance(to: start) < 12, "run \(i) starts \(end.distance(to: start))mm from where the previous run ended")
+        }
+    }
+
     @Test func generateBranchingProducesStitchesForTheTShape() throws {
         let t = tShape()
         let stitches = try SatinColumnGenerator.generateBranching(for: t, parameters: params())

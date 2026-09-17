@@ -560,7 +560,12 @@ public enum StrokeTopologyAnalyzer {
         // for it (below), appended after the real ones.
         var extraNodes: [Node] = []
         for node in nodes {
-            let clusterPixels = nodeIndexOfPixel.filter { $0.value == node.id }.map { $0.key }
+            // Sorted: a Swift dictionary's iteration order differs between
+            // instances (its storage seeds its hasher by address), so the
+            // order in which a cluster's pixels start walks -- and with it
+            // which pixel a walk claims first, and so the edges found --
+            // silently varied from one call to the next on the same shape.
+            let clusterPixels = nodeIndexOfPixel.filter { $0.value == node.id }.map { $0.key }.sorted()
             for pixelIdx in clusterPixels {
                 let x = pixelIdx % width, y = pixelIdx / width
                 for (nx, ny) in stepDirections(x, y, skeleton: skeleton, width: width, height: height, nodeIndexOfPixel: nodeIndexOfPixel) {
@@ -750,7 +755,7 @@ public enum StrokeTopologyAnalyzer {
             // edges -- pruning its third spur demoted it to a plain
             // mid-chain point, not a real junction anymore.
             var collapsedThisRound = false
-            for (nodeID, count) in degreeCount where count == 2 {
+            for (nodeID, count) in degreeCount.sorted(by: { $0.key < $1.key }) where count == 2 {
                 guard nodesByID[nodeID]?.isJunction == true else { continue }
                 let incidentIndices = edges.indices.filter { !edges[$0].isClosedLoop && (edges[$0].startNodeID == nodeID || edges[$0].endNodeID == nodeID) }
                 guard incidentIndices.count == 2 else { continue }
@@ -792,7 +797,7 @@ public enum StrokeTopologyAnalyzer {
             // Unlike the degree-2 case above, no edges merge here --
             // the node stays exactly where it is, just correctly
             // reclassified.
-            for (nodeID, count) in degreeCount where count == 1 {
+            for (nodeID, count) in degreeCount.sorted(by: { $0.key < $1.key }) where count == 1 {
                 guard let node = nodesByID[nodeID], node.isJunction else { continue }
                 var demoted = node
                 demoted.isJunction = false
@@ -801,7 +806,7 @@ public enum StrokeTopologyAnalyzer {
             }
         }
 
-        return Topology(nodes: Array(nodesByID.values), edges: edges)
+        return Topology(nodes: nodesByID.values.sorted { $0.id < $1.id }, edges: edges)
     }
 
     private static func pathLength(_ points: [Point2D]) -> Double {

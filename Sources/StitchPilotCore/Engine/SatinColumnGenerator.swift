@@ -1203,20 +1203,66 @@ public enum SatinColumnGenerator {
         // far away after an arm that merely *began* there.
         var pieces: [[Point2D]] = []
         var emittedPatchNodes = Set<Int>()
-        func emitPatch(at nodeID: Int) {
-            guard !emittedPatchNodes.contains(nodeID), let patch = plan.patchByNode[nodeID] else { return }
-            pieces.append(patch)
+        let nodePosition = Dictionary(uniqueKeysWithValues: plan.nodes.map { ($0.id, $0.position) })
+        func emitPatch(at nodeID: Int, towards next: Point2D?) {
+            guard !emittedPatchNodes.contains(nodeID), var patch = plan.patchByNode[nodeID] else { return }
             emittedPatchNodes.insert(nodeID)
+            // Sew the patch in whichever direction best continues the arm
+            // just sewn and ends beside the piece that follows -- the two
+            // together, or a patch that begins where the needle is can
+            // still end a 5 mm diagonal from the next arm's first
+            // crossing (the synthetic "H"'s right junction, measured). A
+            // hop onto it that would leave the shape (across a concave
+            // notch) goes via the node centre instead.
+            if let first = patch.first, let last = patch.last {
+                let here = pieces.last?.last
+                func seam(_ from: Point2D, _ to: Point2D) -> Double {
+                    (here.map { $0.distance(to: from) } ?? 0) + (next.map { to.distance(to: $0) } ?? 0)
+                }
+                if seam(last, first) < seam(first, last) { patch.reverse() }
+                if let here, !hopStaysOnShape(from: here, to: patch[0], polygons: plan.polygons), let centre = nodePosition[nodeID],
+                   hopStaysOnShape(from: here, to: centre, polygons: plan.polygons) {
+                    patch.insert(centre, at: 0)
+                }
+            }
+            pieces.append(patch)
         }
-        for segment in plan.segments {
-            emitPatch(at: segment.edge.startNodeID)
+        // A node's patch is sewn on the walk's LAST pass through it, so
+        // every arm that ends there is already down and the patch covers
+        // the arms' trimmed ends and the short hops between them: sewn on
+        // the first pass, the next arm's return to the junction ended in
+        // a 5 mm stitch across the top of the finished patch (the
+        // synthetic "H"'s right junction, measured).
+        var lastTouch: [Int: Int] = [:]
+        for (index, segment) in plan.segments.enumerated() {
+            lastTouch[segment.edge.startNodeID] = index
+            lastTouch[segment.edge.endNodeID] = index
+        }
+        for (index, segment) in plan.segments.enumerated() {
+            var piece: [Point2D] = []
             if !segment.kept.isEmpty {
-                pieces.append(stitchesSplittingByWidth(
+                let crossings = stitchesSplittingByWidth(
                     expandedA: Array(segment.expandedA[segment.kept]), expandedB: Array(segment.expandedB[segment.kept]),
                     widths: Array(segment.widths[segment.kept]), mitre: Array(segment.mitre[segment.kept]),
-                    overWide: .splitSatin, parameters: parameters))
+                    overWide: .splitSatin, parameters: parameters)
+                if segment.outAndBack {
+                    // Run out to the arm's tip along its centreline, then
+                    // satin back over the run to the junction the walk
+                    // continues from -- see `WalkLeg.outAndBack`.
+                    let travel = RunningStitchGenerator.generate(for: SubPath(points: segment.edge.polyline, closed: false),
+                                                                 stitchLengthMM: parameters.underlayStitchLengthMM,
+                                                                 minStitchLengthMM: parameters.minStitchLengthMM)
+                    piece = travel + crossings.reversed()
+                } else {
+                    piece = crossings
+                }
             }
-            emitPatch(at: segment.edge.endNodeID)
+            // An out-and-back leg returns to its start node, so that
+            // node's patch (if this is the walk's last pass) follows it.
+            if lastTouch[segment.edge.startNodeID] == index, !segment.outAndBack { emitPatch(at: segment.edge.startNodeID, towards: piece.first) }
+            if !piece.isEmpty { pieces.append(piece) }
+            if lastTouch[segment.edge.endNodeID] == index { emitPatch(at: segment.edge.endNodeID, towards: nil) }
+            if lastTouch[segment.edge.startNodeID] == index, segment.outAndBack { emitPatch(at: segment.edge.startNodeID, towards: nil) }
         }
         pieces.removeAll { $0.isEmpty }
         if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil {
@@ -1226,9 +1272,17 @@ public enum SatinColumnGenerator {
             throw SatinGenerationError.shapeNotSuitable("no usable branch segments")
         }
 
+        // A hop between pieces is sewn as a plain connector when it stays
+        // on the shape (covered by nothing, but on thread of its own
+        // colour) or is too short to see -- the same 3 mm rule
+        // `DigitizePipeline.visibleConnectorMM` applies between objects.
+        // The Oholi ribbon's loop junction left two pieces 1.5 mm apart
+        // across the notch between loop and ribbon; trimming there put a
+        // lock, a cut and a re-anchor into a 1 mm-wide satin line.
         var runs: [[Point2D]] = [pieces[0]]
         for piece in pieces.dropFirst() {
-            if let last = runs[runs.count - 1].last, hopStaysOnShape(from: last, to: piece[0], polygons: plan.polygons) {
+            if let last = runs[runs.count - 1].last,
+               last.distance(to: piece[0]) <= DigitizePipeline.visibleConnectorMM || hopStaysOnShape(from: last, to: piece[0], polygons: plan.polygons) {
                 runs[runs.count - 1].append(contentsOf: piece)
             } else {
                 runs.append(piece)
@@ -1242,6 +1296,8 @@ public enum SatinColumnGenerator {
     /// junction patch at one end or the other).
     private struct BranchSegment {
         var edge: StrokeTopologyAnalyzer.Edge
+        /// See `WalkLeg.outAndBack`.
+        var outAndBack: Bool
         var expandedA: [Point2D]
         var expandedB: [Point2D]
         var widths: [Double]
@@ -1294,6 +1350,7 @@ public enum SatinColumnGenerator {
 
     private struct BranchingPlan {
         var polygons: [[Point2D]]
+        var nodes: [StrokeTopologyAnalyzer.Node]
         var segments: [BranchSegment]
         var patchByNode: [Int: [Point2D]]
     }
@@ -1333,9 +1390,17 @@ public enum SatinColumnGenerator {
             let box = shape.boundingBox
             print(String(format: "  branching: shape %.1fx%.1f, %d nodes, %d edges: %@", box.width, box.height, topology.nodes.count, topology.edges.count,
                          topology.edges.map { String(format: "%.1f", PolygonGeometry.pathLength($0.polyline)) }.joined(separator: " ")))
+            for node in topology.nodes {
+                print(String(format: "    node %d %@ at (%.1f,%.1f) width %.1f", node.id, node.isJunction ? "junction" : "end", node.position.x, node.position.y, node.widthMM))
+            }
+            for edge in topology.edges {
+                print(String(format: "    edge %d->%d %.1fmm widths %.1f..%.1f%@", edge.startNodeID, edge.endNodeID, PolygonGeometry.pathLength(edge.polyline),
+                             edge.widthsMM.min() ?? 0, edge.widthsMM.max() ?? 0, edge.isClosedLoop ? " loop" : ""))
+            }
         }
         var segments: [BranchSegment] = []
-        for edge in orderedEdges(topology) {
+        for leg in orderedLegs(topology) {
+            let edge = leg.edge
             let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons)
             guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters),
                   !crossings.expandedA.isEmpty else {
@@ -1348,7 +1413,7 @@ public enum SatinColumnGenerator {
                 throw SatinGenerationError.shapeNotSuitable("a branch segment couldn't be rail-fit as satin")
             }
             let repaired = untwisted(expandedA: crossings.expandedA, expandedB: crossings.expandedB, widths: crossings.widths, mitre: crossings.mitre)
-            segments.append(BranchSegment(edge: edge, expandedA: repaired.expandedA, expandedB: repaired.expandedB,
+            segments.append(BranchSegment(edge: edge, outAndBack: leg.outAndBack, expandedA: repaired.expandedA, expandedB: repaired.expandedB,
                                           widths: repaired.widths, mitre: repaired.mitre, kept: 0..<repaired.expandedA.count))
         }
 
@@ -1365,13 +1430,17 @@ public enum SatinColumnGenerator {
         // exactly the crossings whose own direction never accounted for
         // the OTHER edges meeting at the same point (the crease itself),
         // to be covered by the patch instead. A crossing is trimmed by
-        // its MIDPOINT's distance, but its two rail ends sit half a stroke
-        // width to either side, farther out -- so each node's patch is
-        // sized to the farthest rail end of anything trimmed at it, not
-        // to the trim radius itself: a patch built at the trim radius
-        // alone left visible uncovered wedges beside every rosette on a
-        // real 7mm-wide arm (found directly by rendering it).
+        // its MIDPOINT's distance; the patch reaches one stitch past the
+        // farthest trimmed midpoint, so its last chord overlaps the arm's
+        // first kept crossing and no further. The radial fan this patch
+        // replaced had to reach the trimmed crossings' RAIL ENDS (half a
+        // stroke width farther out) or it left wedges uncovered; a chord
+        // patch is clamped to the boundary sideways, so that extra reach
+        // only stacked two or three chords on top of each arm's own
+        // satin -- the visibly heavy junctions on the Oholi "H"'s first
+        // sew-out.
         var patchRadiusByNode: [Int: Double] = [:]
+        let patchOverlap = parameters.effectiveSatinDensityMM
         for index in segments.indices {
             let segment = segments[index]
             let count = segment.expandedA.count
@@ -1380,16 +1449,16 @@ public enum SatinColumnGenerator {
                 if let node = nodesByID[segment.edge.startNodeID], patchedNodeIDs.contains(segment.edge.startNodeID) {
                     let radius = junctionTrimRadius(for: node)
                     while lo < hi - 1, node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) <= radius {
-                        let reach = max(node.position.distance(to: segment.expandedA[lo]), node.position.distance(to: segment.expandedB[lo]))
-                        patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? radius, reach)
+                        let reach = node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) + patchOverlap
+                        patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? 0, reach)
                         lo += 1
                     }
                 }
                 if let node = nodesByID[segment.edge.endNodeID], patchedNodeIDs.contains(segment.edge.endNodeID) {
                     let radius = junctionTrimRadius(for: node)
                     while hi > lo + 1, node.position.distance(to: midpoint(segment.expandedA[hi - 1], segment.expandedB[hi - 1])) <= radius {
-                        let reach = max(node.position.distance(to: segment.expandedA[hi - 1]), node.position.distance(to: segment.expandedB[hi - 1]))
-                        patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? radius, reach)
+                        let reach = node.position.distance(to: midpoint(segment.expandedA[hi - 1], segment.expandedB[hi - 1])) + patchOverlap
+                        patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? 0, reach)
                         hi -= 1
                     }
                 }
@@ -1413,26 +1482,68 @@ public enum SatinColumnGenerator {
         }
 
         var patchByNode: [Int: [Point2D]] = [:]
-        for nodeID in patchedNodeIDs {
+        for nodeID in patchedNodeIDs.sorted() {
             guard let node = nodesByID[nodeID] else { continue }
             let radius = patchRadiusByNode[nodeID] ?? junctionTrimRadius(for: node)
-            // The patch's grain follows the widest arm leaving this node.
-            var axis: Point2D? = nil
-            var widest = -1.0
-            for segment in segments where segment.edge.startNodeID == nodeID || segment.edge.endNodeID == nodeID {
-                let polyline = segment.edge.polyline
-                guard polyline.count >= 2 else { continue }
-                let width = segment.edge.widthsMM.max() ?? 0
-                guard width > widest else { continue }
-                let tangent = segment.edge.startNodeID == nodeID ? polyline[1] - polyline[0] : polyline[polyline.count - 1] - polyline[polyline.count - 2]
-                if tangent.length > 1e-9 { axis = tangent * (1 / tangent.length); widest = width }
-            }
+            let axis = junctionPatchAxis(nodeID: nodeID, segments: segments)
             if let patch = junctionPatchFill(node: node, radius: radius, axis: axis, shapePolygons: polygons, parameters: parameters) {
                 patchByNode[nodeID] = patch
             }
         }
-        return BranchingPlan(polygons: polygons, segments: segments, patchByNode: patchByNode)
+        return BranchingPlan(polygons: polygons, nodes: topology.nodes, segments: segments, patchByNode: patchByNode)
     }
+
+    /// The direction the junction patch's satin grain runs along, so its
+    /// chords cross the stroke the way the arms' own crossings do.
+    ///
+    /// Two arms leaving the node in near-opposite directions are one
+    /// stroke passing through (the upright of an "H", the stem of a "B")
+    /// and the third arm is the branch; the grain follows the through
+    /// stroke. Only when no such pair exists (a "Y", a three-way star)
+    /// does the widest arm decide -- judged by its TYPICAL width (the
+    /// median of its samples), not its widest sample: every arm's width
+    /// peaks at the junction itself, where the distance transform sees
+    /// the merged blob, so the maximum said the 2 mm crossbar of an "H"
+    /// was its widest arm and the patch was sewn as a dozen 7 mm
+    /// stitches running the length of the 3.8 mm upright -- a flat block
+    /// with the wrong sheen, found on the Oholi wordmark's first render.
+    private static func junctionPatchAxis(nodeID: Int, segments: [BranchSegment]) -> Point2D? {
+        struct Arm { var direction: Point2D; var width: Double }
+        var arms: [Arm] = []
+        for segment in segments where segment.edge.startNodeID == nodeID || segment.edge.endNodeID == nodeID {
+            let polyline = segment.edge.polyline
+            guard polyline.count >= 2 else { continue }
+            // The tangent a little way out, past the junction's own fan.
+            let reach = min(polyline.count - 1, max(1, Int(junctionArmTangentReachMM / max(1e-6, PolygonGeometry.pathLength(polyline)) * Double(polyline.count - 1))))
+            let tangent = segment.edge.startNodeID == nodeID ? polyline[reach] - polyline[0] : polyline[polyline.count - 1 - reach] - polyline[polyline.count - 1]
+            guard tangent.length > 1e-9 else { continue }
+            let widths = segment.edge.widthsMM.sorted()
+            let median = widths.isEmpty ? 0 : widths[widths.count / 2]
+            arms.append(Arm(direction: tangent * (1 / tangent.length), width: median))
+        }
+        guard !arms.isEmpty else { return nil }
+        var bestPair: (Point2D, Double)? = nil
+        for i in arms.indices {
+            for j in arms.indices where j > i {
+                let dot = arms[i].direction.x * arms[j].direction.x + arms[i].direction.y * arms[j].direction.y
+                guard dot <= -throughStrokeMinimumOpposition else { continue }
+                let through = arms[i].direction - arms[j].direction
+                guard through.length > 1e-9 else { continue }
+                let score = min(arms[i].width, arms[j].width) * -dot
+                if bestPair == nil || score > bestPair!.1 { bestPair = (through * (1 / through.length), score) }
+            }
+        }
+        if let pair = bestPair { return pair.0 }
+        return arms.max { $0.width < $1.width }?.direction
+    }
+
+    /// See `junctionPatchAxis`: how far out along an arm its direction is
+    /// measured (the first sample or two sit inside the junction's fan).
+    private static let junctionArmTangentReachMM = 1.5
+
+    /// See `junctionPatchAxis`: two arms count as one through stroke when
+    /// the angle between them is within ~45 degrees of straight.
+    private static let throughStrokeMinimumOpposition = 0.7
 
     /// How finely `hopStaysOnShape` samples a connector for leaving the
     /// shape -- a counter narrower than this could in principle be
@@ -1565,6 +1676,9 @@ public enum SatinColumnGenerator {
         for i in 0...steps {
             let t = -radius + Double(i) / Double(steps) * 2 * radius
             let clampedT = max(-radius + 1e-6, min(radius - 1e-6, t))
+            // At the poles the disc is narrower than a stitch: a chord
+            // there is two penetrations in one hole.
+            guard radius * radius - clampedT * clampedT > density * density / 4 else { continue }
             let origin = node.position + along * clampedT
             // Skip a chord whose midpoint lies outside the shape (the disc
             // can overhang a concave junction's notch).
@@ -1574,20 +1688,21 @@ public enum SatinColumnGenerator {
             side = -side
         }
         guard stitches.count >= 4 else { return nil }
-        // Enter and leave via the node centre: the arms end at the disc's
-        // edge in their own directions, and a straight hop from there to
-        // a rim point on the axis can cut across a concave notch. The same
-        // for any rim step between two chords that would cross a notch --
-        // it detours through the centre. A few penetrations at the centre
+        // A rim step between two chords that would cross a concave notch
+        // detours through the node centre -- a few penetrations there
         // where the shape is concave, not one per spoke as the fan had.
-        var sequence: [Point2D] = [node.position]
-        for point in stitches {
+        // Entering and leaving the patch is the caller's business
+        // (`generateBranchingRuns` starts it from whichever end the
+        // needle is nearer): an unconditional first and last stitch at
+        // the centre put a 3-4 mm diagonal across every patch, from the
+        // arm's end through the centre to the far chord.
+        var sequence: [Point2D] = [stitches[0]]
+        for point in stitches.dropFirst() {
             let previous = sequence[sequence.count - 1]
             let mid = Point2D((previous.x + point.x) / 2, (previous.y + point.y) / 2)
             if !PolygonGeometry.pointInPolygons(mid, polygons: shapePolygons) { sequence.append(node.position) }
             sequence.append(point)
         }
-        sequence.append(node.position)
         return sequence
     }
 
@@ -1994,54 +2109,126 @@ public enum SatinColumnGenerator {
     /// excess travel. A segment with no remaining neighbor touching the
     /// current node (a disjoint piece, or having exhausted the current
     /// branch) just starts the next leg from wherever it naturally sits.
+    /// One leg of the sewing walk over a stroke network.
+    private struct WalkLeg {
+        var edge: StrokeTopologyAnalyzer.Edge
+        /// A dead-end arm the walk has to come back from -- the top of
+        /// an "H"'s upright, entered from the junction with other arms
+        /// still to sew. Sewn as a running stitch out along the arm's
+        /// centreline and satin back over it, so the needle is at the
+        /// junction again when the arm is done, with nothing showing:
+        /// the alternative, satin out and a bare 8-10 mm hop back down
+        /// the finished arm, lay a straight thread on top of every such
+        /// arm's satin (the synthetic "H"'s left upright, measured).
+        /// A digitizer's "travel and cover".
+        var outAndBack: Bool
+
+        var exitNodeID: Int { outAndBack ? edge.startNodeID : edge.endNodeID }
+        var exitPoint: Point2D? { outAndBack ? edge.polyline.first : edge.polyline.last }
+    }
+
+    /// The edges in walk order, for the skeleton underlay.
     private static func orderedEdges(_ topology: StrokeTopologyAnalyzer.Topology) -> [StrokeTopologyAnalyzer.Edge] {
-        var remaining = topology.edges
-        guard !remaining.isEmpty else { return [] }
+        orderedLegs(topology).map { $0.edge }
+    }
 
-        var ordered: [StrokeTopologyAnalyzer.Edge] = [remaining.removeFirst()]
-        var currentNode = ordered[0].endNodeID
-        while !remaining.isEmpty {
-            var foundIndex: Int?
-            for i in remaining.indices {
-                let touchesCurrentNode = remaining[i].startNodeID == currentNode || remaining[i].endNodeID == currentNode
-                if touchesCurrentNode {
-                    foundIndex = i
-                    break
-                }
-            }
-
-            let next: StrokeTopologyAnalyzer.Edge
-            if let index = foundIndex {
-                var candidate = remaining.remove(at: index)
-                if candidate.startNodeID != currentNode {
-                    candidate = reversed(candidate)
-                }
-                next = candidate
-            } else {
-                // Nothing left touches the current node (the walk exhausted
-                // this branch of a graph with cycles) -- rather than an
-                // arbitrary next edge taken as-is, start the next leg from
-                // whichever remaining edge END is physically nearest to
-                // where the needle currently is, flipping that edge if its
-                // far end is the nearer one. This can't make the hop
-                // connected, but it makes it as short as the graph allows;
-                // `generateBranchingRuns` then decides whether even that
-                // hop can be sewn or must become a trim+jump.
-                let here = ordered.last?.polyline.last ?? remaining[0].polyline[0]
-                var bestIndex = 0, bestFlip = false, bestDistance = Double.infinity
-                for i in remaining.indices {
-                    let startDistance = here.distance(to: remaining[i].polyline[0])
-                    let endDistance = here.distance(to: remaining[i].polyline[remaining[i].polyline.count - 1])
-                    if startDistance < bestDistance { bestDistance = startDistance; bestIndex = i; bestFlip = false }
-                    if endDistance < bestDistance { bestDistance = endDistance; bestIndex = i; bestFlip = true }
-                }
-                let candidate = remaining.remove(at: bestIndex)
-                next = bestFlip ? reversed(candidate) : candidate
-            }
-            ordered.append(next)
-            currentNode = next.endNodeID
+    /// The walk order for a stroke network's edges: the order with the
+    /// least total hopping between legs, found by walking from every
+    /// edge in both directions and, wherever several unsewn edges leave
+    /// the node the walk is at, trying each of them (up to
+    /// `walkSearchBudget` walks per start; past that the first is taken,
+    /// as the plain greedy walk always did). Which edge the analyzer
+    /// happened to list first decides nothing. Starting from an arbitrary
+    /// edge sewed the Oholi "O" (a 40 mm arc with three stubs at each cut
+    /// end) as stub, 20 mm jump to the far end, the arc back, then a 20 mm
+    /// jump to the stubs it had started beside; always taking the first
+    /// edge at a fork sewed the same mark's ribbon past its loop to the far
+    /// end and then jumped 26 mm back for the loop, when taking the loop
+    /// first leaves one 0.8 mm hop that never leaves the shape.
+    private static func orderedLegs(_ topology: StrokeTopologyAnalyzer.Topology) -> [WalkLeg] {
+        let edges = topology.edges
+        guard !edges.isEmpty else { return [] }
+        var degree: [Int: Int] = [:]
+        for edge in edges where edge.startNodeID != edge.endNodeID {
+            degree[edge.startNodeID, default: 0] += 1
+            degree[edge.endNodeID, default: 0] += 1
         }
-        return ordered
+        let leaves = Set(degree.filter { $0.value == 1 }.map { $0.key })
+        guard edges.count <= maximumEdgesForWalkSearch else {
+            var budget = 1
+            return walk(from: [WalkLeg(edge: edges[0], outAndBack: false)], remaining: Array(edges.dropFirst()), leaves: leaves, budget: &budget).order
+        }
+        var best: [WalkLeg] = []
+        var bestCost = Double.infinity
+        for start in edges.indices {
+            for flipped in [false, true] {
+                var remaining = edges
+                let first = remaining.remove(at: start)
+                let oriented = flipped ? reversed(first) : first
+                let outAndBack = !remaining.isEmpty && leaves.contains(oriented.endNodeID) && !leaves.contains(oriented.startNodeID)
+                var budget = walkSearchBudget
+                let result = walk(from: [WalkLeg(edge: oriented, outAndBack: outAndBack)], remaining: remaining, leaves: leaves, budget: &budget)
+                if result.cost < bestCost { bestCost = result.cost; best = result.order }
+            }
+        }
+        return best
+    }
+
+    /// See `orderedLegs(_:)`: past this many edges the search is skipped
+    /// and the first edge is taken, as the plain greedy walk always did.
+    private static let maximumEdgesForWalkSearch = 120
+
+    /// See `orderedLegs(_:)`: how many complete walks one start may
+    /// explore before forks stop branching.
+    private static let walkSearchBudget = 64
+
+    /// Continues `ordered` over `remaining`, returning the completed walk
+    /// and its cost (the total length of every hop between consecutive
+    /// legs). At a node with several unsewn edges each is tried while the
+    /// budget lasts; a dead end restarts from whichever remaining edge end
+    /// is physically nearest, flipping that edge if its far end is nearer
+    /// -- the hop can't be connected, but it is as short as the graph
+    /// allows, and `generateBranchingRuns` then decides whether it is sewn
+    /// or becomes a trim+jump. An edge into a leaf with more edges still
+    /// to sew is an out-and-back leg (`WalkLeg.outAndBack`).
+    private static func walk(from ordered: [WalkLeg], remaining: [StrokeTopologyAnalyzer.Edge], leaves: Set<Int>, budget: inout Int)
+        -> (order: [WalkLeg], cost: Double) {
+        guard !remaining.isEmpty, let last = ordered.last else { return (ordered, 0) }
+        let currentNode = last.exitNodeID
+        let here = last.exitPoint ?? remaining[0].polyline[0]
+        func leg(_ edge: StrokeTopologyAnalyzer.Edge, rest: [StrokeTopologyAnalyzer.Edge]) -> WalkLeg {
+            WalkLeg(edge: edge, outAndBack: !rest.isEmpty && leaves.contains(edge.endNodeID) && !leaves.contains(edge.startNodeID))
+        }
+        let touching = remaining.indices.filter { remaining[$0].startNodeID == currentNode || remaining[$0].endNodeID == currentNode }
+        var best: (order: [WalkLeg], cost: Double)? = nil
+        if touching.isEmpty {
+            var bestIndex = 0, bestFlip = false, bestDistance = Double.infinity
+            for i in remaining.indices {
+                let startDistance = here.distance(to: remaining[i].polyline[0])
+                let endDistance = here.distance(to: remaining[i].polyline[remaining[i].polyline.count - 1])
+                if startDistance < bestDistance { bestDistance = startDistance; bestIndex = i; bestFlip = false }
+                if endDistance < bestDistance { bestDistance = endDistance; bestIndex = i; bestFlip = true }
+            }
+            var rest = remaining
+            let candidate = rest.remove(at: bestIndex)
+            let next = bestFlip ? reversed(candidate) : candidate
+            let result = walk(from: ordered + [leg(next, rest: rest)], remaining: rest, leaves: leaves, budget: &budget)
+            return (result.order, result.cost + bestDistance)
+        }
+        for (n, index) in touching.enumerated() {
+            if n > 0 {
+                guard budget > 0 else { break }
+                budget -= 1
+            }
+            var rest = remaining
+            var candidate = rest.remove(at: index)
+            if candidate.startNodeID != currentNode { candidate = reversed(candidate) }
+            let hop = here.distance(to: candidate.polyline.first ?? here)
+            let result = walk(from: ordered + [leg(candidate, rest: rest)], remaining: rest, leaves: leaves, budget: &budget)
+            let cost = result.cost + hop
+            if best == nil || cost < best!.cost { best = (result.order, cost) }
+        }
+        return best ?? (ordered, 0)
     }
 
     private static func reversed(_ edge: StrokeTopologyAnalyzer.Edge) -> StrokeTopologyAnalyzer.Edge {

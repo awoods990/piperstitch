@@ -250,6 +250,13 @@ public enum DigitizePipeline {
     }
 
     private static func rawStitchRuns(for object: EmbroideryObject, breakThresholdMM: Double) throws -> [[Point2D]] {
+        // Specks and hairlines are not sewn (see
+        // `StitchTypeClassifier.minimumObjectAreaMM2`); an object with
+        // nothing sewable produces no runs and drops out of the sequence
+        // here, and `QualityAnalyzer` tells the customer it was left out.
+        guard let sewable = StitchTypeClassifier.droppingUnsewable(object.shape) else { return [] }
+        var object = object
+        object.shape = sewable
         let mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM)
         guard object.isApplique else { return mainRuns }
         // Placement + tack-down sew first, as their own separate runs --
@@ -372,7 +379,38 @@ public enum DigitizePipeline {
                 return joinBranchingUnderlay(to: branchingRuns, firstRun: firstRun, object: object, breakThresholdMM: breakThresholdMM)
             }
             do {
-                return [Array(underlay.reversed()) + (try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters))]
+                let crossings = try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters)
+                // Reversing is the usual answer (above), but not a law:
+                // the Oholi "O" -- a ring cut open by the bird -- has a
+                // there-and-back underlay that ends where it started, at
+                // the opposite tip from the first crossing, so reversing
+                // it changed nothing and the seam was still 28 mm straight
+                // across the counter. Of the four ways to orient the two
+                // (a zigzag reads the same backwards), take the one with
+                // the shortest seam.
+                // A closed underlay (a ring's, or a there-and-back run) is
+                // first rotated to end at whichever of its points lies
+                // nearest the first crossing: the letter "O"'s underlay
+                // closed at its top while the radial crossings begin at
+                // its right, a 13 mm seam diagonally across the counter
+                // that no reversal could shorten.
+                var candidates = [underlay, Array(underlay.reversed())]
+                if let head = underlay.first, let tail = underlay.last, let first = crossings.first,
+                   head.distance(to: tail) < closedUnderlaySeamMM, underlay.count > 2 {
+                    let nearest = underlay.indices.min { underlay[$0].distance(to: first) < underlay[$1].distance(to: first) } ?? 0
+                    let rotated = Array(underlay[nearest...]) + Array(underlay[1..<(nearest + 1)])
+                    candidates = [rotated, Array(rotated.reversed())]
+                }
+                var best: [Point2D] = Array(underlay.reversed()) + crossings
+                var bestSeam = Double.infinity
+                for base in candidates {
+                    for zigzag in [crossings, Array(crossings.reversed())] {
+                        guard let tail = base.last, let head = zigzag.first else { continue }
+                        let seam = tail.distance(to: head)
+                        if seam < bestSeam { bestSeam = seam; best = base + zigzag }
+                    }
+                }
+                return [best]
             } catch SatinGenerationError.shapeNotSuitable {
                 // `allowBranchingSatin` (default false — see its own doc
                 // comment on `StitchGenerationParameters`): before giving
@@ -429,6 +467,10 @@ public enum DigitizePipeline {
             }
         }
     }
+
+    /// An underlay whose first and last points are within this is a closed
+    /// loop that can be rotated to start anywhere along it.
+    private static let closedUnderlaySeamMM = 1.0
 
     /// A branching satin's skeleton underlay followed by its crossings, as
     /// runs. The underlay walks the skeleton in the same order the satin
