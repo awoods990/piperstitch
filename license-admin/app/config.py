@@ -178,7 +178,7 @@ ACCOUNT_LINK_TTL_MINUTES = _int("ACCOUNT_LINK_TTL_MINUTES", 30)
 # customer's acceptance of this version (customers.consent_terms_version);
 # bump it together with the page when the Terms change materially, and
 # each customer's next sign-in stamps the new acceptance.
-TERMS_VERSION = os.environ.get("TERMS_VERSION", "2026-09-13")
+TERMS_VERSION = os.environ.get("TERMS_VERSION", "2026-09-15")
 
 
 def require_for_serving() -> list[str]:
