@@ -472,11 +472,12 @@ function ProofsPlan({ proofs, go }: { proofs: ProofsState | null; go: (fn: () =>
 }
 
 
-export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount, onAccount, onRunSetup }: {
+export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSignOut, onRefreshAccount, onAccount, onRunSetup, initialTab }: {
   catalog: Catalog; prefs: Preferences; account: AccountState | null; onPrefs: (p: Preferences) => void; onClose: () => void; onSignOut: () => void; onRefreshAccount: () => void;
   onAccount: (a: AccountState) => void;
   /** Re-run guided setup (only offered from the start screen). */
   onRunSetup?: () => void;
+  initialTab?: "account" | "business" | "preferences" | "threads";
 }) {
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState(account?.name ?? "");
@@ -486,7 +487,7 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
     try { const me = await api.updateName(name); if (me.account) onAccount(me.account); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setSavingName(false); }
   };
-  const [tab, setTab] = useState<"account" | "business" | "preferences" | "threads">(account ? "account" : "preferences");
+  const [tab, setTab] = useState<"account" | "business" | "preferences" | "threads">(initialTab ?? (account ? "account" : "preferences"));
   const setBusiness = (patch: Partial<Preferences["business"]>) => onPrefs({ ...prefs, business: { ...prefs.business, ...patch } });
   const [promo, setPromo] = useState<{ code: string | null; description: string | null }>({ code: null, description: null });
   const go = async (fn: () => Promise<string>) => { try { window.location.assign(await fn()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } };
@@ -495,11 +496,11 @@ export function SettingsSheet({ catalog, prefs, account, onPrefs, onClose, onSig
     <Modal title="Settings" onClose={onClose} wide>
       <div className="tabs">
         {account && <button className={tab === "account" ? "on" : ""} onClick={() => setTab("account")}>Account & billing</button>}
-        {account && <button className={tab === "business" ? "on" : ""} onClick={() => setTab("business")}>Business</button>}
+        {(account || initialTab === "business") && <button className={tab === "business" ? "on" : ""} onClick={() => setTab("business")}>Business</button>}
         <button className={tab === "preferences" ? "on" : ""} onClick={() => setTab("preferences")}>Preferences</button>
         <button className={tab === "threads" ? "on" : ""} onClick={() => setTab("threads")}>Thread library</button>
       </div>
-      {tab === "business" && account && (
+      {tab === "business" && (
         <div className="stack form-grid">
           <label className="field">Business name<input value={prefs.business.name} onChange={(e) => setBusiness({ name: e.target.value })} /></label>
           <div className="two-up">

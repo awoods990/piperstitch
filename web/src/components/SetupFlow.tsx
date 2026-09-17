@@ -26,8 +26,9 @@ export interface SetupAnswers {
 
 interface Props {
   catalog: Catalog;
-  /** From guided setup: shown first, and preferred by "Choose one for me". */
+  /** From guided setup: the only hoops shown until "See all", and preferred by "Choose one for me". */
   ownedHoopNames?: string[];
+  onEditHoops?: () => void;
   fileName: string;
   isVector: boolean;
   recommendedWidthMM: number;
@@ -255,11 +256,14 @@ export default function SetupFlow(props: Props) {
                   </div>
                 </div>
               ))}
-              {!moreHoops && hoopGroups(catalog.hoops, owned).length > 1 && (
-                <button type="button" className="btn ghost more" onClick={() => setMoreHoops(true)}>
-                  More hoops &amp; frames — Mighty Hoop, Durkee EZ Frame ▾
-                </button>
-              )}
+              <div className="row-inline">
+                {!moreHoops && hoopGroups(catalog.hoops, owned).length > 1 && (
+                  <button type="button" className="btn ghost more" onClick={() => setMoreHoops(true)}>
+                    {owned.length > 0 ? "See all hoops & frames ▾" : "More hoops & frames — Mighty Hoop, Durkee EZ Frame ▾"}
+                  </button>
+                )}
+                {owned.length > 0 && props.onEditHoops && <button type="button" className="btn ghost more" onClick={props.onEditHoops}>Edit my hoops</button>}
+              </div>
             </div>
           )}
 

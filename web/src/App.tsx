@@ -34,7 +34,7 @@ interface Imported {
 }
 
 type Phase = "start" | "setup" | "editor" | "onboarding";
-type Sheet = "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | null;
+type Sheet = "help" | "settings" | "settingsBusiness" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
 
@@ -476,6 +476,17 @@ export default function App() {
     await api.saveProject(id, document.name, document);
     setProjectId(id); setSavedAt(Date.now()); setStatus("Saved to your account.");
   });
+  /** "Send to Proofs": save the project (Proofs builds the proof from the
+   *  saved copy), then hand the signed-in session over to Proofs' new-job
+   *  form with this project preselected. */
+  const onSendToProofs = () => withBusy("Opening Proofs…", async () => {
+    if (!document) return;
+    const id = projectId ?? crypto.randomUUID();
+    await api.saveProject(id, document.name, document);
+    setProjectId(id); setSavedAt(Date.now());
+    const next = `/proofs/new?project=${encodeURIComponent(id)}&name=${encodeURIComponent(document.name)}`;
+    window.location.assign(await api.proofsHandoffURL(next));
+  });
   const onDeleteProject = async (summary: ProjectSummary) => {
     if (!window.confirm(`Delete "${summary.name}"? This can't be undone.`)) return;
     try { await api.deleteProject(summary.id); setProjects((p) => (p ?? []).filter((x) => x.id !== summary.id)); } catch (e) { fail(e); }
@@ -539,6 +550,8 @@ export default function App() {
 
   const proofs = me.account?.proofs ?? null;
   const showProofs = !!proofs && (proofs.subscribed || proofs.free_used > 0);
+  // Anyone with a Proofs subscription or free proofs left can send a design across.
+  const canSendToProofs = me.authEnabled && !!proofs && (proofs.subscribed || proofs.free_left > 0);
   const goProofs = () => api.proofsHandoffURL().then((url) => window.location.assign(url)).catch((e) => fail(e));
   const accountMenu = (
     <>
@@ -550,7 +563,7 @@ export default function App() {
   const sheets = (
     <>
       {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} showProofs={!!me.account?.proofs} />}
-      {sheet === "settings" && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })}
+      {(sheet === "settings" || sheet === "settingsBusiness") && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })} initialTab={sheet === "settingsBusiness" ? "business" : undefined}
         onRunSetup={me.authEnabled && phase === "start" ? () => { setSheet(null); setRerunOnboarding("settings"); } : undefined} />}
       {sheet === "send" && document && <SendSheet designName={document.name} onClose={() => setSheet(null)} onSend={async (format, toEmail, message) => { await api.sendFile(document, format, toEmail, message); setStatus(`Sent ${document.name}.${format} to ${toEmail}.`); }} />}
       {sheet === "open" && <OpenProjectsSheet projects={projects} busy={busy} onOpen={onOpenProject} onDelete={onDeleteProject} onClose={() => setSheet(null)} />}
@@ -595,10 +608,10 @@ export default function App() {
   }
 
   if (phase === "setup" && imported && answers) {
-    return <SetupFlow catalog={catalog} ownedHoopNames={prefs.ownedHoopNames} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
+    return <><SetupFlow catalog={catalog} ownedHoopNames={prefs.ownedHoopNames} onEditHoops={() => setSheet("settingsBusiness")} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
       recommendedHeightMM={imported.response.recommendedHeightMM} aspectRatio={imported.response.aspectRatio} initial={answers} busy={busy}
       matchToThreadLibrary={matchToThreadLibrary} onMatchToThreadLibraryChange={(on) => setPrefs({ ...prefs, matchToThreadLibrary: on })}
-      onFinish={onSetupFinish} onCancel={onStartOver} />;
+      onFinish={onSetupFinish} onCancel={onStartOver} />{sheets}</>;
   }
 
   if (phase === "editor" && document && answers) {
@@ -609,6 +622,7 @@ export default function App() {
           hoop={answers.hoop} fabric={answers.fabric} colorPreset={answers.colorPreset} isVector={imported?.isVector ?? true} hasSource={!!imported}
           matchToThreadLibrary={matchToThreadLibrary} globalSatinDensityMM={globalSatin} globalFillSpacingMM={globalFill}
           previewURL={imported?.decoded?.previewURL ?? null} accountMenu={accountMenu} canSave={me.authEnabled} savedAt={savedAt}
+          canSendToProofs={canSendToProofs && !returnTo} onSendToProofs={onSendToProofs}
           onTool={setTool} onPrefs={setPrefs} onSelect={onSelect} onTranslate={onTranslate} onScale={onScale} onStroke={onStroke}
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}

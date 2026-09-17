@@ -26,6 +26,9 @@ export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "
   accountMenu: React.ReactNode;
   canSave: boolean;
   savedAt: number | null;
+  /** A Proofs subscription or free proofs left: offer "Send to Proofs". */
+  canSendToProofs?: boolean;
+  onSendToProofs?: () => void;
   onTool: (t: Tool) => void;
   onPrefs: (p: Preferences) => void;
   onSelect: (ids: string[], additive: boolean) => void;
@@ -38,7 +41,7 @@ export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "
   onRedo: () => void;
   onSave: () => void;
   onExport: (format: string) => void;
-  onOpenSheet: (s: "help" | "settings" | "lettering" | "mergeColors" | "threadLibrary" | "send") => void;
+  onOpenSheet: (s: "help" | "settings" | "settingsBusiness" | "lettering" | "mergeColors" | "threadLibrary" | "send") => void;
   onSendFeedback: () => void;
   onOpenProjects: () => void;
 }
@@ -87,6 +90,10 @@ export default function Editor(p: EditorProps) {
             </div>
           )}
         </div>
+        {p.canSendToProofs && (
+          <button className="pill primary proofs-pill" onClick={p.onSendToProofs} disabled={!digitized || !!p.busy}
+            title="Save this design and start a job in PiperStitch Proofs with it — a stitch-accurate proof your customer approves on their phone.">Send to Proofs ↗</button>
+        )}
         <span className="grow" />
         <button className="pill" onClick={() => p.onOpenSheet("send")} disabled={!digitized || !!p.busy || !p.canSave} title="Email the embroidery file to someone.">✉ Send</button>
         <button className="pill" onClick={p.onSendFeedback} disabled={!digitized || !!p.busy} title="Send PiperStitch's team a picture of the original artwork and the digitized result, so we can see where the automatic digitizing did well or poorly.">💬 Send feedback</button>
@@ -105,7 +112,7 @@ export default function Editor(p: EditorProps) {
           Fabric: <select value={p.fabric} onChange={(e) => p.onFabric(e.target.value as FabricType)}>{catalog.fabrics.map((f) => <option key={f.id} value={f.id}>{f.shortName}</option>)}</select>
         </label>
         <label className="pill select-pill" title="The hoop or frame this will be sewn in. Changing it re-checks the fit and redraws the hoop outline; the design itself doesn't move.">
-          Hoop: <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} ownedNames={p.prefs.ownedHoopNames} />
+          Hoop: <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} ownedNames={p.prefs.ownedHoopNames} onEditHoops={() => p.onOpenSheet("settingsBusiness")} />
         </label>
         <span className="sep" />
         <button className="pill" onClick={() => p.onOpenSheet("lettering")} title="Type text and pick a font — clean satin letters generated from the font's own outline.">Add lettering</button>
@@ -148,11 +155,11 @@ export default function Editor(p: EditorProps) {
               <span className="sheet-chevron" aria-hidden="true">{sheetOpen ? "▾" : "▴"}</span>
             </button>
             <div className="sheet-scroll">
-              <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} ownedHoopNames={p.prefs.ownedHoopNames} />
+              <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} ownedHoopNames={p.prefs.ownedHoopNames} onEditHoops={() => p.onOpenSheet("settingsBusiness")} />
             </div>
           </div>
         ) : (
-          <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} ownedHoopNames={p.prefs.ownedHoopNames} />
+          <Inspector {...p} busy={!!p.busy} palette={p.palette} allowExtendedDensity={p.prefs.allowExtendedDensity} ownedHoopNames={p.prefs.ownedHoopNames} onEditHoops={() => p.onOpenSheet("settingsBusiness")} />
         )}
       </div>
     </div>

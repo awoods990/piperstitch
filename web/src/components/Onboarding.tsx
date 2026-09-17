@@ -48,12 +48,14 @@ interface Props {
 
 const TITLES: Record<StepId, string> = {
   account: "First, your email",
-  products: "Will you also use Proofs?",
+  products: "One account, the whole workflow",
   business: "Tell us about your business",
+  machine: "What do you sew on?",
   hoops: "Which hoops do you have?",
   threads: "Your thread library",
   defaults: "How you like to work",
   proofs: "Sending proofs to customers",
+  tips: "Three things worth knowing",
   done: "",
 };
 
@@ -68,7 +70,7 @@ const CONFETTI = Array.from({ length: 40 }, (_, i) => {
 export default function Onboarding(props: Props) {
   const { account, catalog, prefs } = props;
   const [welcome, setWelcome] = useState(!props.rerun && !props.signUpLink);
-  const [products, setProducts] = useState<Product[]>(prefs.onboarding?.products ?? ["core"]);
+  const [products, setProducts] = useState<Product[]>(prefs.onboarding?.products ?? ["core", "proofs"]);
   // Creating the account is the first step when the visitor arrived signed
   // out; it stays in the step count after they're in, so "Step 2 of 6"
   // doesn't turn into "Step 1 of 5" the moment the code is accepted.
@@ -88,6 +90,7 @@ export default function Onboarding(props: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [moreHoops, setMoreHoops] = useState(false);
+  const [moreContact, setMoreContact] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bodyRef.current?.scrollTo(0, 0); }, [step]);
 
@@ -115,10 +118,12 @@ export default function Onboarding(props: Props) {
   const goNext = async () => {
     setError(null);
     let next = { ...draft };
-    if (step === "business") {
+    if (step === "machine") {
       // Their machines decide the file format and the starting hoop list.
       next.defaultExportFormat = defaultFormat(next.business.machineBrands);
       if (next.ownedHoopNames.length === 0) next.ownedHoopNames = suggestedHoops(next.business.machineBrands, hoopNames);
+    }
+    if (step === "business") {
       // One question, asked once: the business name IS the shop name on proofs.
       next.proofsDefaults = { ...next.proofsDefaults, shopName: next.business.name };
       // The account's own name is what goes on files they send.
@@ -222,12 +227,14 @@ export default function Onboarding(props: Props) {
 
   const subtitle: Record<StepId, string> = {
     account: codeSent ? (props.signUpLink && saving ? `Checking the code from your email…` : `We emailed a six-digit code to ${email.trim()}. It's good for 15 minutes — check spam if it's slow.`) : "No password: a fresh code is emailed each time you sign in. Your free trial starts as soon as you're in.",
-    products: `PiperStitch digitizing is included — your ${trialDays}-day free trial has started, no card needed. Proofs is an add-on on the same account; you can add it any time.`,
-    business: "This goes on the files and proofs you send, and picks the file format your machine reads.",
+    products: `Digitizing is included — ${trialDays} days free, no card. Most shops add Proofs: it's how the file you just made gets approved and paid for before it's sewn.`,
+    business: "What customers see on the files and proofs you send.",
+    machine: "Pick every brand you run. This sets the file format you download and the hoops you'll see first.",
     hoops: draft.business.machineBrands.length > 0 ? "Pre-ticked from your machines. Untick any you don't have and add the rest — these show first everywhere." : "Tick the hoops you own — these show first everywhere.",
     threads: "The colours you actually stock. Imports match against your library instead of a generic palette.",
     defaults: "Where every new design starts. All of it can be changed per design.",
     proofs: `Proofs go out as ${draft.business.name || "your business"}${draft.business.phone ? ` · ${draft.business.phone}` : ""}. Three more things, then Proofs is ready to use.`,
+    tips: "Half a minute now saves a wasted hoop later. The full guide is always under Help.",
     done: "",
   };
 
@@ -244,7 +251,7 @@ export default function Onboarding(props: Props) {
           </div>
         </header>
 
-        <h2>{TITLES[step]}</h2>
+        <h2>{step === "tips" ? `${products.includes("proofs") ? "Four" : "Three"} things worth knowing` : TITLES[step]}</h2>
         {subtitle[step] && <p className="setup-sub">{subtitle[step]}</p>}
 
         <div className="setup-body" ref={bodyRef}>
@@ -271,51 +278,59 @@ export default function Onboarding(props: Props) {
           )}
 
           {step === "products" && (
-            <div className="choices two">
-              <Choice title="Just PiperStitch for now" subtitle="Turn artwork into stitch files and download them for your machine."
-                selected={!products.includes("proofs")} onClick={() => setWithProofs(false)} />
-              <Choice title="PiperStitch + Proofs" subtitle={`Also send customers a stitch-accurate proof to approve on their phone. First ${proofsFree} proofs free, then billed on the same card.`}
-                selected={products.includes("proofs")} onClick={() => setWithProofs(true)} />
+            <div className="stack">
+              <div className="workflow" aria-hidden="true">
+                <span className="wf-step"><b>1</b>Digitize the artwork</span><span className="wf-arrow">→</span>
+                <span className="wf-step proofs"><b>2</b>Send a proof</span><span className="wf-arrow">→</span>
+                <span className="wf-step proofs"><b>3</b>Customer approves on their phone</span><span className="wf-arrow">→</span>
+                <span className="wf-step"><b>4</b>Sew it, paid and signed off</span>
+              </div>
+              <div className="choices two">
+                <Choice title="PiperStitch + Proofs" subtitle={`Steps 1–4. A stitch-accurate proof your customer approves on their phone — with the thread colours, size and placement — plus reminders and a signed approval record. First ${proofsFree} proofs free, then billed on the same card.`}
+                  selected={products.includes("proofs")} onClick={() => setWithProofs(true)} />
+                <Choice title="Just PiperStitch for now" subtitle="Step 1 only: turn artwork into stitch files and download them. You can add Proofs any time from Settings."
+                  selected={!products.includes("proofs")} onClick={() => setWithProofs(false)} />
+              </div>
             </div>
           )}
 
           {step === "business" && (
-            <div className="stack form-grid">
-              <label className="field">Business name
-                <input value={draft.business.name} autoFocus placeholder="Piper's Custom Embroidery" onChange={(e) => setBusiness({ name: e.target.value })} />
-              </label>
+            <div className="stack">
               <div className="two-up">
+                <label className="field">Business name
+                  <input value={draft.business.name} autoFocus placeholder="Piper's Custom Embroidery" onChange={(e) => setBusiness({ name: e.target.value })} />
+                </label>
                 <label className="field">Your name
                   <input value={draft.business.contactName} placeholder="Shown on files you send" onChange={(e) => setBusiness({ contactName: e.target.value })} />
                 </label>
-                <label className="field"><span>Phone <span className="optional">optional</span></span>
-                  <input value={draft.business.phone} inputMode="tel" onChange={(e) => setBusiness({ phone: e.target.value })} />
-                </label>
-              </div>
-              <div className="two-up">
-                <label className="field"><span>Website <span className="optional">optional</span></span>
-                  <input value={draft.business.website} inputMode="url" placeholder="example.com" onChange={(e) => setBusiness({ website: e.target.value })} />
-                </label>
-                <label className="field"><span>City / region <span className="optional">optional</span></span>
-                  <input value={draft.business.city} onChange={(e) => setBusiness({ city: e.target.value })} />
-                </label>
               </div>
               <div>
-                <div className="section-label">What kind of business</div>
-                <div className="chip-row">
-                  {BUSINESS_TYPES.map((t) => <button key={t.id} type="button" className={"chip" + (draft.business.type === t.id ? " on" : "")} title={t.hint} onClick={() => setBusiness({ type: t.id })}>{t.name}</button>)}
+                <div className="section-label">Which sounds most like you?</div>
+                <div className="choices">
+                  {BUSINESS_TYPES.map((t) => <Choice key={t.id} title={t.name} subtitle={t.hint} selected={draft.business.type === t.id} onClick={() => setBusiness({ type: t.id })} />)}
                 </div>
               </div>
-              <div>
-                <div className="section-label">Your embroidery machine(s)</div>
-                <div className="chip-row">
-                  {MACHINE_BRANDS.map((m) => <button key={m.id} type="button" className={"chip" + (draft.business.machineBrands.includes(m.id) ? " on" : "")} onClick={() => toggleBrand(m.id)}>{m.name}</button>)}
+              {!moreContact ? (
+                <button type="button" className="btn ghost more" onClick={() => setMoreContact(true)}>Add phone, website or location — optional ▾</button>
+              ) : (
+                <div className="three-up">
+                  <label className="field">Phone<input value={draft.business.phone} inputMode="tel" onChange={(e) => setBusiness({ phone: e.target.value })} /></label>
+                  <label className="field">Website<input value={draft.business.website} inputMode="url" placeholder="example.com" onChange={(e) => setBusiness({ website: e.target.value })} /></label>
+                  <label className="field">City / region<input value={draft.business.city} onChange={(e) => setBusiness({ city: e.target.value })} /></label>
                 </div>
-                {draft.business.machineBrands.length > 0 && (
-                  <p className="hint">Files will download as <b>{EXPORT_FORMAT_LABELS[defaultFormat(draft.business.machineBrands)]}</b> by default — every other format stays one click away.</p>
-                )}
-                <input className="notes" value={draft.business.machineNotes} placeholder="Model(s), if you like — e.g. PR1055X, 15-needle" onChange={(e) => setBusiness({ machineNotes: e.target.value })} />
+              )}
+            </div>
+          )}
+
+          {step === "machine" && (
+            <div className="stack">
+              <div className="choices brands">
+                {MACHINE_BRANDS.map((m) => <Choice key={m.id} title={m.name} subtitle={m.formatLabel} selected={draft.business.machineBrands.includes(m.id)} onClick={() => toggleBrand(m.id)} />)}
               </div>
+              {draft.business.machineBrands.length > 0 && (
+                <p className="hint">Files will download as <b>{EXPORT_FORMAT_LABELS[defaultFormat(draft.business.machineBrands)]}</b> — every other format stays one click away.</p>
+              )}
+              <input className="notes" value={draft.business.machineNotes} placeholder="Model(s), if you like — e.g. PR1055X, 15-needle (optional)" onChange={(e) => setBusiness({ machineNotes: e.target.value })} />
             </div>
           )}
 
@@ -410,37 +425,36 @@ export default function Onboarding(props: Props) {
             </div>
           )}
 
+          {step === "tips" && (
+            <div className={"tip-cards" + (products.includes("proofs") ? " four" : "")}>
+              {headlineTips(products.includes("proofs")).map((t, i) => (
+                <div key={t.title} className="tip-card">
+                  <span className="tip-num">{i + 1}</span>
+                  <b>{t.title}</b>
+                  <p>{t.short}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
           {step === "done" && (
             <div className="stack done">
               <div className="celebrate" aria-hidden="true">
                 {CONFETTI.map((c, i) => <span key={i} className="confetti" style={{ left: c.left, animationDelay: c.delay, animationDuration: c.duration, background: c.color, width: c.size, height: c.size * 0.6, transform: `rotate(${c.rotate})` }} />)}
               </div>
-              <div className="done-hero">
-                <img src="/icon.png" alt="" width={84} height={84} className="done-piper" />
+              <div className="done-hero tall">
+                <img src="/icon.png" alt="" width={110} height={110} className="done-piper" />
                 <h2 className="done-title">Congratulations{account?.name ? `, ${account.name.split(" ")[0]}` : ""} — you're ready to digitize!</h2>
                 <p className="setup-sub">PiperStitch{products.includes("proofs") ? " and Proofs are" : " is"} set up for {draft.business.name || "your business"}. Drop in your first logo and it'll be stitch-ready in under a minute.</p>
+                <p className="hint">Everything you chose lives under <b>Settings</b>; the guide is under <b>Help</b>.</p>
               </div>
-              <dl className="done-grid">
-                {draft.business.machineBrands.length > 0 && <><dt>Downloads</dt><dd><b>{EXPORT_FORMAT_LABELS[draft.defaultExportFormat]}</b>, other formats one click away</dd></>}
-                <dt>Hoops</dt><dd>{draft.ownedHoopNames.length > 0 ? <><b>{draft.ownedHoopNames.length}</b> listed first · default <b>{draft.defaultHoopName}</b></> : "standard sizes"}</dd>
-                <dt>Threads</dt><dd>{draft.threadLibrary.length > 0 ? <><b>{draft.threadLibrary.length} colours</b> — imports match against them</> : "built-in palette until you add your own"}</dd>
-                <dt>Defaults</dt><dd><b>{catalog.fabrics.find((f) => f.id === draft.defaultFabric)?.displayName ?? draft.defaultFabric}</b> · sizes in <b>{draft.units === "in" ? "inches" : "centimetres"}</b></dd>
-                {products.includes("proofs") && <><dt>Proofs</dt><dd>from <b>{draft.business.name || "your business"}</b>, {draft.proofsDefaults.responseWindowDays} days to respond{draft.proofsDefaults.remindersEnabled ? ", chased automatically" : ""}</dd></>}
-              </dl>
-              <div className="done-extras">
-                <div className="section-label">Three things worth knowing before your first design</div>
-                <ol className="tips">
-                  {headlineTips(products.includes("proofs")).map((t) => <li key={t.title}><b>{t.title}.</b> {t.body}</li>)}
-                </ol>
-              </div>
-              <p className="hint">Change any of this under <b>Settings</b>; the full guide is under <b>Help</b>. <a href="https://www.piperstitch.com/download.html" target="_blank" rel="noopener">The Mac app</a> runs the same engine on your desktop, offline.</p>
             </div>
           )}
           {error && <div className="error-text">{error}</div>}
         </div>
 
         <footer className="setup-foot">
-          {step !== "done" && step !== "account" && <button className="btn ghost" onClick={props.rerun && props.onCancel ? props.onCancel : skipAll} disabled={saving}>{props.rerun ? "Cancel" : "Skip setup"}</button>}
+          {step !== "done" && step !== "account" && step !== "tips" && <button className="btn ghost" onClick={props.rerun && props.onCancel ? props.onCancel : skipAll} disabled={saving}>{props.rerun ? "Cancel" : "Skip setup"}</button>}
           {step === "account" && <button className="btn ghost" onClick={props.onSignInInstead} disabled={saving}>Already a member? Sign in</button>}
           <div className="grow" />
           {stepIndex > 0 && step !== "done" && steps[stepIndex - 1] !== "account" && <button className="btn ghost" onClick={goBack} disabled={saving}>Back</button>}
@@ -455,7 +469,7 @@ export default function Onboarding(props: Props) {
               ? <button className="btn primary" onClick={() => verifyCode()} disabled={saving || code.length !== 6}>{saving ? "Checking…" : jumpAfterSignUp ? "Start digitizing →" : "Continue"}</button>
               : <button className="btn primary" onClick={requestCode} disabled={saving || !email.includes("@")}>{saving ? "Sending…" : "Email me a code"}</button>
           ) : (
-            <button className="btn primary" onClick={goNext} disabled={saving}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Finish" : "Next"}</button>
+            <button className="btn primary" onClick={goNext} disabled={saving}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Got it" : "Next"}</button>
           )}
         </footer>
       </div>

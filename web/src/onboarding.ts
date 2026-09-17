@@ -62,16 +62,16 @@ export const BUSINESS_TYPES: { id: string; name: string; hint: string }[] = [
   { id: "team", name: "Uniforms & team wear", hint: "schools, clubs, corporate" },
 ];
 
-export type StepId = "account" | "products" | "business" | "hoops" | "threads" | "defaults" | "proofs" | "done";
+export type StepId = "account" | "products" | "business" | "machine" | "hoops" | "threads" | "defaults" | "proofs" | "tips" | "done";
 
 /** Rough reading-and-clicking time per step, in minutes, for the estimate. */
-const STEP_MINUTES: Record<StepId, number> = { account: 1, products: 0.5, business: 1.5, hoops: 1, threads: 1.5, defaults: 0.5, proofs: 1, done: 0 };
+const STEP_MINUTES: Record<StepId, number> = { account: 1, products: 0.5, business: 1, machine: 0.5, hoops: 1, threads: 1.5, defaults: 0.5, proofs: 1, tips: 0.5, done: 0 };
 
 export function stepsFor(products: Product[], needsAccount = false): StepId[] {
-  const steps: StepId[] = needsAccount ? ["account", "products", "business"] : ["products", "business"];
+  const steps: StepId[] = needsAccount ? ["account", "products", "business", "machine"] : ["products", "business", "machine"];
   if (products.includes("core")) steps.push("hoops", "threads", "defaults");
   if (products.includes("proofs")) steps.push("proofs");
-  steps.push("done");
+  steps.push("tips", "done");
   return steps;
 }
 

@@ -28,8 +28,9 @@ export interface InspectorProps {
   hasSource: boolean;
   matchToThreadLibrary: boolean;
   allowExtendedDensity: boolean;
-  /** Hoops the business owns (guided setup), listed first in the picker. */
+  /** Hoops the business owns (guided setup): the picker shows only these. */
   ownedHoopNames?: string[];
+  onEditHoops?: () => void;
   globalSatinDensityMM: number;
   globalFillSpacingMM: number;
   onObject: (id: string, update: (o: EmbroideryObject) => EmbroideryObject) => void;
@@ -69,7 +70,7 @@ export default function Inspector(p: InspectorProps) {
       <DensitySection p={p} />
       <section className="panel">
         <h3>Hoop</h3>
-        <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} withSizes ownedNames={p.ownedHoopNames} />
+        <HoopSelect hoops={catalog.hoops} value={p.hoop} onChange={p.onHoop} withSizes ownedNames={p.ownedHoopNames} onEditHoops={p.onEditHoops} />
         <label className="check" title="The file begins with the needle at the centre of the design and returns there at the end, so you can line up on the hoop's centre mark before pressing start. Cap frames register on the centre, so it's on for caps.">
           <input type="checkbox" checked={!!doc.startAndEndAtCenter} onChange={(e) => p.onStartAtCenter(e.target.checked)} /> Start and end at hoop centre
         </label>
