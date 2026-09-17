@@ -68,9 +68,13 @@ def test_unsubscribe_and_admin_send_now(isolated_db, test_keypair, fake_smtp):
 def test_winback_after_three_quiet_weeks(isolated_db, test_keypair, fake_smtp):
     cid = db.upsert_customer(name="Quiet Q", email="quiet@example.com")
     subscriptions.sync_from_stripe(stripe_subscription(customer_id=cid, email="quiet@example.com"))
+    # Relative to the real clock: the delivery's sent_at is stamped with
+    # real time, so a fixed date here started failing the day the calendar
+    # passed it (the cooldown compared a real September send against a
+    # simulated November).
+    now = datetime.now(timezone.utc)
     with db.connection() as c:
-        c.execute("UPDATE customers SET last_active_at = ? WHERE id = ?", ("2026-08-01T00:00:00Z", cid))
-    now = datetime(2026, 9, 13, tzinfo=timezone.utc)
+        c.execute("UPDATE customers SET last_active_at = ? WHERE id = ?", ((now - timedelta(days=40)).isoformat(timespec="seconds").replace("+00:00", "Z"), cid))
     assert emails.winback_check(now=now) == 1
     fake_smtp.sent.clear()
     assert emails.process_due(now=now) >= 1
@@ -128,3 +132,86 @@ def test_backfill_enrols_existing_customers_without_a_burst(isolated_db, test_ke
     import pytest as _p
     TestClient(app).get(f"/unsubscribe?c={cid}&t={emails.unsubscribe_token(cid)}")
     assert all(d["status"] == "skipped" for d in db.list_deliveries_for_customer(cid))
+
+
+def _web_sign_in(fake_smtp, email):
+    import re
+    web_access.request_code(email=email)
+    code = re.search(r"(\d{6})", fake_smtp.sent[-1]["Subject"]).group(1)
+    return web_access.verify_code(email=email, code=code)
+
+
+def _deliveries(cid, key):
+    return [d for d in db.list_deliveries_for_customer(cid) if d["sequence_key"] == key]
+
+
+def test_proofs_series_follow_what_the_customer_has_and_does(isolated_db, test_keypair, fake_smtp):
+    """Core only -> Meet Proofs after a few days; a first proof moves them
+    to Trying Proofs; the last included proof sends the used-up note;
+    subscribing to Proofs moves them to the three-weekly subscriber
+    series; Proofs ending stops it."""
+    session = _web_sign_in(fake_smtp, "core-only@example.com")
+    cid = session.customer_id
+    now = datetime.now(timezone.utc)
+    # Day 1: too early for the intro.
+    assert emails.proofs_sequences_check(now=now + timedelta(days=1)) == 0
+    # Day 4: in.
+    assert emails.proofs_sequences_check(now=now + timedelta(days=4)) == 1
+    assert [d["delay_days"] for d in _deliveries(cid, "proofs_intro")] == [0, 5, 12, 24]
+    assert emails.proofs_sequences_check(now=now + timedelta(days=5)) == 0, "enrolled once"
+    # A first proof: intro pending emails skipped, trying-Proofs series starts.
+    fake_smtp.sent.clear()
+    subscriptions.record_proof_use(cid, "PS-1")
+    assert all(d["status"] == "skipped" for d in _deliveries(cid, "proofs_intro"))
+    assert [d["delay_days"] for d in _deliveries(cid, "proofs_trial")] == [0, 3, 7, 11, 13]
+    assert not any("last included proof" in m["Subject"] for m in fake_smtp.sent)
+    subscriptions.record_proof_use(cid, "PS-2")
+    subscriptions.record_proof_use(cid, "PS-3")
+    assert any("last included proof" in m["Subject"] for m in fake_smtp.sent), "the third (last) free proof sends the used-up note"
+    # Subscribing to Proofs: trial series skipped, subscriber series every three weeks.
+    sub = stripe_subscription(sub_id="sub_p", customer="cus_p", customer_id=cid, email="core-only@example.com", amount=2400)
+    sub["metadata"]["product"] = "proofs"
+    subscriptions.sync_from_stripe(sub)
+    assert all(d["status"] == "skipped" for d in _deliveries(cid, "proofs_trial"))
+    assert [d["delay_days"] for d in _deliveries(cid, "proofs_subscriber")] == [2, 23, 44, 65, 86, 107]
+    assert emails.proofs_sequences_check(now=now + timedelta(days=6)) == 0, "already placed"
+    # Proofs ends: the subscriber series stops, and nothing else starts (they've done the trial series).
+    sub["status"] = "canceled"
+    subscriptions.sync_from_stripe(sub)
+    assert all(d["status"] in ("skipped", "sent") for d in _deliveries(cid, "proofs_subscriber"))
+    assert emails.proofs_sequences_check(now=now + timedelta(days=7)) == 0
+
+
+def test_choosing_proofs_in_the_guided_setup_starts_the_trying_series(isolated_db, test_keypair, fake_smtp):
+    session = _web_sign_in(fake_smtp, "both@example.com")
+    cid = session.customer_id
+    web_access.save_preferences(token=session.token, preferences={"onboarding": {"version": 1, "completedAt": "2026-09-17T00:00:00Z", "products": ["core", "proofs"]}})
+    assert [d["delay_days"] for d in _deliveries(cid, "proofs_trial")] == [0, 3, 7, 11, 13]
+    assert _deliveries(cid, "proofs_intro") == []
+    # The daily check leaves them alone.
+    assert emails.proofs_sequences_check(now=datetime.now(timezone.utc) + timedelta(days=5)) == 0
+    # The last-day email talks about both products.
+    fake_smtp.sent.clear()
+    assert emails.process_due(now=datetime.now(timezone.utc) + timedelta(days=13, minutes=1)) >= 1
+    last = [m for m in fake_smtp.sent if "Last day" in m["Subject"]][0]
+    assert "Proofs" in last.get_body(preferencelist=("plain",)).get_content()
+
+
+def test_lapsed_trial_and_cancelled_subscriber_follow_ups(isolated_db, test_keypair, fake_smtp):
+    session = _web_sign_in(fake_smtp, "lapsed@example.com")
+    cid = session.customer_id
+    now = datetime.now(timezone.utc)
+    assert emails.lapsed_check(now=now + timedelta(days=15)) == 0, "trial still has a day to go"
+    assert emails.lapsed_check(now=now + timedelta(days=17)) == 1
+    assert [d["delay_days"] for d in _deliveries(cid, "lapsed")] == [2, 30]
+    assert emails.lapsed_check(now=now + timedelta(days=18)) == 0
+    # Subscribing skips the rest; cancelling starts the cancelled series; reversing stops it.
+    sub = stripe_subscription(sub_id="sub_l", customer="cus_l", customer_id=cid, email="lapsed@example.com")
+    subscriptions.sync_from_stripe(sub)
+    assert all(d["status"] == "skipped" for d in _deliveries(cid, "lapsed"))
+    sub["cancel_at_period_end"] = True
+    subscriptions.sync_from_stripe(sub)
+    assert [d["delay_days"] for d in _deliveries(cid, "cancelled")] == [1, 45]
+    sub["cancel_at_period_end"] = False
+    subscriptions.sync_from_stripe(sub)
+    assert all(d["status"] == "skipped" for d in _deliveries(cid, "cancelled"))

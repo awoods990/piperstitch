@@ -75,6 +75,16 @@ def _amount_from_stripe(sub: dict) -> Optional[int]:
     return price.get("unit_amount")
 
 
+def _try_sequences(fn, *args) -> None:
+    """Sequence bookkeeping is best-effort for the same reason email is:
+    a webhook or a proof send must succeed even if the drip tables are
+    unhappy."""
+    try:
+        fn(*args)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Sequence update failed (%s): %s", getattr(fn, "__name__", fn), e)
+
+
 def _try_email(send, **kwargs) -> Optional[str]:
     """Email is best-effort everywhere in this module: a Stripe webhook
     must be acknowledged even if SMTP is down, and the subscription
@@ -171,10 +181,14 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
         promotions.attribute_subscription(sub, subscription_id=subscription_id, customer_id=customer_id)
         if status in db.ENTITLED_STATUSES and product == "proofs":
             _try_email(email_sender.send_proofs_welcome_email, to_email=customer["email"], customer_name=customer["name"])
+            _try_sequences(emails.place_in_proofs_sequence, customer_id)
         elif status in db.ENTITLED_STATUSES:
             _try_email(email_sender.send_welcome_email, to_email=customer["email"], customer_name=customer["name"])
             emails.skip_pending(customer_id, "trial", "subscribed")
+            emails.skip_pending(customer_id, "lapsed", "subscribed")
+            emails.skip_pending(customer_id, "cancelled", "resubscribed")
             emails.enroll(customer_id, "subscriber")
+            _try_sequences(emails.place_in_proofs_sequence, customer_id)
     else:
         if period_end and previous["current_period_end"] and period_end > previous["current_period_end"] and status in ("active", "trialing"):
             kinds.append("renewed")
@@ -186,6 +200,7 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
                 db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="ended", detail="Access ended.", stripe_event_id=stripe_event_id)
                 if product == "core":
                     emails.skip_pending(customer_id, "subscriber", "subscription ended")
+                _try_sequences(emails.place_in_proofs_sequence, customer_id)
         now_cancelling = bool(sub.get("cancel_at_period_end"))
         if now_cancelling != bool(previous["cancel_at_period_end"]):
             if now_cancelling:
@@ -193,9 +208,13 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
                 ends_on = (period_end or "")[:10]
                 db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="cancel_scheduled", detail=f"Will end on {ends_on}.", stripe_event_id=stripe_event_id)
                 _try_email(email_sender.send_cancellation_scheduled_email, to_email=customer["email"], customer_name=customer["name"], ends_on=ends_on, account_url=f"{config.PUBLIC_BASE_URL}/account")
+                if product == "core":
+                    _try_sequences(emails.enroll, customer_id, "cancelled")
             else:
                 kinds.append("cancel_unscheduled")
                 db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="cancel_unscheduled", detail="Cancellation reversed — subscription continues.", stripe_event_id=stripe_event_id)
+                if product == "core":
+                    emails.skip_pending(customer_id, "cancelled", "cancellation reversed")
 
     return SyncResult(subscription_id=subscription_id, customer_id=customer_id, created=previous is None, kinds=tuple(kinds))
 
@@ -442,4 +461,14 @@ def record_proof_use(customer_id: int, proof_ref: str) -> ProofsState:
             raise ActivationError("proofs_exhausted", f"All {state.free_granted} free proofs have been used -- subscribe to PiperStitch Proofs to keep sending.")
         if db.record_proof_use(customer_id, proof_ref):
             db.add_event(customer_id=customer_id, subscription_id=None, kind="proof_sent", detail=f"Free proof {state.free_used + 1} of {state.free_granted} sent (Proofs).")
+            # A first proof moves them from "meet Proofs" to "trying Proofs";
+            # the last included one gets the used-up note.
+            _try_sequences(emails.place_in_proofs_sequence, customer_id)
+            if state.free_used + 1 >= state.free_granted:
+                customer = db.get_customer(customer_id)
+                _try_email(_send_free_used_up, customer=customer)
     return proofs_state(customer_id)
+
+
+def _send_free_used_up(*, customer) -> None:
+    emails.send_system("proofs_free_used_up", to_email=customer["email"], customer_id=customer["id"], vars=emails.variables(customer))

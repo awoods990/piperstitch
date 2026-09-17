@@ -23,7 +23,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
+import logging
+
 from . import config, db, email_sender, emails, promotions, stripe_client, subscriptions
+
+log = logging.getLogger("license_admin")
 from .activation import MAX_CODES_PER_HOUR, MAX_VERIFY_ATTEMPTS, ActivationError
 
 # activation_codes rows are keyed by (email, device_id); every browser
@@ -339,7 +343,15 @@ def save_preferences(*, token: str, preferences: dict) -> dict:
     encoded = json.dumps(preferences, separators=(",", ":"))
     if len(encoded) > MAX_PREFERENCES_BYTES:
         raise ActivationError("preferences_too_large", "Those preferences are too large to save.")
-    return {"updated_at": db.save_preferences(session["customer_id"], encoded)}
+    updated_at = db.save_preferences(session["customer_id"], encoded)
+    # Finishing the guided setup says which products they chose, which
+    # decides their Proofs email series.
+    if isinstance(preferences.get("onboarding"), dict) and preferences["onboarding"].get("completedAt"):
+        try:
+            emails.place_in_proofs_sequence(session["customer_id"])
+        except Exception as e:  # noqa: BLE001 - never fail a save over the drip
+            log.exception("Proofs sequence placement failed: %s", e)
+    return {"updated_at": updated_at}
 
 
 def save_project(*, token: str, project_id: str, name: str, document: dict) -> dict:
