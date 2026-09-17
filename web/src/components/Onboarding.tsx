@@ -44,8 +44,16 @@ const TITLES: Record<StepId, string> = {
   threads: "Your thread library",
   defaults: "How you like to work",
   proofs: "Sending proofs to customers",
-  done: "You're all set",
+  done: "",
 };
+
+/** Forty pieces of CSS confetti, positions and timing fixed so the screen
+ *  renders the same every time; the animation itself runs once. */
+const CONFETTI = Array.from({ length: 40 }, (_, i) => {
+  const r = (n: number) => ((Math.sin(i * 12.9898 + n * 78.233) * 43758.5453) % 1 + 1) % 1;
+  const colors = ["#1a6fd1", "#c0722a", "#2f6b41", "#e0b13b", "#a3312a", "#3b8ee6"];
+  return { left: `${r(1) * 100}%`, delay: `${r(2) * 1.2}s`, duration: `${2.2 + r(3) * 1.6}s`, color: colors[i % colors.length], rotate: `${r(4) * 360}deg`, size: 6 + Math.round(r(5) * 6) };
+});
 
 export default function Onboarding(props: Props) {
   const { account, catalog, prefs } = props;
@@ -316,22 +324,28 @@ export default function Onboarding(props: Props) {
 
           {step === "done" && (
             <div className="stack done">
+              <div className="celebrate" aria-hidden="true">
+                {CONFETTI.map((c, i) => <span key={i} className="confetti" style={{ left: c.left, animationDelay: c.delay, animationDuration: c.duration, background: c.color, width: c.size, height: c.size * 0.6, transform: `rotate(${c.rotate})` }} />)}
+              </div>
+              <div className="done-hero">
+                <img src="/icon.png" alt="" width={84} height={84} className="done-piper" />
+                <h2 className="done-title">Congratulations{account?.name ? `, ${account.name.split(" ")[0]}` : ""} — you're ready to digitize!</h2>
+                <p className="setup-sub">PiperStitch{products.includes("proofs") ? " and Proofs are" : " is"} set up for {draft.business.name || "your business"}. Drop in your first logo and it'll be stitch-ready in under a minute.</p>
+              </div>
               <dl className="done-grid">
-                {draft.business.name && <><dt>Business</dt><dd><b>{draft.business.name}</b> — on every file and proof you send</dd></>}
                 {draft.business.machineBrands.length > 0 && <><dt>Downloads</dt><dd><b>{EXPORT_FORMAT_LABELS[draft.defaultExportFormat]}</b>, other formats one click away</dd></>}
-                {products.includes("core") && <><dt>Hoops</dt><dd>{draft.ownedHoopNames.length > 0 ? <><b>{draft.ownedHoopNames.length}</b> listed first · default <b>{draft.defaultHoopName}</b></> : "standard sizes"}</dd></>}
-                {products.includes("core") && <><dt>Threads</dt><dd>{draft.threadLibrary.length > 0 ? <><b>{draft.threadLibrary.length} colours</b> — imports match against them</> : "built-in palette until you add your own"}</dd></>}
-                {products.includes("core") && <><dt>Defaults</dt><dd><b>{catalog.fabrics.find((f) => f.id === draft.defaultFabric)?.displayName ?? draft.defaultFabric}</b> · sizes in <b>{draft.units === "in" ? "inches" : "centimetres"}</b></dd></>}
-                {products.includes("proofs") && <><dt>Proofs</dt><dd>set up too — from <b>{draft.business.name || "your business"}</b>, {draft.proofsDefaults.responseWindowDays} days to respond{draft.proofsDefaults.remindersEnabled ? ", chased automatically" : ""}</dd></>}
+                <dt>Hoops</dt><dd>{draft.ownedHoopNames.length > 0 ? <><b>{draft.ownedHoopNames.length}</b> listed first · default <b>{draft.defaultHoopName}</b></> : "standard sizes"}</dd>
+                <dt>Threads</dt><dd>{draft.threadLibrary.length > 0 ? <><b>{draft.threadLibrary.length} colours</b> — imports match against them</> : "built-in palette until you add your own"}</dd>
+                <dt>Defaults</dt><dd><b>{catalog.fabrics.find((f) => f.id === draft.defaultFabric)?.displayName ?? draft.defaultFabric}</b> · sizes in <b>{draft.units === "in" ? "inches" : "centimetres"}</b></dd>
+                {products.includes("proofs") && <><dt>Proofs</dt><dd>from <b>{draft.business.name || "your business"}</b>, {draft.proofsDefaults.responseWindowDays} days to respond{draft.proofsDefaults.remindersEnabled ? ", chased automatically" : ""}</dd></>}
               </dl>
-              <p className="hint">Change any of this under <b>Settings</b>, or run this setup again from there.</p>
               <div className="done-extras">
-                <div className="section-label">Before your first design — worth thirty seconds</div>
+                <div className="section-label">Three things worth knowing before your first design</div>
                 <ol className="tips">
                   {headlineTips(products.includes("proofs")).map((t) => <li key={t.title}><b>{t.title}.</b> {t.body}</li>)}
                 </ol>
               </div>
-              <p className="hint">The full guide is under <b>Help</b> · <a href="https://www.piperstitch.com/download.html" target="_blank" rel="noopener">the Mac app</a> runs the same engine on your desktop, offline.</p>
+              <p className="hint">Change any of this under <b>Settings</b>; the full guide is under <b>Help</b>. <a href="https://www.piperstitch.com/download.html" target="_blank" rel="noopener">The Mac app</a> runs the same engine on your desktop, offline.</p>
             </div>
           )}
           {error && <div className="error-text">{error}</div>}
@@ -345,7 +359,7 @@ export default function Onboarding(props: Props) {
           {step === "done" ? (
             <>
               {products.includes("proofs") && <button className="btn" onClick={() => api.proofsHandoffURL().then((u) => window.location.assign(u)).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>Open Proofs ↗</button>}
-              <button className="btn primary" onClick={() => props.onDone(products)}>{products.includes("core") ? "Start a design" : "Open PiperStitch"}</button>
+              <button className="btn primary big" onClick={() => props.onDone(products)}>Start digitizing →</button>
             </>
           ) : (
             <button className="btn primary" onClick={goNext} disabled={saving}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Finish" : "Next"}</button>

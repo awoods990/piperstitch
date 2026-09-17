@@ -75,6 +75,10 @@ export default function App() {
   // account's own copy of the preferences has arrived.
   const [prefsPulled, setPrefsPulled] = useState(false);
   const [rerunOnboarding, setRerunOnboarding] = useState<false | "settings" | "link">(false);
+  // Once the first-run flow is on screen it stays until it says it's done:
+  // finishing the last step records the setup, which would otherwise
+  // satisfy the "needs onboarding" test and unmount the finish screen.
+  const [firstRunActive, setFirstRunActive] = useState(false);
   useEffect(() => { setDisplayUnits(prefs.units); }, [prefs.units]);
   const setPrefs = (p: Preferences) => {
     setPrefsState(p); savePrefs(p);
@@ -528,14 +532,14 @@ export default function App() {
   );
 
   const needsOnboarding = me.authEnabled && !!me.account && prefsPulled && prefs.onboarding === null && phase === "start" && !returnTo;
-  if (rerunOnboarding || needsOnboarding) {
+  if (needsOnboarding && !firstRunActive) setFirstRunActive(true);
+  if (rerunOnboarding || firstRunActive) {
+    const leave = () => { setRerunOnboarding(false); setFirstRunActive(false); setSheet(null); };
     return (
       <>
         {error && <div className="error-bar floating">{error}</div>}
         <Onboarding account={me.account ?? null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} rerun={rerunOnboarding === "settings"}
-          onCancel={() => setRerunOnboarding(false)}
-          onSkip={() => setRerunOnboarding(false)}
-          onDone={() => { setRerunOnboarding(false); setSheet(null); }} />
+          onCancel={leave} onSkip={leave} onDone={leave} />
       </>
     );
   }

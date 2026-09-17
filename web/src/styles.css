@@ -480,3 +480,21 @@ a.choice { text-decoration: none; }
 .done-grid b { color: var(--navy800); }
 .done .hint a { color: var(--blue500); }
 @media (max-width: 760px) { .done-grid { grid-template-columns: 1fr; gap: 2px; } .done-grid dt { margin-top: 6px; } }
+
+/* --- finish screen celebration --- */
+.onboarding .setup-card { position: relative; overflow: hidden; }
+.celebrate { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
+.confetti { position: absolute; top: -12px; border-radius: 2px; opacity: 0; animation: confetti-fall linear forwards; }
+@keyframes confetti-fall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+}
+.done { position: relative; z-index: 1; }
+.done-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 4px; }
+.done-piper { border-radius: 20px; animation: piper-pop .6s cubic-bezier(.2,1.4,.4,1) both; }
+@keyframes piper-pop { 0% { transform: scale(.4) rotate(-12deg); opacity: 0; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
+.done-title { font-size: 24px; margin: 0; }
+.done-hero .setup-sub { max-width: 520px; }
+.btn.big { padding: 11px 22px; font-size: 15px; }
+@media (prefers-reduced-motion: reduce) { .confetti, .done-piper { animation: none; } .confetti { display: none; } }
