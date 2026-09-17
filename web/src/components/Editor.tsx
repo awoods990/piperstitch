@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CatalogSize, DigitizeResponse, FabricType, StitchDocument } from "../types";
 import type { Preferences } from "../prefs";
 import { rgbHex, hexRGB } from "../prefs";
@@ -29,6 +29,8 @@ export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "
   /** A Proofs subscription or free proofs left: offer "Send to Proofs". */
   canSendToProofs?: boolean;
   onSendToProofs?: () => void;
+  /** Rename the project; the name is what Save, Download and Send to Proofs use. */
+  onRename: (name: string) => void;
   onTool: (t: Tool) => void;
   onPrefs: (p: Preferences) => void;
   onSelect: (ids: string[], additive: boolean) => void;
@@ -66,7 +68,7 @@ export default function Editor(p: EditorProps) {
     <div className="editor">
       <header className="topbar">
         <div className="brand"><img src="/icon.png" alt="" width={26} height={26} /><span>PiperStitch</span></div>
-        <div className="doc-name" title={doc.name}>{doc.name}</div>
+        <DocName name={doc.name} onRename={p.onRename} />
         <div className="grow" />
         {p.busy && <span className="busy-pill"><span className="spinner small" />{p.busy}</span>}
         {p.accountMenu}
@@ -163,5 +165,34 @@ export default function Editor(p: EditorProps) {
         )}
       </div>
     </div>
+  );
+}
+
+/** The project name in the top bar: the imported file's name until the
+ *  user clicks it and types their own. Enter or clicking away keeps the
+ *  new name, Escape puts the old one back, and an empty name is ignored. */
+function DocName(props: { name: string; onRename: (name: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(props.name);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (!editing) setDraft(props.name); }, [props.name, editing]);
+  useEffect(() => { if (editing) { input.current?.focus(); input.current?.select(); } }, [editing]);
+  const finish = (keep: boolean) => {
+    setEditing(false);
+    const name = draft.trim();
+    if (keep && name && name !== props.name) props.onRename(name);
+  };
+  if (!editing) {
+    return (
+      <button type="button" className="doc-name editable" title="Click to rename this project" onClick={() => setEditing(true)}>
+        {props.name}<span className="doc-name-pen" aria-hidden="true">✎</span>
+      </button>
+    );
+  }
+  return (
+    <input ref={input} className="doc-name-input" value={draft} maxLength={120} aria-label="Project name"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => { if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); }} />
   );
 }

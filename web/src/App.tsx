@@ -206,6 +206,15 @@ export default function App() {
     digitizeTimer.current = window.setTimeout(() => digitizeNow(doc, hoop), 250);
   }, [digitizeNow]);
 
+  /** Renaming changes nothing about the stitches, so no undo entry and no
+   *  re-digitize -- just the name, and the project is unsaved again. */
+  const onRename = (name: string) => {
+    if (!document || name === document.name) return;
+    setDocument({ ...document, name });
+    setSavedAt(null);
+    setStatus(`Renamed to ${name}.`);
+  };
+
   /** Every edit goes through here: snapshot for undo, apply, re-digitize. */
   const commit = (next: StitchDocument, opts: { select?: string[]; status?: string; undoable?: boolean } = {}) => {
     if (document && opts.undoable !== false) setUndoStack((s) => [...s.slice(-(MAX_UNDO - 1)), { document, selectedIDs: [...selectedIDs] }]);
@@ -626,7 +635,7 @@ export default function App() {
           onTool={setTool} onPrefs={setPrefs} onSelect={onSelect} onTranslate={onTranslate} onScale={onScale} onStroke={onStroke}
           onObject={onObject} onDeleteSelected={onDeleteSelected} onMergeShapes={onMergeShapes} onResize={onResize} onHoop={onHoop} onFabric={onFabric}
           onColorPreset={onColorPreset} onMatchLibrary={onMatchLibrary} onExtendedDensity={(on) => setPrefs({ ...prefs, allowExtendedDensity: on })}
-          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onLaydown={onLaydown} onThreadWeight={onThreadWeight} onAddOutlines={onAddOutlines} onAddBorder={onAddBorder} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject}
+          onGlobalSatinDensity={onGlobalSatin} onGlobalFillSpacing={onGlobalFill} onTargetStitchCount={onTargetStitchCount} onStartAtCenter={onStartAtCenter} onLaydown={onLaydown} onThreadWeight={onThreadWeight} onAddOutlines={onAddOutlines} onAddBorder={onAddBorder} onUndo={onUndo} onNew={onNew} onRedo={onRedo} onSave={onSaveProject} onRename={onRename}
           onExport={onExport} onOpenSheet={setSheet} onSendFeedback={onOpenFeedback} onOpenProjects={onOpenProjectsSheet} />
         {sheets}
       </>

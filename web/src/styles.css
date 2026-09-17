@@ -123,6 +123,11 @@ button, input, select { font: inherit; color: inherit; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--navy800); }
 .brand img { border-radius: 7px; }
 .doc-name { color: var(--muted); max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-name.editable { border: 1px solid transparent; background: none; font: inherit; padding: 3px 8px; border-radius: 8px; cursor: text; }
+.doc-name.editable:hover { border-color: var(--line); color: var(--navy800); background: var(--panel); }
+.doc-name-pen { margin-left: 6px; font-size: 12px; opacity: 0; transition: opacity .15s; }
+.doc-name.editable:hover .doc-name-pen { opacity: .7; }
+.doc-name-input { font: inherit; color: var(--navy800); padding: 3px 8px; border: 1px solid var(--blue200); border-radius: 8px; background: var(--panel); min-width: 200px; max-width: 40vw; outline: none; }
 .busy-pill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 999px; background: #eef4fc; color: var(--navy700); font-size: 12px; }
 .error-bar { background: var(--critBG); color: var(--critText); padding: 8px 14px; border-bottom: 1px solid #f1c9c4; }
 .error-bar.floating { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); border-radius: 8px; border: 1px solid #f1c9c4; z-index: 5; }
