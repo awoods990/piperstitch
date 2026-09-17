@@ -82,6 +82,9 @@ export default function App() {
   // "Start free trial" while signed out: the account gets created inside
   // guided setup rather than on a separate sign-in page.
   const [signUpMode, setSignUpMode] = useState(false);
+  // From the sign-up email's link (?trial=1&email=&code=): the setup opens
+  // on its code step with both filled in, and verifies on its own.
+  const [signUpLink, setSignUpLink] = useState<{ email: string; code: string } | null>(null);
   useEffect(() => { setDisplayUnits(prefs.units); }, [prefs.units]);
   const setPrefs = (p: Preferences) => {
     setPrefsState(p); savePrefs(p);
@@ -114,8 +117,10 @@ export default function App() {
     // ?trial=1 (every "Start free trial" button on the site): guided setup
     // opens at once, creating the account as its first step if needed.
     if (params.get("trial") !== null) {
-      params.delete("trial");
+      const linkEmail = params.get("email")?.trim() ?? "", linkCode = params.get("code")?.trim() ?? "";
+      params.delete("trial"); params.delete("email"); params.delete("code");
       window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+      if (linkEmail && linkCode) setSignUpLink({ email: linkEmail, code: linkCode });
       setSignUpMode(true);
       setRerunOnboarding("link");
     }
@@ -162,7 +167,7 @@ export default function App() {
   /** Account creation from inside guided setup: signed in and preferences
    *  pulled before this resolves, so the flow can re-seed from them. */
   const signUp = {
-    requestCode: async (email: string) => { await api.requestCode(email); },
+    requestCode: async (email: string) => { await api.requestCode(email, "trial"); },
     verifyCode: async (email: string, code: string) => {
       const m = await api.verifyCode(email, code);
       if (!m.account) throw new Error("Couldn't sign in.");
@@ -521,7 +526,7 @@ export default function App() {
     return (
       <>
         {error && <div className="error-bar floating">{error}</div>}
-        <Onboarding account={null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} signUp={signUp}
+        <Onboarding account={null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} signUp={signUp} signUpLink={signUpLink}
           onSignInInstead={() => { setSignUpMode(false); setRerunOnboarding(false); }}
           onCancel={() => { setSignUpMode(false); setRerunOnboarding(false); }}
           onSkip={() => { setSignUpMode(false); setRerunOnboarding(false); setFirstRunActive(false); }}
@@ -583,7 +588,7 @@ export default function App() {
       <>
         {error && <div className="error-bar floating">{error}</div>}
         <Onboarding account={me.account ?? null} catalog={catalog} prefs={prefs} onPrefs={setPrefs} rerun={rerunOnboarding === "settings"}
-          signUp={signUpMode ? signUp : undefined} onSignInInstead={() => { setSignUpMode(false); setRerunOnboarding(false); }}
+          signUp={signUpMode ? signUp : undefined} signUpLink={signUpLink} onSignInInstead={() => { setSignUpMode(false); setRerunOnboarding(false); }}
           onCancel={leave} onSkip={leave} onDone={leave} />
       </>
     );

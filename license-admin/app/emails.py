@@ -62,6 +62,18 @@ Enter it in PiperStitch{device} to finish signing in. The code expires in {code_
 
 If you didn't just try to sign in to PiperStitch, you can ignore this email — nothing happens without the code.""",
          cta_label="", cta_url="", preheader="{code} is your PiperStitch sign-in code.", placeholders="code, code_minutes, device, link_line, sign_in_url"),
+    dict(key="signup_code", name="Sign-up code (free trial)", description="The six-digit code sent when someone starts their free trial from the website or the app's guided setup. Its link returns them to the setup step. Keep {code} in it.",
+         subject="{code} — welcome to PiperStitch",
+         body="""Welcome to PiperStitch! Here's the code that finishes creating your account:
+
+{code}
+
+Enter it on the setup screen you just left, and we'll carry on setting PiperStitch up for your business. The code expires in {code_minutes} minutes and only works once.{link_line}
+
+Your free trial starts the moment you're in — no card, nothing to cancel.
+
+If you didn't just start a PiperStitch free trial, you can ignore this email — nothing happens without the code.""",
+         cta_label="", cta_url="", preheader="{code} finishes creating your PiperStitch account.", placeholders="code, code_minutes, device, link_line, sign_in_url"),
     dict(key="account_link", name="Account page link", description="The one-time link to the customer's account page (card, invoices, cancel).",
          subject="Manage your PiperStitch subscription",
          body="""Here's your link to manage your PiperStitch subscription:

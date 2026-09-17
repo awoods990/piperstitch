@@ -41,6 +41,9 @@ interface Props {
   signUp?: { requestCode: (email: string) => Promise<void>; verifyCode: (email: string, code: string) => Promise<void> };
   /** Where "Already a member? Sign in" goes. */
   onSignInInstead?: () => void;
+  /** Arrived from the sign-up email's link: skip the welcome, land on the
+   *  code step with both filled in, verify automatically. */
+  signUpLink?: { email: string; code: string } | null;
 }
 
 const TITLES: Record<StepId, string> = {
@@ -64,7 +67,7 @@ const CONFETTI = Array.from({ length: 40 }, (_, i) => {
 
 export default function Onboarding(props: Props) {
   const { account, catalog, prefs } = props;
-  const [welcome, setWelcome] = useState(!props.rerun);
+  const [welcome, setWelcome] = useState(!props.rerun && !props.signUpLink);
   const [products, setProducts] = useState<Product[]>(prefs.onboarding?.products ?? ["core"]);
   // Creating the account is the first step when the visitor arrived signed
   // out; it stays in the step count after they're in, so "Step 2 of 6"
@@ -75,9 +78,10 @@ export default function Onboarding(props: Props) {
   const [step, setStep] = useState<StepId>(needsAccount ? "account" : "products");
   // "Jump right in" chosen before the account existed: finish right after the code.
   const [jumpAfterSignUp, setJumpAfterSignUp] = useState(false);
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [codeSent, setCodeSent] = useState(false);
+  const [email, setEmail] = useState(props.signUpLink?.email ?? "");
+  const [code, setCode] = useState(props.signUpLink?.code ?? "");
+  const [codeSent, setCodeSent] = useState(!!props.signUpLink);
+  const autoVerified = useRef(false);
   const latestPrefs = useRef(prefs);
   latestPrefs.current = prefs;
   const stepIndex = Math.max(0, steps.indexOf(step));
@@ -153,10 +157,10 @@ export default function Onboarding(props: Props) {
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
-  const verifyCode = async () => {
+  const verifyCode = async (emailToUse = email, codeToUse = code) => {
     setSaving(true); setError(null);
     try {
-      await props.signUp!.verifyCode(email.trim(), code.trim());
+      await props.signUp!.verifyCode(emailToUse.trim(), codeToUse.trim());
       // Let React commit the pulled preferences before reading them.
       await new Promise((r) => setTimeout(r, 0));
       const fresh = latestPrefs.current;
@@ -173,6 +177,15 @@ export default function Onboarding(props: Props) {
 
   // PiperStitch is the base subscription; Proofs is an add-on to it.
   const setWithProofs = (on: boolean) => setProducts(on ? ["core", "proofs"] : ["core"]);
+  // The email link: verify as soon as the flow is on screen. A wrong or
+  // expired code just shows the code step with the email filled in.
+  useEffect(() => {
+    if (props.signUpLink && needsAccount && !autoVerified.current) {
+      autoVerified.current = true;
+      verifyCode(props.signUpLink.email, props.signUpLink.code);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const toggleBrand = (id: string) => {
     const cur = draft.business.machineBrands;
     setBusiness({ machineBrands: cur.includes(id) ? cur.filter((b) => b !== id) : [...cur, id] });
@@ -208,7 +221,7 @@ export default function Onboarding(props: Props) {
   }
 
   const subtitle: Record<StepId, string> = {
-    account: codeSent ? `We emailed a six-digit code to ${email.trim()}. It's good for 15 minutes — check spam if it's slow.` : "No password: a fresh code is emailed each time you sign in. Your free trial starts as soon as you're in.",
+    account: codeSent ? (props.signUpLink && saving ? `Checking the code from your email…` : `We emailed a six-digit code to ${email.trim()}. It's good for 15 minutes — check spam if it's slow.`) : "No password: a fresh code is emailed each time you sign in. Your free trial starts as soon as you're in.",
     products: `PiperStitch digitizing is included — your ${trialDays}-day free trial has started, no card needed. Proofs is an add-on on the same account; you can add it any time.`,
     business: "This goes on the files and proofs you send, and picks the file format your machine reads.",
     hoops: draft.business.machineBrands.length > 0 ? "Pre-ticked from your machines. Untick any you don't have and add the rest — these show first everywhere." : "Tick the hoops you own — these show first everywhere.",
@@ -439,7 +452,7 @@ export default function Onboarding(props: Props) {
             </>
           ) : step === "account" ? (
             codeSent
-              ? <button className="btn primary" onClick={verifyCode} disabled={saving || code.length !== 6}>{saving ? "Checking…" : jumpAfterSignUp ? "Start digitizing →" : "Continue"}</button>
+              ? <button className="btn primary" onClick={() => verifyCode()} disabled={saving || code.length !== 6}>{saving ? "Checking…" : jumpAfterSignUp ? "Start digitizing →" : "Continue"}</button>
               : <button className="btn primary" onClick={requestCode} disabled={saving || !email.includes("@")}>{saving ? "Sending…" : "Email me a code"}</button>
           ) : (
             <button className="btn primary" onClick={goNext} disabled={saving}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Finish" : "Next"}</button>

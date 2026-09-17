@@ -38,7 +38,8 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   // --- accounts ---
   me: async (refresh = false): Promise<MeResponse> => (await check(await fetch(`${BASE}/auth/me${refresh ? "?refresh=1" : ""}`))).json(),
-  requestCode: (email: string) => postJSON<{ sent: boolean }>("/auth/request", { email }),
+  /** `flow: "trial"` gets the sign-up email (its link returns to guided setup). */
+  requestCode: (email: string, flow: "signin" | "trial" = "signin") => postJSON<{ sent: boolean }>("/auth/request", { email, flow }),
   verifyCode: (email: string, code: string) => postJSON<MeResponse>("/auth/verify", { email, code }),
   signOut: () => postJSON<void>("/auth/signout", {}),
   updateName: (name: string) => postJSON<MeResponse>("/auth/profile", { name }),

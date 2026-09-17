@@ -54,7 +54,7 @@ def _expired(iso: str) -> bool:
 # ------------------------------------------------------------- sign-in ---
 
 
-def request_code(*, email: str, app: str = "core") -> dict:
+def request_code(*, email: str, app: str = "core", flow: str = "signin") -> dict:
     """Emails a code to any plausible address -- unlike the Mac's
     request_code, an unknown email is welcome here: verifying it is how
     the trial starts. Rate limits are shared with the Mac path."""
@@ -65,11 +65,14 @@ def request_code(*, email: str, app: str = "core") -> dict:
         raise ActivationError("rate_limited", "Too many codes requested for this address — wait an hour, or use a code already in your inbox.")
     code = f"{secrets.randbelow(1_000_000):06d}"
     code_row_id = db.create_activation_code(email=email, code_hash=_hash(code), device_id=WEB_DEVICE_ID, ttl_minutes=config.ACTIVATION_CODE_TTL_MINUTES)
-    # The email's "sign in instantly" link lands in whichever app asked.
+    # The email's link lands in whichever app asked; a free-trial sign-up
+    # (flow="trial", from the app's guided setup) gets the sign-up email,
+    # whose link returns to that setup step rather than the app.
+    signup = app == "core" and flow == "trial"
     base = f"{config.PROOFS_APP_URL}/signin" if app == "proofs" else f"{config.WEB_APP_URL}/"
-    sign_in_url = f"{base}?email={quote(email)}&code={code}"
+    sign_in_url = f"{base}?{'trial=1&' if signup else ''}email={quote(email)}&code={code}"
     try:
-        email_sender.send_activation_code_email(to_email=email, code=code, device_name="the web", sign_in_url=sign_in_url)
+        email_sender.send_activation_code_email(to_email=email, code=code, device_name="the web", sign_in_url=sign_in_url, signup=signup)
     except email_sender.EmailSendError as e:
         db.delete_activation_code(code_row_id)
         raise ActivationError("email_failed", f"We couldn't send the code: {e}") from e

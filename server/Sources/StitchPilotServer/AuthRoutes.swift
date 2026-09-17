@@ -50,10 +50,13 @@ func authRoutes(_ api: RoutesBuilder) {
 
     auth.post("request") { req -> [String: Bool] in
         try requireEnabled(req)
-        struct In: Content { var email: String }
-        let body = try req.content.decode(In.self)
+        // `flow` is "trial" when guided setup is creating the account: License
+        // Admin then sends the sign-up email, whose link returns to setup.
+        struct Body: Content { var email: String; var flow: String? }
+        struct In: Content { var email: String; var flow: String }
+        let body = try req.content.decode(Body.self)
         struct Out: Decodable { var sent: Bool }
-        let out = try await req.licenseAdmin.post("/api/web/signin/request", In(email: body.email.trimmingCharacters(in: .whitespaces)), as: Out.self)
+        let out = try await req.licenseAdmin.post("/api/web/signin/request", In(email: body.email.trimmingCharacters(in: .whitespaces), flow: body.flow == "trial" ? "trial" : "signin"), as: Out.self)
         return ["sent": out.sent]
     }
 

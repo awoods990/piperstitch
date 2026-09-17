@@ -190,6 +190,7 @@ class DeviceTokenIn(BaseModel):
 class WebEmailIn(BaseModel):
     email: str
     app: str = "core"      # which app asked: the sign-in email's link goes back there
+    flow: str = "signin"   # "trial": the app's guided setup is creating the account -> the sign-up email
 
 
 class WebHandoffCreateIn(BaseModel):
@@ -588,7 +589,7 @@ def _require_web_key(x_api_key: Optional[str]) -> None:
 def api_web_signin_request(body: WebEmailIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
     try:
-        return web_access.request_code(email=body.email, app="proofs" if body.app == "proofs" else "core")
+        return web_access.request_code(email=body.email, app="proofs" if body.app == "proofs" else "core", flow="trial" if body.flow == "trial" else "signin")
     except activation.ActivationError as e:
         return _activation_error(e, status=429 if e.code == "rate_limited" else 400)
 

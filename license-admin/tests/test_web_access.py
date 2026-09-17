@@ -291,3 +291,23 @@ def test_handoff_signs_the_customer_into_the_other_app_once(isolated_db, test_ke
     web_access.request_code(email="handoff@example.com", app="proofs")
     body = fake_smtp.sent[-1].get_body(preferencelist=("plain",)).get_content()
     assert config.PROOFS_APP_URL + "/signin?email=" in body
+
+
+def test_free_trial_signup_gets_its_own_email_whose_link_returns_to_setup(isolated_db, test_keypair, fake_smtp):
+    """Guided setup asks for the code with flow="trial": a welcome-worded
+    email whose link carries trial=1, so the app reopens the setup step
+    rather than signing straight in. The plain sign-in email is unchanged."""
+    fake_smtp.sent.clear()
+    web_access.request_code(email="trial@example.com", flow="trial")
+    msg = fake_smtp.sent[-1]
+    body = msg.get_body(preferencelist=("plain",)).get_content()
+    assert "welcome to PiperStitch" in msg["Subject"]
+    assert config.WEB_APP_URL + "/?trial=1&email=trial%40example.com&code=" in body
+    assert "free trial" in body
+    # The code in it works the same way.
+    code = re.search(r"code=(\d{6})", body).group(1)
+    assert web_access.verify_code(email="trial@example.com", code=code, user_agent="pytest")
+    fake_smtp.sent.clear()
+    web_access.request_code(email="member@example.com")
+    body = fake_smtp.sent[-1].get_body(preferencelist=("plain",)).get_content()
+    assert "trial=1" not in body and "is your PiperStitch sign-in code" in fake_smtp.sent[-1]["Subject"]

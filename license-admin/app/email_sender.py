@@ -116,20 +116,26 @@ def send_proofs_welcome_email(*, to_email: str, customer_name: str) -> None:
     e.send_system("proofs_welcome", to_email=to_email, customer_id=_customer_id(to_email), vars=e.variables({"name": customer_name, "email": to_email, "id": _customer_id(to_email) or 0}))
 
 
-def send_activation_code_email(*, to_email: str, code: str, device_name: str, sign_in_url: Optional[str] = None) -> None:
+def send_activation_code_email(*, to_email: str, code: str, device_name: str, sign_in_url: Optional[str] = None, signup: bool = False) -> None:
     """`sign_in_url` (web sign-in only) carries the code right in the
-    link, so clicking it on the device signs it in without retyping."""
+    link, so clicking it on the device signs it in without retyping.
+    `signup` sends the free-trial version instead (the "signup_code"
+    template): different words, and a link that returns to the guided
+    setup step the visitor left rather than dropping them into the app."""
     e = _emails()
-    link_line = f"\n\nOr open this link on the device you're signing in on and skip typing it: {sign_in_url}" if sign_in_url else ""
+    link_line = (f"\n\nOr open this link on the device you're setting up on and skip typing it: {sign_in_url}" if signup
+                 else f"\n\nOr open this link on the device you're signing in on and skip typing it: {sign_in_url}") if sign_in_url else ""
     device = (" on " + device_name) if device_name and device_name != "the web" else ""
     vars = e.variables(None, code=code, code_minutes=config.ACTIVATION_CODE_TTL_MINUTES, device=device, link_line=link_line, sign_in_url=sign_in_url or "")
     from . import db
-    row = db.get_email_template("sign_in_code")
+    key = "signup_code" if signup else "sign_in_code"
+    row = db.get_email_template(key)
     if row is None:
-        e.seed(); row = db.get_email_template("sign_in_code")
+        e.seed(); row = db.get_email_template(key)
     subject, body, _ = e.render_template(row, vars)
-    html = email_branding.render(body_text=body, preheader=e.fill(row["preheader"], vars), footer_note="Sent because someone entered this address in PiperStitch's sign-in screen.",
-                                 cta_label="Sign in instantly" if sign_in_url else "", cta_url=sign_in_url or "")
+    html = email_branding.render(body_text=body, preheader=e.fill(row["preheader"], vars),
+                                 footer_note="Sent because someone started a PiperStitch free trial with this address." if signup else "Sent because someone entered this address in PiperStitch's sign-in screen.",
+                                 cta_label=("Continue setting up" if signup else "Sign in instantly") if sign_in_url else "", cta_url=sign_in_url or "")
     _send_smtp(_compose(to_email=to_email, subject=subject, body=body, html_body=html))
 
 
