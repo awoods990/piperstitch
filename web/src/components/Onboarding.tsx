@@ -38,7 +38,7 @@ interface Props {
 }
 
 const TITLES: Record<StepId, string> = {
-  products: "What are you here for?",
+  products: "Will you also use Proofs?",
   business: "Tell us about your business",
   hoops: "Which hoops do you have?",
   threads: "Your thread library",
@@ -115,7 +115,8 @@ export default function Onboarding(props: Props) {
     props.onSkip();
   };
 
-  const toggleProduct = (p: Product) => setProducts((cur) => cur.includes(p) ? (cur.length > 1 ? cur.filter((x) => x !== p) : cur) : [...cur, p]);
+  // PiperStitch is the base subscription; Proofs is an add-on to it.
+  const setWithProofs = (on: boolean) => setProducts(on ? ["core", "proofs"] : ["core"]);
   const toggleBrand = (id: string) => {
     const cur = draft.business.machineBrands;
     setBusiness({ machineBrands: cur.includes(id) ? cur.filter((b) => b !== id) : [...cur, id] });
@@ -133,7 +134,7 @@ export default function Onboarding(props: Props) {
           <div className="welcome-brand">
             <img src="/icon.png" alt="" width={56} height={56} />
             <h2>Welcome to PiperStitch{account?.name ? `, ${account.name.split(" ")[0]}` : ""}</h2>
-            <p className="setup-sub">A few questions and both apps open already set up for your business — your machines, hoops, thread and defaults filled in. Or skip it and set things up as you go.</p>
+            <p className="setup-sub">A few questions and PiperStitch opens already set up for your business — machines, hoops, thread and defaults filled in, and Proofs too if you add it. Or skip this and set things up as you go.</p>
           </div>
           <div className="choices two welcome-choices">
             <Choice title={`Set up PiperStitch for my business · about ${estimateMinutes(["core", "proofs"])} minutes`}
@@ -147,7 +148,7 @@ export default function Onboarding(props: Props) {
   }
 
   const subtitle: Record<StepId, string> = {
-    products: "Both run on this account. Pick what you'll use; you can add the other any time.",
+    products: `PiperStitch digitizing is included — your ${trialDays}-day free trial has started, no card needed. Proofs is an add-on on the same account; you can add it any time.`,
     business: "This goes on the files and proofs you send, and picks the file format your machine reads.",
     hoops: draft.business.machineBrands.length > 0 ? "Pre-ticked from your machines. Untick any you don't have and add the rest — these show first everywhere." : "Tick the hoops you own — these show first everywhere.",
     threads: "The colours you actually stock. Imports match against your library instead of a generic palette.",
@@ -175,10 +176,10 @@ export default function Onboarding(props: Props) {
         <div className="setup-body" ref={bodyRef}>
           {step === "products" && (
             <div className="choices two">
-              <Choice title="PiperStitch — digitizing" subtitle={`Turn artwork into stitch files. ${trialDays}-day free trial, no card.`}
-                selected={products.includes("core")} onClick={() => toggleProduct("core")} />
-              <Choice title="PiperStitch Proofs — customer approval" subtitle={`Send a stitch-accurate proof your customer approves on their phone. First ${proofsFree} proofs free.`}
-                selected={products.includes("proofs")} onClick={() => toggleProduct("proofs")} />
+              <Choice title="Just PiperStitch for now" subtitle="Turn artwork into stitch files and download them for your machine."
+                selected={!products.includes("proofs")} onClick={() => setWithProofs(false)} />
+              <Choice title="PiperStitch + Proofs" subtitle={`Also send customers a stitch-accurate proof to approve on their phone. First ${proofsFree} proofs free, then billed on the same card.`}
+                selected={products.includes("proofs")} onClick={() => setWithProofs(true)} />
             </div>
           )}
 
@@ -347,7 +348,7 @@ export default function Onboarding(props: Props) {
               <button className="btn primary" onClick={() => props.onDone(products)}>{products.includes("core") ? "Start a design" : "Open PiperStitch"}</button>
             </>
           ) : (
-            <button className="btn primary" onClick={goNext} disabled={saving || (step === "products" && products.length === 0)}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Finish" : "Next"}</button>
+            <button className="btn primary" onClick={goNext} disabled={saving}>{saving ? "Saving…" : steps[stepIndex + 1] === "done" ? "Finish" : "Next"}</button>
           )}
         </footer>
       </div>
