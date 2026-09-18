@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type EditResponse, type PendingMerge } from "./api";
-import { decodeImage, isSVGFile, type DecodedImage } from "./decode";
+import { decodeImage, isSVGFile, rasterizeSVG, type DecodedImage } from "./decode";
 import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings, ThreadWeight, VectorShape } from "./types";
 import { THREAD_WEIGHTS } from "./types";
 import DropZone from "./components/DropZone";
@@ -29,6 +29,9 @@ interface Imported {
   fileName: string;
   isVector: boolean;
   decoded: DecodedImage | null;
+  /** Pixels in `decoded` per unit of the engine's shapes: 1 for a raster,
+   *  the drawing scale for an SVG rasterised on import. */
+  imageUnitsToPixels: number;
   svgText: string | null;
   response: ImportResponse;
   maxColors: number;
@@ -242,13 +245,15 @@ export default function App() {
     const hoopOpts = { hoopWidthMM: hoop?.widthMM, hoopHeightMM: hoop?.heightMM };
     if (isSVGFile(file)) {
       const svgText = await file.text();
-      return { name, fileName: file.name, isVector: true, decoded: null, svgText, response: await api.importSVG(svgText, hoopOpts), maxColors };
+      const raster = await rasterizeSVG(svgText);
+      return { name, fileName: file.name, isVector: true, decoded: raster?.image ?? null, imageUnitsToPixels: raster?.unitsToPixels ?? 1,
+               svgText, response: await api.importSVG(svgText, hoopOpts), maxColors };
     }
     setBusy("Reading image…");
     const decoded = await decodeImage(file);
     setBusy("Finding shapes…");
     const response = await api.importRaster(decoded.rgba, decoded.width, decoded.height, { maxColors, ...hoopOpts });
-    return { name, fileName: file.name, isVector: false, decoded, svgText: null, response, maxColors };
+    return { name, fileName: file.name, isVector: false, decoded, imageUnitsToPixels: 1, svgText: null, response, maxColors };
   };
 
   const onFile = async (file: File) => {
@@ -688,7 +693,7 @@ export default function App() {
 
   if (phase === "setup" && imported && answers) {
     return <><SetupFlow catalog={catalog} ownedHoopNames={prefs.ownedHoopNames} onEditHoops={() => setSheet("settingsBusiness")} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
-      textLines={imported.response.textLines} image={imported.decoded} sourceBounds={imported.response.source.bounds}
+      textLines={imported.response.textLines} image={imported.decoded} imageUnitsToPixels={imported.imageUnitsToPixels} sourceBounds={imported.response.source.bounds}
       recommendedHeightMM={imported.response.recommendedHeightMM} aspectRatio={imported.response.aspectRatio} initial={answers} busy={busy}
       matchToThreadLibrary={matchToThreadLibrary} onMatchToThreadLibraryChange={(on) => setPrefs({ ...prefs, matchToThreadLibrary: on })}
       onFinish={onSetupFinish} onCancel={onStartOver} />{sheets}</>;

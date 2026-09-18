@@ -36,6 +36,42 @@ export async function decodeImage(file: File): Promise<DecodedImage> {
   return { rgba: new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength), width, height, previewURL: URL.createObjectURL(file) };
 }
 
+/** An SVG drawn to pixels, with the factor from its user units (which the
+ *  engine's shapes are in, origin at the viewBox corner) to those pixels:
+ *  the Text step's crops and the editor's "show original" need a picture. */
+export async function rasterizeSVG(svgText: string): Promise<{ image: DecodedImage; unitsToPixels: number } | null> {
+  try {
+    const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+    const svg = doc.documentElement;
+    if (svg.tagName.toLowerCase() !== "svg") return null;
+    const viewBox = (svg.getAttribute("viewBox") ?? "").split(/[\s,]+/).map(Number).filter((n) => !isNaN(n));
+    const attrLength = (name: string) => { const v = parseFloat(svg.getAttribute(name) ?? ""); return isFinite(v) && v > 0 ? v : null; };
+    let unitsW = viewBox.length === 4 ? viewBox[2] : attrLength("width");
+    let unitsH = viewBox.length === 4 ? viewBox[3] : attrLength("height");
+    if (!unitsW || !unitsH) return null;
+    // Draw it at a comfortable size regardless of how the file is scaled.
+    const k = Math.min(8, Math.max(1 / 8, 1600 / Math.max(unitsW, unitsH)));
+    const width = Math.max(2, Math.round(unitsW * k)), height = Math.max(2, Math.round(unitsH * k));
+    if (viewBox.length !== 4) svg.setAttribute("viewBox", `0 0 ${unitsW} ${unitsH}`);
+    svg.setAttribute("width", String(width)); svg.setAttribute("height", String(height));
+    const blob = new Blob([new XMLSerializer().serializeToString(doc)], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(new Error("svg")); img.src = url; });
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    URL.revokeObjectURL(url);
+    const data = ctx.getImageData(0, 0, width, height).data;
+    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!png) return null;
+    return { image: { rgba: new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength), width, height, previewURL: URL.createObjectURL(png) }, unitsToPixels: k };
+  } catch { return null; }
+}
+
 export function isSVGFile(file: File): boolean {
   return file.type === "image/svg+xml" || /\.svg$/i.test(file.name);
 }

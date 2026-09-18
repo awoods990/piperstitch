@@ -1320,6 +1320,38 @@ carries one choice across a multi-line design. The fonts load through
 `ensureFontFaces` (the same files the outlines are cut from), so what
 the tile shows is what sews.
 
+**First two logos after release (LIBBi, Sigma Chi) -- neither found its
+text.** LIBBi was uploaded as an SVG: the `/import/svg` route never ran
+the finder, and the build's own drop rule was gated on a pixel height an
+SVG does not have. The finder is unitless apart from its size limits, so
+for vector input (`imageHeightPixels: 0`) the drawing's own height stands
+in and lines come back in SVG units; the web app rasterises an SVG on
+import (`rasterizeSVG`, at a known units-to-pixels factor) so the Text
+step has a picture to crop and OCR, and the editor gains "show original"
+for vectors as a side effect. Sigma Chi failed differently: "Sigma Chi"
+sits right over "FOUNDATION", the stacked-neighbour allowance (meant for
+ring text down the side of a badge) chained them, the 'i' stems at 127 px
+cleared the 0.45 height ratio against 59 px capitals, and the fused group
+failed the height-spread check -- both lines lost. Stacked neighbours now
+have to be alike in height (>= 0.7), and a group that still fails is
+split at the widest height ratio (>= 1.35) or at a clear gap in the
+residuals with a flat row on each side, then each part tried on its own;
+"curved" needs the circle to fit the centres at less than half the line's
+residual, not just the line to fit badly (a g's descender and a taller C
+made "Sigma Chi" an arc). A straight line also needs most of its letters
+on one baseline (`minimumBaselineAlignment` 0.45; real lines score 0.67-
+1.0, a wing's feathers 0.2) -- the radial version of that test could not
+tell feathers from ring text, so it is not applied to curves; instead a
+short curved run (under 8 letters) is never dropped by the engine on its
+own (`dropsWhenTooSmall`) and the Text step defaults it to "keep", where
+the user, who can see the crop, decides. "Keep anyway" is now offered on
+a too-small line for exactly that case. OCR's habitual l-for-I slip is
+corrected on capital lines, and the read is retried if React re-runs the
+effect before it lands (the development double-mount had been discarding
+the result). Still not found: the crest's "IN HOC SIGNO VINCES", whose
+letters fuse into the ribbon outline at import -- the knocked-out /
+merged text case noted before.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

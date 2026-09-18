@@ -45,6 +45,8 @@ interface Props {
   /** Text lines the importer found, with the image and its shape bounds to crop them from. */
   textLines?: TextLine[];
   image?: DecodedImage | null;
+  /** Pixels in `image` per unit of the text lines' boxes (1 for a raster). */
+  imageUnitsToPixels?: number;
   sourceBounds?: { minX: number; minY: number; maxX: number; maxY: number };
   matchToThreadLibrary: boolean;
   onMatchToThreadLibraryChange: (on: boolean) => void;
@@ -126,14 +128,17 @@ export default function SetupFlow(props: Props) {
   }, [smallLines, props.sourceBounds, minCap]);
   // The decision for each line: what the user chose, else the default for
   // the CURRENT size -- keep a line that sews as traced, leave out one that
-  // doesn't. A kept line that the size has since made too small is left
-  // out (keeping it is not an option any more).
+  // doesn't. A short curved run is as likely a wing's feathers as a word
+  // (the engine's own rule leaves those in too), so it defaults to keep
+  // until the user says otherwise; a straight line the size has since
+  // made too small is left out unless the user chose to keep it.
+  const dropsWhenTooSmall = (l: TextLine) => !l.curved || l.shapeIndices.length >= 8;
   const defaultDecision = (l: TextLine): TextDecision => ({ action: "drop", text: "", fontID: suggestFont(l) });
   const decisions: TextDecision[] = textLines.map((l, i) => {
-    const d = a.textDecisions?.[i] ?? defaultDecision(l);
+    const chosen = a.textDecisions?.[i];
+    const d = chosen ?? defaultDecision(l);
     const tooSmall = capMM(l) < minCap;
-    if (!a.textDecisions?.[i] && !tooSmall) return { ...d, action: "keep" };
-    if (d.action === "keep" && tooSmall) return { ...d, action: "drop" };
+    if (!chosen && (!tooSmall || !dropsWhenTooSmall(l))) return { ...d, action: "keep" };
     return d;
   });
   const setDecision = (i: number, patch: Partial<TextDecision>) => {
@@ -291,7 +296,7 @@ export default function SetupFlow(props: Props) {
               )}
               {textLines.map((line, i) => (
                 <TextLineRow key={i} line={line} decision={decisions[i]} capMM={capMM(line)} minCap={minCap}
-                  image={props.image ?? null} onChange={(patch) => setDecision(i, patch)}
+                  image={props.image ?? null} imageUnitsToPixels={props.imageUnitsToPixels ?? 1} onChange={(patch) => setDecision(i, patch)}
                   onFontForAll={textLines.length > 1 ? setFontForAll : undefined} />
               ))}
             </div>
@@ -425,8 +430,8 @@ export function Choice({ title, subtitle, selected, warning, disabled, onClick }
 
 /** One detected line in the Text step: its crop, what it would sew at, and
  *  what to do with it. OCR pre-fills the words the first time the row shows. */
-function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontForAll }: {
-  line: TextLine; decision: TextDecision; capMM: number; minCap: number; image: DecodedImage | null;
+function TextLineRow({ line, decision, capMM, minCap, image, imageUnitsToPixels, onChange, onFontForAll }: {
+  line: TextLine; decision: TextDecision; capMM: number; minCap: number; image: DecodedImage | null; imageUnitsToPixels: number;
   onChange: (patch: Partial<TextDecision>) => void;
   onFontForAll?: (fontID: string) => void;
 }) {
@@ -440,9 +445,13 @@ function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontFor
   const read = useRef(false);
   const tooSmall = capMM < minCap;
   const sewnCap = Math.max(capMM, minCap);
+  // The line's box in the picture's pixels (an SVG's lines are in its
+  // own units; the picture was drawn at a known scale).
+  const k = imageUnitsToPixels;
+  const pixelBox = { minX: line.boundingBoxPixels.minX * k, minY: line.boundingBoxPixels.minY * k, maxX: line.boundingBoxPixels.maxX * k, maxY: line.boundingBoxPixels.maxY * k };
   useEffect(() => {
     if (!image || !canvasHost.current) return;
-    const crop = cropLine(image, line.boundingBoxPixels, 0);
+    const crop = cropLine(image, pixelBox, 0);
     crop.className = "text-crop";
     canvasHost.current.replaceChildren(crop);
   }, [image, line]);
@@ -453,21 +462,27 @@ function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontFor
     read.current = true;
     let cancelled = false;
     setReading(true);
-    readLine(cropLine(image, line.boundingBoxPixels, line.rotationDegrees)).then((guess) => {
+    readLine(cropLine(image, pixelBox, line.rotationDegrees)).then((guess) => {
       if (cancelled) return;
       setReading(false);
-      if (guess.text && guess.confidence >= 55) onChange({ text: guess.text, action: "retype" });
+      // OCR's one habitual slip on capitals is I read as l.
+      const text = line.mixedCase === false ? guess.text.replace(/l/g, "I").toUpperCase() : guess.text;
+      // Pre-fill, and switch a line being left out to re-typing; a line
+      // the user (or the default) is keeping stays kept.
+      if (text && guess.confidence >= 55) onChange({ text, action: decision.action === "keep" ? "keep" : "retype" });
     });
-    return () => { cancelled = true; };
+    // Re-run (a dependency changed, or React's development double-mount)
+    // before the read lands: let the next run read again.
+    return () => { cancelled = true; read.current = false; setReading(false); };
   }, [image, line, tooSmall, decision.action]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const host = compareHost.current;
     if (!image || !host || decision.action !== "retype") return;
-    const crop = cropLine(image, line.boundingBoxPixels, 0);
+    const crop = cropLine(image, pixelBox, 0);
     crop.className = "text-crop";
     host.replaceChildren(crop);
-    const canvasScale = Math.min(8, Math.max(1, 60 / (line.boundingBoxPixels.maxY - line.boundingBoxPixels.minY)));
+    const canvasScale = Math.min(8, Math.max(1, 60 / (pixelBox.maxY - pixelBox.minY)));
     const measure = () => { if (crop.height > 0) setCropDisplayScale(canvasScale * (crop.clientHeight / crop.height)); };
     measure();
     const ro = new ResizeObserver(measure);
@@ -485,12 +500,12 @@ function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontFor
   // The crop shows the line's letters at a known screen height; the
   // comparison sample is set so its capitals match, and condensed the
   // same way the run will be on the fabric.
-  const box = line.boundingBoxPixels;
+  const box = pixelBox;
   const cropScale = cropDisplayScale ?? Math.min(64 / ((box.maxY - box.minY) * 1.7), 1e9);
   // The face is compared at the original's on-screen height; the label
   // carries the height it will actually sew at, and the condensing is
   // worked out at that size.
-  const letterPx = Math.max(10, Math.min(60, line.capHeightPixels * cropScale));
+  const letterPx = Math.max(10, Math.min(60, line.capHeightPixels * k * cropScale));
   const enlarge = sewnCap / Math.max(1e-6, capMM);
   const naturalWidthPx = letterPx * 0.62 * Math.max(1, Array.from(sample).length) * (chosen?.width === "condensed" ? 0.8 : chosen?.width === "wide" ? 1.15 : 1);
   const targetWidthPx = (box.maxX - box.minX) * cropScale * enlarge;
@@ -507,7 +522,11 @@ function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontFor
         <div className="text-line-meta">
           <b>{line.shapeIndices.length} letters{line.curved ? ", on a curve" : ""}{line.mixedCase === false ? ", capitals" : ""}</b>
           <span className={"text-status" + (tooSmall ? " warn" : "")}>
-            {tooSmall ? `about ${len(capMM)} ${displayUnitLabel()} tall here — needs ${len(minCap)}` : `about ${len(capMM)} ${displayUnitLabel()} tall — sews as traced`}
+            {tooSmall
+              ? (len(capMM) === len(minCap)
+                ? `just under ${len(minCap)} ${displayUnitLabel()} tall here — needs ${len(minCap)} to read`
+                : `about ${len(capMM)} ${displayUnitLabel()} tall here — needs ${len(minCap)} to read`)
+              : `about ${len(capMM)} ${displayUnitLabel()} tall — sews as traced`}
           </span>
           {image && <button type="button" className="text-link" onClick={() => setShowWhole((v) => !v)}>{showWhole ? "Hide the whole artwork" : "Show where this is in the artwork"}</button>}
         </div>
@@ -527,9 +546,9 @@ function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontFor
           <input type="radio" name={`text-${line.shapeIndices[0]}`} checked={decision.action === "drop"} onChange={() => onChange({ action: "drop" })} />
           <span>Leave it out</span>
         </label>
-        <label className={"text-action" + (decision.action === "keep" ? " on" : "") + (tooSmall ? " disabled" : "")} title={tooSmall ? "Too small to sew as traced at this size" : undefined}>
-          <input type="radio" name={`text-${line.shapeIndices[0]}`} checked={decision.action === "keep"} disabled={tooSmall} onChange={() => onChange({ action: "keep" })} />
-          <span>Keep as traced</span>
+        <label className={"text-action" + (decision.action === "keep" ? " on" : "")} title={tooSmall ? "Sews the traced shapes as they are -- letters this small will not read, but if this isn't text at all, keep it" : undefined}>
+          <input type="radio" name={`text-${line.shapeIndices[0]}`} checked={decision.action === "keep"} onChange={() => onChange({ action: "keep" })} />
+          <span>{tooSmall ? "Keep anyway" : "Keep as traced"}</span>
         </label>
       </div>
       {decision.action === "retype" && (

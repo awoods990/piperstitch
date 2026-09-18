@@ -150,7 +150,8 @@ func routes(_ app: Application) throws {
         let data = Data(bytes)
         let result = try await Engine.run { try SVGImporter.importShapes(from: data) }
         return importResponse(shapes: result.shapes, fillColors: result.fillColors, pixelWidth: 0, pixelHeight: 0,
-                              hoopWidthMM: q.hoopWidthMM, hoopHeightMM: q.hoopHeightMM)
+                              hoopWidthMM: q.hoopWidthMM, hoopHeightMM: q.hoopHeightMM,
+                              textLines: TextLineFinder.find(shapes: result.shapes, fillColors: result.fillColors, imageHeightPixels: 0))
     }
 
     // Source shapes + the user's answers (size, fabric, palette) -> a

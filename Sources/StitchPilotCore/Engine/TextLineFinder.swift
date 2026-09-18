@@ -27,6 +27,13 @@ public struct TextLine: Codable, Sendable, Equatable {
     public var letterAspect: Double = 0.7
 
     public var suggestsBold: Bool { inkFraction >= TextLineFinder.boldInkFraction }
+
+    /// Whether the engine may leave this line out on its own when it is
+    /// too small: straight text, or ring text long enough to be sure of.
+    /// A short curved run is as likely a wing's feathers as a word, and
+    /// dropping feathers is worse than sewing small letters; the Text
+    /// step still shows it and the user decides.
+    public var dropsWhenTooSmall: Bool { !curved || shapeIndices.count >= TextLineFinder.minimumCurvedLettersToDrop }
 }
 
 /// Finds text in imported artwork by its geometry alone -- a row of
@@ -67,17 +74,44 @@ public enum TextLineFinder {
     /// letter-spaced title ("Y E A R S") runs to about two.
     public static let maximumLetterGapFactor = 2.2
 
+    /// At least this share of a line's letters end on its baseline (within
+    /// a fifth of the cap height): real text scores 0.67 and up even with
+    /// descenders and dotted i's; a wing's feathers about 0.2.
+    public static let minimumBaselineAlignment = 0.45
+
+    /// See `TextLine.dropsWhenTooSmall`.
+    public static let minimumCurvedLettersToDrop = 8
+
+    /// `imageHeightPixels` is the raster's height; pass 0 for vector input
+    /// (an SVG's shapes, in its own units) and the drawing's height stands
+    /// in. Everything else is relative, so the result is in the shapes'
+    /// units either way.
     public static func find(shapes: [VectorShape], fillColors: [RGBColor?], imageHeightPixels: Int) -> [TextLine] {
+        let debug = ProcessInfo.processInfo.environment["DEBUG_TEXT"] != nil
         guard shapes.count >= minimumLetters else { return [] }
         struct Glyph { var index: Int; var box: BoundingBox; var area: Double; var color: RGBColor? }
         var glyphs: [Glyph] = []
-        let maxHeight = Double(max(1, imageHeightPixels)) * 0.35
+        var frameHeight = Double(imageHeightPixels)
+        var minHeight = 3.0
+        if imageHeightPixels <= 0 {
+            var all = BoundingBox.empty
+            for shape in shapes { all = all.union(shape.boundingBox) }
+            frameHeight = max(1e-9, all.height)
+            minHeight = frameHeight * 0.005
+        }
+        let maxHeight = frameHeight * 0.35
         for (i, shape) in shapes.enumerated() {
             guard let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
             let box = shape.boundingBox
-            guard box.height >= 3, box.height <= maxHeight, box.width <= box.height * 3, box.width >= 1 else { continue }
+            guard box.height >= minHeight, box.height <= maxHeight, box.width <= box.height * 3, box.width >= minHeight / 3 else {
+                if debug { print("  text: shape \(i) \(Int(box.width))x\(Int(box.height)) px not letter-sized (max height \(Int(maxHeight)))") }
+                continue
+            }
             let area = abs(PolygonGeometry.signedArea(outer.points))
-            guard area >= 0.1 * box.width * box.height else { continue }
+            guard area >= 0.1 * box.width * box.height else {
+                if debug { print("  text: shape \(i) \(Int(box.width))x\(Int(box.height)) px too sparse") }
+                continue
+            }
             glyphs.append(Glyph(index: i, box: box, area: area, color: i < fillColors.count ? fillColors[i] : nil))
         }
         guard glyphs.count >= minimumLetters else { return [] }
@@ -98,9 +132,15 @@ public enum TextLineFinder {
                 let h = max(a.box.height, b.box.height), small = min(a.box.height, b.box.height)
                 guard small >= h * 0.45 else { continue }
                 guard gap(a.box, b.box) <= h * maximumLetterGapFactor else { continue }
-                // Side by side, not stacked: the boxes overlap vertically.
+                // Side by side: the boxes overlap vertically. Neighbours
+                // that do not -- ring text running down the side of a
+                // badge, or two rows of one tagline -- must be alike in
+                // height and close; a title over its smaller tagline is
+                // never one line.
                 let overlap = min(a.box.maxY, b.box.maxY) - max(a.box.minY, b.box.minY)
-                guard overlap >= -h * 0.6 else { continue }
+                if overlap < small * 0.5 {
+                    guard small >= h * 0.7, overlap >= -h * 0.6 else { continue }
+                }
                 let ra = root(i), rb = root(j)
                 if ra != rb { parent[ra] = rb }
             }
@@ -109,29 +149,90 @@ public enum TextLineFinder {
         for i in glyphs.indices { groups[root(i), default: []].append(glyphs[i]) }
 
         var lines: [TextLine] = []
-        for members in groups.values where members.count >= minimumLetters {
+        // A group is a line when its letters are alike in height and sit
+        // on one row (straight or arced). A title that chained to its
+        // tagline, or two rows of one tagline, is split at the height or
+        // row gap and each part tried on its own, so a shield's stripes
+        // still fail while stacked text is found line by line.
+        func evaluate(_ members: [Glyph], depth: Int) {
+            guard members.count >= minimumLetters, depth < 6 else { return }
             let heights = members.map { $0.box.height }.sorted()
+            if debug { print("  text: group of \(members.count) shapes \(members.map { $0.index }.sorted()) heights \(heights.map { Int($0) })") }
             let capHeight = heights[min(heights.count - 1, Int(Double(heights.count) * 0.75))]
             var box = BoundingBox.empty
             for m in members { box = box.union(m.box) }
-            // A line is much longer than it is tall, and its letters are
-            // alike in height: a shield's stripes or an owl's feathers
-            // chain up too, but not at one height.
-            guard max(box.width, box.height) >= capHeight * 2.5 else { continue }
             let meanHeight = heights.reduce(0, +) / Double(heights.count)
             let heightSpread = (heights.reduce(0) { $0 + ($1 - meanHeight) * ($1 - meanHeight) } / Double(heights.count)).squareRoot() / max(1e-9, meanHeight)
-            guard heightSpread <= maximumHeightSpread else { continue }
+            if heightSpread > maximumHeightSpread {
+                // Split at the widest ratio between neighbouring heights.
+                var bestRatio = 1.0, cut = heights[0]
+                for k in 1..<heights.count where heights[k] / max(1e-9, heights[k - 1]) > bestRatio { bestRatio = heights[k] / heights[k - 1]; cut = heights[k] }
+                guard bestRatio >= 1.35 else { if debug { print("    rejected: height spread \(heightSpread)") }; return }
+                if debug { print("    split by height at \(Int(cut)) px") }
+                evaluate(members.filter { $0.box.height < cut }, depth: depth + 1)
+                evaluate(members.filter { $0.box.height >= cut }, depth: depth + 1)
+                return
+            }
             let centres = members.map { Point2D($0.box.minX + $0.box.width / 2, $0.box.minY + $0.box.height / 2) }
             let (axis, mean) = PolygonGeometry.principalAxis(centres)
             var angle = atan2(axis.y, axis.x) * 180 / .pi
             if angle > 90 { angle -= 180 } else if angle < -90 { angle += 180 }
-            // Residual from the fitted line tells straight from curved.
+            // Residual from the fitted line tells straight from curved --
+            // or two rows: a clear gap in the residuals, with letters on
+            // both sides, is a second line of the same size.
             let normal = Point2D(-axis.y, axis.x)
             let residuals = centres.map { ($0.x - mean.x) * normal.x + ($0.y - mean.y) * normal.y }
+            let ordered = residuals.enumerated().sorted { $0.element < $1.element }
+            var widestGap = 0.0, rowCut = 0.0
+            for k in 1..<ordered.count where ordered[k].element - ordered[k - 1].element > widestGap {
+                widestGap = ordered[k].element - ordered[k - 1].element; rowCut = (ordered[k].element + ordered[k - 1].element) / 2
+            }
+            if widestGap > capHeight * 0.7 {
+                let above = members.indices.filter { residuals[$0] < rowCut }
+                let below = members.indices.filter { residuals[$0] >= rowCut }
+                // Both sides flat: an arc has gaps in its residuals too,
+                // but neither half of an arc is a straight row.
+                func range(_ idx: [Int]) -> Double { (idx.map { residuals[$0] }.max() ?? 0) - (idx.map { residuals[$0] }.min() ?? 0) }
+                if above.count >= minimumLetters, below.count >= minimumLetters,
+                   range(above) <= capHeight * 0.35, range(below) <= capHeight * 0.35 {
+                    let above = above.map { members[$0] }, below = below.map { members[$0] }
+                    if debug { print("    split into two rows") }
+                    evaluate(above, depth: depth + 1); evaluate(below, depth: depth + 1)
+                    return
+                }
+            }
+            // A line is much longer than it is tall: a shield's stripes or
+            // an owl's feathers chain up too, but not in a row.
+            guard max(box.width, box.height) >= capHeight * 2.5 else { if debug { print("    rejected: not long enough") }; return }
             let rms = (residuals.reduce(0) { $0 + $1 * $1 } / Double(residuals.count)).squareRoot()
-            let curved = members.count >= 5 && rms > capHeight * 0.18
+            // Curved when the centres leave the line by more than letter
+            // wobble (descenders, a taller capital) AND a circle fits them
+            // clearly better than the line does.
+            var curved = false
             var radius: Double? = nil
-            if curved, let fit = circleFit(centres) { radius = fit.radius }
+            if members.count >= 5, rms > capHeight * 0.18, let fit = circleFit(centres) {
+                let circleRMS = (centres.reduce(0.0) { acc, c in
+                    let d = ((c.x - fit.center.x) * (c.x - fit.center.x) + (c.y - fit.center.y) * (c.y - fit.center.y)).squareRoot() - fit.radius
+                    return acc + d * d
+                } / Double(centres.count)).squareRoot()
+                if circleRMS < rms * 0.5 { curved = true; radius = fit.radius }
+            }
+            // Letters share a baseline: most of them end at the same
+            // distance along the line's normal (descenders and rotated
+            // boxes excepted). A wing's feathers or a shield's stripes
+            // chain like letters but stagger.
+            // Measured along the normal, so only straight text is held to
+            // it: a wing's feathers fan from a centre much as ring text
+            // does, and the radial version told them apart no better than
+            // chance.
+            let bottoms = members.map { m -> Double in
+                let corners = [Point2D(m.box.minX, m.box.minY), Point2D(m.box.maxX, m.box.minY), Point2D(m.box.minX, m.box.maxY), Point2D(m.box.maxX, m.box.maxY)]
+                return corners.map { ($0.x - mean.x) * normal.x + ($0.y - mean.y) * normal.y }.max() ?? 0
+            }.sorted()
+            let baseline = bottoms[bottoms.count / 2]
+            let aligned = Double(bottoms.filter { abs($0 - baseline) <= capHeight * 0.2 }.count) / Double(bottoms.count)
+            if debug { print("    baseline alignment \(aligned) angle \(Int(angle))") }
+            guard curved || aligned >= minimumBaselineAlignment else { if debug { print("    rejected: no common baseline") }; return }
             let ink = members.reduce(0.0) { $0 + $1.area } / max(1, members.reduce(0.0) { $0 + $1.box.width * $1.box.height })
             // Mixed case: a real share of the letters are markedly shorter
             // than the capitals (x-height is ~70% of cap height in most
@@ -146,6 +247,7 @@ public enum TextLineFinder {
             line.letterAspect = aspect
             lines.append(line)
         }
+        for members in groups.values { evaluate(members, depth: 0) }
         return lines.sorted { ($0.boundingBoxPixels.minY, $0.boundingBoxPixels.minX) < ($1.boundingBoxPixels.minY, $1.boundingBoxPixels.minX) }
     }
 

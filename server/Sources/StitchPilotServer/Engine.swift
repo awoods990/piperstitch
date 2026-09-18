@@ -86,11 +86,11 @@ enum DocumentBuilder {
         // `TextLineFinder.minimumCapHeightMM` at this size.
         var dropped = Set(dropShapeIndices ?? [])
         var omitted = omittedTextLines ?? 0
-        if dropShapeIndices == nil, source.pixelWidth > 0, source.bounds.width > 0 {
+        if dropShapeIndices == nil, source.bounds.width > 0 {
             let scale = min(widthMM / source.bounds.width, heightMM / max(1e-9, source.bounds.height))
             let minimum = TextLineFinder.minimumCapHeightMM(for: threadWeight)
             for line in TextLineFinder.find(shapes: source.shapes, fillColors: source.fillColors, imageHeightPixels: source.pixelHeight)
-                where line.capHeightPixels * scale < minimum {
+                where line.dropsWhenTooSmall && line.capHeightPixels * scale < minimum {
                 dropped.formUnion(line.shapeIndices)
                 omitted += 1
             }

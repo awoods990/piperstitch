@@ -278,13 +278,13 @@ do {
     // KEEP_SMALL_TEXT=1 sews it anyway, for comparison.
     var droppedShapeIndices = Set<Int>()
     var omittedTextLines = 0
-    if !isSVG, combined.width > 0 {
+    if combined.width > 0 {
         let scale = min(widthMM / combined.width, heightMM / max(1e-9, combined.height))
         let minimum = TextLineFinder.minimumCapHeightMM(for: .wt40)
         let lines = TextLineFinder.find(shapes: rawShapes, fillColors: fillColors, imageHeightPixels: artworkPixelHeight)
         for (k, line) in lines.enumerated() {
             let capMM = line.capHeightPixels * scale
-            let tooSmall = capMM < minimum
+            let tooSmall = capMM < minimum && line.dropsWhenTooSmall
             if tooSmall, ProcessInfo.processInfo.environment["KEEP_SMALL_TEXT"] == nil {
                 droppedShapeIndices.formUnion(line.shapeIndices)
                 omittedTextLines += 1
