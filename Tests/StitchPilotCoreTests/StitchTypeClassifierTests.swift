@@ -122,6 +122,22 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: taperingBlob, parameters: defaultParams) == .satin)
     }
 
+    /// A wide blob barely longer than it is wide is an area even in the
+    /// 8-12 mm band: the Sigma Chi shield (12 x 15 mm, 9.6 mm average)
+    /// sewed as satin with 15 mm crossings and a lattice down its middle.
+    @Test func aWideShortBlobInTheMediumBandIsFill() {
+        let shield = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(12, 0), Point2D(12, 9), Point2D(6, 15), Point2D(0, 9),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: shield, parameters: defaultParams) == .tatamiFill)
+        // The i's dot next to it: a compact 1.9 mm blob is a short satin
+        // bar, not a running-stitch outline.
+        let dot = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0.95, 0), Point2D(1.9, 0.95), Point2D(0.95, 1.9), Point2D(0, 0.95),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: dot, parameters: defaultParams) == .satin)
+    }
+
     /// A wide, roughly square blob classifies `.tatamiFill` outright. It
     /// used to come back `.satin` -- a convex square rail-fits without
     /// twisting, and width was never a classification-time reason on its
@@ -207,6 +223,22 @@ struct StitchTypeClassifierTests {
             Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
         ], closed: true)])
         #expect(StitchTypeClassifier.classifyLetteringRun(shapes: [column], parameters: defaultParams, capHeightMM: 3) == .tripleRun)
+    }
+
+    /// The Text step sets a too-small line at the weight's minimum cap
+    /// height; the run set there must be satin, not an outline -- one
+    /// rule for both, by thread weight.
+    @Test func aRunAtTheTextStepsMinimumIsSatin() {
+        let column = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(30, 0), Point2D(30, 4), Point2D(0, 4),
+        ], closed: true)])
+        for weight in [ThreadWeight.wt30, .wt40, .wt60] {
+            var params = defaultParams
+            params.threadWeight = weight
+            let minimum = TextLineFinder.minimumCapHeightMM(for: weight)
+            #expect(StitchTypeClassifier.classifyLetteringRun(shapes: [column], parameters: params, capHeightMM: minimum) == .satin, "\(weight) at \(minimum) mm")
+            #expect(StitchTypeClassifier.classifyLetteringRun(shapes: [column], parameters: params, capHeightMM: minimum - 0.5) == .tripleRun, "\(weight) under \(minimum) mm")
+        }
     }
 
     /// The core behavior the user's own report drove this design toward:

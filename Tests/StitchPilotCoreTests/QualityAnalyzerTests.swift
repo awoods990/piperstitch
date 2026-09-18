@@ -146,7 +146,9 @@ struct QualityAnalyzerTests {
         let color = RGBColor(hex: 0x0A1F44)
         let objects = [
             EmbroideryObject(name: "L", shape: normalSquare(at: Point2D(0, 0), sizeMM: 4), stitchType: .satin, threadColor: .generic(color)),
-            EmbroideryObject(name: "B", shape: normalSquare(at: Point2D(10, 0)), stitchType: .tatamiFill, threadColor: .generic(color)),
+            // Letter-sized: a 15 mm square would be an area, which the
+            // check leaves alone (`StitchTypeClassifier.isWideShortBlob`).
+            EmbroideryObject(name: "B", shape: normalSquare(at: Point2D(10, 0), sizeMM: 6), stitchType: .tatamiFill, threadColor: .generic(color)),
         ]
         let doc = StitchDocument(name: "Mixed", physicalWidthMM: 30, physicalHeightMM: 20, objects: objects)
         let plan = try DigitizePipeline.flatten(doc)

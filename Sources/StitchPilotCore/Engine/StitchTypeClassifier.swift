@@ -81,6 +81,19 @@ import Foundation
 /// rendering a real logo's tagline text and finding it illegible in a way
 /// no amount of "just make satin denser" would fix (see CHANGELOG.md).
 public enum StitchTypeClassifier {
+    /// A hole-free shape averaging wider than a letter stroke and not
+    /// much longer than it is wide -- an area, whatever the rail fit says.
+    static func isWideShortBlob(_ shape: VectorShape) -> Bool {
+        guard shape.subPaths.count == 1, let outer = shape.subPaths.first, outer.points.count >= 3 else { return false }
+        let area = abs(PolygonGeometry.signedArea(outer.points))
+        let (axis, mean) = PolygonGeometry.principalAxis(outer.points)
+        let (lo, hi) = PolygonGeometry.projectionRange(outer.points, axis: axis, mean: mean)
+        let length = hi - lo
+        guard length > 0, area > 0 else { return false }
+        let averageWidth = area / length
+        return averageWidth > letterStrokeMaxWidthMM && length < averageWidth * 3
+    }
+
     public static func classify(shape: VectorShape, parameters: StitchGenerationParameters) -> StitchType {
         guard let outer = shape.subPaths.first, outer.points.count >= 3 else { return .runningStitch }
 
@@ -92,7 +105,15 @@ public enum StitchTypeClassifier {
         guard length > 0, area > 0 else { return .runningStitch }
         let averageWidth = area / length
 
-        if averageWidth < parameters.minSatinWidthMM { return .tripleRun }
+        if averageWidth < parameters.minSatinWidthMM {
+            // A compact dot -- an i's dot, a full stop, a bullet -- is a
+            // short satin bar, never an outline: a 1.9 mm dot traced as a
+            // running stitch is a hollow diamond on the fabric.
+            let box = shape.boundingBox
+            let longer = max(box.width, box.height), shorter = min(box.width, box.height)
+            if shape.subPaths.count == 1, longer >= 1.0, shorter >= longer * 0.4, averageWidth >= 0.6 { return .satin }
+            return .tripleRun
+        }
         if shape.subPaths.count > 2 {
             // `allowBranchingSatin` (stage 4 — see DIGITIZING_ENGINE.md):
             // a shape with more than one hole (B, R with two counters in
@@ -164,6 +185,15 @@ public enum StitchTypeClassifier {
         // sections. Call it what it is. (`averageWidth` is the outer
         // polygon's, so this test belongs only here, on hole-free shapes.)
         if averageWidth > parameters.maxSatinWidthMM * 1.5 { return .tatamiFill }
+        // A wide shape that is not much longer than it is wide is an area,
+        // not a column, however the rail fit comes out: a 12 x 15 mm
+        // shield averaged 9.6 mm, passed as satin, and sewed 15 mm
+        // crossings with the generator's local fill patch as a lattice
+        // down its middle. The 8-12 mm band stays satin for a real column
+        // (a 40 x 10 mm band, a tapering swash), which is long. A stroke
+        // network offered branching satin (a block "H" averages 14 mm over
+        // its height) is judged by its strokes below, not by this.
+        if !parameters.allowBranchingSatin, isWideShortBlob(shape) { return .tatamiFill }
         if SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) { return .satin }
         // `allowBranchingSatin` (default false — see its own doc comment
         // on `StitchGenerationParameters`): a genuinely branching outline
@@ -186,7 +216,12 @@ public enum StitchTypeClassifier {
     /// `classifyLetteringRun` routes an entire run smaller than this to
     /// `.tripleRun` instead, which stays legible at any size since it
     /// traces the letterform's outline rather than trying to fill it.
-    private static let minimumSatinCapHeightMM = 5.0
+    /// One rule with the Text step's: `TextLineFinder.minimumCapHeightMM`
+    /// by thread weight (4 mm for 40-weight, 3 mm for the fine threads,
+    /// 5 mm for 30), so a line the setup sets "at the minimum" is satin,
+    /// not an outline. The two had disagreed by a millimetre and every
+    /// re-typed tagline set at exactly 4 mm came out hollow.
+    static func minimumSatinCapHeightMM(for weight: ThreadWeight) -> Double { TextLineFinder.minimumCapHeightMM(for: weight) }
 
     /// Decides ONE stitch type for an entire lettering run -- every glyph
     /// shape `LetteringGenerator` produces for one `LetteringSpec` -- rather
@@ -244,12 +279,20 @@ public enum StitchTypeClassifier {
     /// at the crossing level; see `classify`'s own doc comment for the
     /// identical reasoning applied to raster-imported shapes.
     public static func classifyLetteringRun(shapes: [VectorShape], parameters: StitchGenerationParameters, capHeightMM: Double) -> StitchType {
-        guard capHeightMM >= minimumSatinCapHeightMM else { return .tripleRun }
+        guard capHeightMM >= minimumSatinCapHeightMM(for: parameters.threadWeight) - 0.05 else { return .tripleRun }
 
         for shape in shapes {
-            if shape.subPaths.count > 2 { return .tatamiFill }
-            guard shape.subPaths.count == 1, shape.subPaths.first!.points.count >= 3 else { continue }
-            guard SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) else { return .tatamiFill }
+            guard let outer = shape.subPaths.first, outer.points.count >= 3 else { continue }
+            // A glyph that is not one column -- F, T, N, A, or anything
+            // with two counters -- is a stroke network, and with the
+            // branching path allowed it is satin along its strokes, as
+            // traced letters already are (`separateStrokesFromAreas`).
+            // Without it the whole run used to fall to fill: rows across
+            // 0.7 mm strokes at 4 mm, worse than either.
+            let single = shape.subPaths.count == 1 && SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters)
+            if single { continue }
+            if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) { continue }
+            return .tatamiFill
         }
         return .satin
     }
@@ -273,6 +316,15 @@ public enum StitchTypeClassifier {
     /// `runStitchType` when it's `.satin` on a multi-hole glyph.
     public static func classifyGlyphInRun(shape: VectorShape, runStitchType: StitchType) -> StitchType {
         guard runStitchType == .satin, shape.subPaths.count > 2 else { return runStitchType }
+        return .tatamiFill
+    }
+
+    /// `classifyGlyphInRun` for a run classified with branching satin
+    /// allowed: a two-counter glyph the branching path can trace stays
+    /// satin with the rest of its word.
+    public static func classifyGlyphInRun(shape: VectorShape, runStitchType: StitchType, parameters: StitchGenerationParameters) -> StitchType {
+        guard runStitchType == .satin, shape.subPaths.count > 2 else { return runStitchType }
+        if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) { return .satin }
         return .tatamiFill
     }
 
@@ -434,6 +486,18 @@ public enum StitchTypeClassifier {
     /// an area (see DIGITIZING_ENGINE.md, "professional samples"). Strokes
     /// that still can't be satin fall back to fill, as before.
     ///
+    /// Stroke width along the shape's skeleton, as percentiles: how even
+    /// the strokes are. A block letterform is nearly one width end to end;
+    /// a serif face's hairlines and bowls, or a shield sliced by a cross,
+    /// span a wide range.
+    static func strokeWidthSpread(_ shape: VectorShape) -> (p10: Double, p50: Double, p90: Double, max: Double, count: Int)? {
+        guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape) else { return nil }
+        let widths = topology.edges.flatMap { $0.widthsMM }.filter { $0 > 0 }.sorted()
+        guard widths.count >= 4 else { return nil }
+        func p(_ f: Double) -> Double { widths[min(widths.count - 1, Int(Double(widths.count) * f))] }
+        return (p(0.1), p(0.5), p(0.9), widths[widths.count - 1], widths.count)
+    }
+
     public static func separateStrokesFromAreas(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
         var result: [EmbroideryObject] = []
         for object in objects {
@@ -476,7 +540,8 @@ public enum StitchTypeClassifier {
                 // All stroke: keep the object, let it try branching satin.
                 let type = classify(shape: object.shape, parameters: strokeParameters)
                 if ProcessInfo.processInfo.environment["DEBUG_CLASSIFY"] != nil {
-                    print("  all-stroke \(object.name): \(type.rawValue); subPaths=\(object.shape.subPaths.count); branching: \(SatinColumnGenerator.branchingSatinRejection(shape: object.shape, parameters: strokeParameters) ?? "eligible")")
+                    let spread = strokeWidthSpread(object.shape).map { String(format: "widths p10 %.2f p50 %.2f p90 %.2f max %.2f (%d samples)", $0.p10, $0.p50, $0.p90, $0.max, $0.count) } ?? "no skeleton"
+                    print("  all-stroke \(object.name): \(type.rawValue); subPaths=\(object.shape.subPaths.count); branching: \(SatinColumnGenerator.branchingSatinRejection(shape: object.shape, parameters: strokeParameters) ?? "eligible"); \(spread)")
                 }
                 var stroke = object
                 if type == .satin { stroke.stitchType = .satin; stroke.parameters = strokeParameters; stroke.stitchTypeIsManualOverride = true }
@@ -517,7 +582,14 @@ public enum StitchTypeClassifier {
         for indices in groupsByColor.values {
             // An explicit choice -- the user's, or `separateStrokesFromAreas`'s
             // geometry-based one -- is not up for a sibling vote.
-            let candidates = indices.filter { !objects[$0].stitchTypeIsManualOverride && (objects[$0].stitchType == .satin || objects[$0].stitchType == .tatamiFill) }
+            // ...and neither is an area: a wide, short blob (see `classify`)
+            // is fill on its own geometry, and its satin siblings -- a
+            // shield and the banner beside it in one blue -- are not the
+            // letters of a word that must match it.
+            let candidates = indices.filter {
+                !objects[$0].stitchTypeIsManualOverride && (objects[$0].stitchType == .satin || objects[$0].stitchType == .tatamiFill)
+                    && !isWideShortBlob(objects[$0].shape)
+            }
             guard candidates.count > 1 else { continue }
 
             var anyStructurallyFillOnly = false

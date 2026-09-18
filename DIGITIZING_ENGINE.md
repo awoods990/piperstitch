@@ -1352,6 +1352,31 @@ the result). Still not found: the crest's "IN HOC SIGNO VINCES", whose
 letters fuse into the ribbon outline at import -- the knocked-out /
 merged text case noted before.
 
+**Sigma Chi at a polo chest (89 mm): the re-typed line came out hollow,
+and three traced defects around it.** "FOUNDATION", re-typed at the Text
+step's 4 mm minimum, sewed as a running-stitch outline: the lettering
+classifier's own satin floor was 5 mm (`minimumSatinCapHeightMM`), a
+millimetre above the Text step's rule, so every line set "at the
+minimum" was outlined -- LIBBi's tagline too, unnoticed at that zoom.
+One rule now, `TextLineFinder.minimumCapHeightMM` by the document's
+thread weight. Then the run came back as tatami fill: `classifyLetteringRun`
+dropped a whole run to fill when any glyph (F, T, N, A) was not a single
+column, never offering the branching path traced letters get; the
+lettering route now allows branching satin and the run is satin along
+its strokes. Around it: the 12 x 15 mm shield averaged 9.6 mm, passed the
+single-column fit, and sewed 15 mm crossings with the generator's local
+fill patch as a lattice down its middle -- a hole-free shape averaging
+wider than a letter stroke and less than three times longer than wide
+is an area (`isWideShortBlob`), filled, left out of the same-colour
+sibling vote (its satin banner is not the letters of its word) and out
+of the analyzer's mixed-texture warning; the 8-12 mm band stays satin
+for a real column. The i's dots (1.9 mm, under the 1.5 mm satin floor by
+mean width) were running-stitch diamonds; a compact dot is a short satin
+bar. Longest stitch 11.5 to 6.4 mm, readiness 91 to 96 at 100 mm. Still
+open: the serif "Sigma Chi" itself sews as branching satin with rough
+bowls and terminals (the a, the g, the S's ends) -- the generator on a
+contrast face, which wants its own session.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

@@ -337,6 +337,10 @@ public enum QualityAnalyzer {
         guard let document else { return }
         var groupsByColor: [RGBColor: [EmbroideryObject]] = [:]
         for object in document.objects where object.stitchType == .satin || object.stitchType == .tatamiFill {
+            // An area (a shield, a badge) filled beside a satin band of
+            // the same colour is the classifier's own split, not a
+            // texture slip -- see `StitchTypeClassifier.isWideShortBlob`.
+            if object.stitchType == .tatamiFill, StitchTypeClassifier.isWideShortBlob(object.shape) { continue }
             groupsByColor[object.threadColor.rgb, default: []].append(object)
         }
 

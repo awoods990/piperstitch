@@ -225,11 +225,19 @@ func editRoutes(_ engine: RoutesBuilder) {
                     return Point2D(cx + dx * cosT - dy * sinT + offsetX, cy + dx * sinT + dy * cosT + offsetY)
                 }, closed: sp.closed) })
             }
-            let parameters = StitchGenerationParameters()
+            // The run takes the document's thread weight (the density panel
+            // sets it on every object), so the satin-or-outline rule agrees
+            // with the Text step's minimum for that weight.
+            var parameters = StitchGenerationParameters()
+            if let weight = current.objects.map(\.parameters.threadWeight).first { parameters.threadWeight = weight }
+            // Letters are satin along their strokes, branching where the
+            // glyph does -- the same path traced lettering takes.
+            parameters.allowBranchingSatin = true
+            parameters.minSatinWidthMM = min(parameters.minSatinWidthMM, StitchTypeClassifier.strokeMinimumSatinWidthMM)
             let runType = StitchTypeClassifier.classifyLetteringRun(shapes: translated, parameters: parameters, capHeightMM: body.capHeightMM)
             let objects = translated.enumerated().map { i, shape -> EmbroideryObject in
-                EmbroideryObject(name: "Letter \(i + 1)", shape: shape, stitchType: StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType),
-                                 threadColor: body.threadColor, parameters: parameters)
+                EmbroideryObject(name: "Letter \(i + 1)", shape: shape, stitchType: StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType, parameters: parameters),
+                                 threadColor: body.threadColor, parameters: parameters, stitchTypeIsManualOverride: true)
             }
             let replace = Set(body.replaceIDs ?? [])
             let insertAt = current.objects.firstIndex(where: { replace.contains($0.id) }) ?? current.objects.count
