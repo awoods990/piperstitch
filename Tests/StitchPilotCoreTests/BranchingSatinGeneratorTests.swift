@@ -150,6 +150,31 @@ struct BranchingSatinGeneratorTests {
         }
     }
 
+    /// A block-letter "B" with square corners and two rectangular
+    /// counters, 6 mm strokes: the LIBBi wordmark in miniature. Its bowl
+    /// segments run round a sharp outside corner while the inner rail
+    /// stalls on the counter's corner; matching the rails by their own
+    /// arc lengths crossed them 15 mm apart and the letter was rejected
+    /// ("rails twist"). Paired rails keep each crossing's two ends
+    /// together, and no stitch is longer than the widest satin allowed.
+    @Test func squareCorneredBWithCountersIsBranchingSatin() throws {
+        let outer = SubPath(points: [Point2D(0, 0), Point2D(16, 0), Point2D(22, 3), Point2D(22, 10), Point2D(19, 13), Point2D(22, 16), Point2D(22, 23), Point2D(16, 26), Point2D(0, 26)], closed: true)
+        let top = SubPath(points: [Point2D(6, 6), Point2D(15, 6), Point2D(16, 7), Point2D(16, 9), Point2D(15, 10), Point2D(6, 10)], closed: true)
+        let bottom = SubPath(points: [Point2D(6, 16), Point2D(15, 16), Point2D(16, 17), Point2D(16, 19), Point2D(15, 20), Point2D(6, 20)], closed: true)
+        let b = VectorShape(subPaths: [outer, top, bottom])
+        var p = params()
+        p.allowBranchingSatin = true
+        #expect(SatinColumnGenerator.branchingSatinRejection(shape: b, parameters: p) == nil, "\(SatinColumnGenerator.branchingSatinRejection(shape: b, parameters: p) ?? "")")
+        let runs = try SatinColumnGenerator.generateBranchingRuns(for: b, parameters: p)
+        var longest = 0.0, total = 0
+        for run in runs {
+            total += run.count
+            for i in 1..<run.count { longest = max(longest, run[i - 1].distance(to: run[i])) }
+        }
+        #expect(total > 400, "expected real coverage, got \(total) points")
+        #expect(longest <= p.maxSatinWidthMM, "longest stitch \(longest)mm")
+    }
+
     @Test func generateBranchingProducesStitchesForTheTShape() throws {
         let t = tShape()
         let stitches = try SatinColumnGenerator.generateBranching(for: t, parameters: params())
@@ -494,7 +519,10 @@ struct BranchingSatinGeneratorTests {
                 // A satin crossing's midpoint is on the stroke's own
                 // centerline; a fan spoke's is halfway to the junction
                 // center; only a hop sewn straight across a counter has
-                // its midpoint on open fabric.
+                // its midpoint on open fabric. A connector under
+                // `DigitizePipeline.visibleConnectorMM` is allowed to
+                // clip a concave notch, as it is between objects.
+                guard a.distance(to: b) > DigitizePipeline.visibleConnectorMM else { continue }
                 let mid = Point2D((a.x + b.x) / 2, (a.y + b.y) / 2)
                 #expect(PolygonGeometry.pointInPolygons(mid, polygons: polygons),
                         "a \(String(format: "%.1f", a.distance(to: b)))mm stitch is sewn across open fabric, midpoint (\(mid.x), \(mid.y))")

@@ -134,6 +134,45 @@ enum SatinCorners {
         return corners
     }
 
+    /// Corners of a PAIRED rail set (a branch segment's: railA[i] and
+    /// railB[i] are the two ends of one skeleton crossing). The outside
+    /// vertex is found as a sharp turn on either rail; the inside vertex
+    /// is simply the other rail's point at the same index -- the pairing
+    /// already says which inner point belongs to which outer one, so
+    /// there is no search for a matching inner turn. `findCorners`'
+    /// search paired the LIBBi "B"'s top-left outer corner with a stall
+    /// at the junction 15 mm away (its true inner corner had been
+    /// smoothed into a curve), and the mitre legs ran the whole top bar.
+    static func findPairedCorners(railA: [Point2D], railB: [Point2D]) -> [Corner] {
+        guard railA.count == railB.count, railA.count >= 3 else { return [] }
+        let widths = zip(railA, railB).map { $0.distance(to: $1) }
+        let width = widths.reduce(0, +) / Double(widths.count)
+        guard width > 0.3 else { return [] }
+        let sA = cumulative(railA), sB = cumulative(railB)
+        let window = max(width * 0.5, 0.5)
+        var found: [(outerIsA: Bool, outer: Candidate, inner: Candidate)] = []
+        for (isA, rail, s, other, sOther) in [(true, railA, sA, railB, sB), (false, railB, sB, railA, sA)] {
+            for c in candidates(on: rail, cumulative: s, windowMM: window) {
+                // Outside vertex: the rail turns away from the other rail.
+                let toOther = other[c.index] - c.point
+                let sideOfOther = cross(c.dirIn, toOther) >= 0 ? 1.0 : -1.0
+                guard sideOfOther == c.turnSign else { continue }
+                let innerPoint = other[c.index]
+                let inner = Candidate(index: c.index, point: innerPoint, s: sOther[c.index], dirIn: c.dirIn, dirOut: c.dirOut, turnDegrees: c.turnDegrees, turnSign: c.turnSign)
+                found.append((isA, c, inner))
+            }
+        }
+        found.sort { $0.outer.index < $1.outer.index }
+        var corners: [Corner] = []
+        var lastIndex = -1
+        for f in found {
+            guard f.outer.index > lastIndex, let corner = build(outerIsA: f.outerIsA, outer: f.outer, inner: f.inner, width: widths[f.outer.index]) else { continue }
+            corners.append(corner)
+            lastIndex = f.outer.index
+        }
+        return corners
+    }
+
     private static func build(outerIsA: Bool, outer: Candidate, inner: Candidate, width: Double) -> Corner? {
         let pa = outer.point, pb = inner.point
         let t1 = outer.dirIn, t2 = outer.dirOut

@@ -569,9 +569,9 @@ public enum SatinColumnGenerator {
     /// thinned by `SatinSpacing.decimate` to width-dependent spacing.
     /// Returns the rails and `count` such that valid indices are
     /// `0...count`, matching what the former direct resample produced.
-    private static func fineThenDecimatedRails(railA: [Point2D], railB: [Point2D], density: Double, parameters: StitchGenerationParameters) -> (railA: [Point2D], railB: [Point2D], count: Int, mitre: [Bool]) {
+    private static func fineThenDecimatedRails(railA: [Point2D], railB: [Point2D], density: Double, parameters: StitchGenerationParameters, paired: Bool = false) -> (railA: [Point2D], railB: [Point2D], count: Int, mitre: [Bool]) {
         let fineDensity = density / SatinSpacing.oversampling
-        let (fineA, fineB, fineMitre) = fineRails(railA: railA, railB: railB, fineDensity: fineDensity, parameters: parameters)
+        let (fineA, fineB, fineMitre) = fineRails(railA: railA, railB: railB, fineDensity: fineDensity, parameters: parameters, paired: paired)
         let kept = SatinSpacing.decimate(railA: fineA, railB: fineB, parameters: parameters, flags: fineMitre)
         // Never fewer than three crossings (two for a degenerate stub):
         // `interiorRange` and the twist checks assume a real column.
@@ -586,7 +586,18 @@ public enum SatinColumnGenerator {
     /// between mitred corners (`SatinCorners`), with each corner square's
     /// own mitre crossings in between. Without corners this is one
     /// proportional match of the whole rails, as it always was.
-    private static func fineRails(railA: [Point2D], railB: [Point2D], fineDensity: Double, parameters: StitchGenerationParameters) -> (a: [Point2D], b: [Point2D], mitre: [Bool]) {
+    /// `paired` rails (a branch segment's, one A and one B hit per skeleton
+    /// sample) are resampled at the same fraction of their INDEX, never
+    /// each by its own arc length: the pairing is the truth about which
+    /// A goes with which B. Matching them proportionally by length threw
+    /// that away and, where one rail stalls on an inside corner while the
+    /// other sweeps round the outside (every letter with a counter), the
+    /// stalled rail spent its samples on the corner and had to catch up
+    /// later -- the LIBBi "B"'s crossings ran 15 mm from the stem's outer
+    /// edge clear across the counter to its far side, and the letter fell
+    /// back to fill. Mitred corners still take the piecewise route when
+    /// `SatinCorners` finds any.
+    private static func fineRails(railA: [Point2D], railB: [Point2D], fineDensity: Double, parameters: StitchGenerationParameters, paired: Bool = false) -> (a: [Point2D], b: [Point2D], mitre: [Bool]) {
         func proportional(_ a: [Point2D], _ b: [Point2D]) -> (a: [Point2D], b: [Point2D]) {
             guard a.count > 1, b.count > 1 else { return (a, b) }
             let weightedLength = max(
@@ -598,14 +609,44 @@ public enum SatinColumnGenerator {
                     PolygonGeometry.resampleByCountCurvatureWeighted(b, count: count, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight))
         }
         func plain() -> (a: [Point2D], b: [Point2D], mitre: [Bool]) {
-            let (a, b) = proportional(railA, railB)
+            let (a, b) = paired && railA.count == railB.count && railA.count > 1 ? pairedResample(railA, railB) : proportional(railA, railB)
             return (a, b, Array(repeating: false, count: a.count))
+        }
+        func pairedResample(_ a: [Point2D], _ b: [Point2D]) -> (a: [Point2D], b: [Point2D]) {
+            // Count from the longer rail, as `proportional` does, so the
+            // outside of a bend gets its full density; positions are the
+            // same fraction of the shared index on both rails.
+            let weightedLength = max(
+                PolygonGeometry.weightedPathLength(a, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight),
+                PolygonGeometry.weightedPathLength(b, referenceLengthMM: fineDensity, curvatureWeight: curvatureDensityWeight)
+            )
+            let count = max(2, Int((weightedLength / fineDensity).rounded()))
+            func at(_ rail: [Point2D], _ t: Double) -> Point2D {
+                let position = t * Double(rail.count - 1)
+                let i = min(rail.count - 2, Int(position.rounded(.down)))
+                let f = position - Double(i)
+                return Point2D(rail[i].x + (rail[i + 1].x - rail[i].x) * f, rail[i].y + (rail[i + 1].y - rail[i].y) * f)
+            }
+            var outA: [Point2D] = [], outB: [Point2D] = []
+            for k in 0...count {
+                let t = Double(k) / Double(count)
+                outA.append(at(a, t)); outB.append(at(b, t))
+            }
+            return (outA, outB)
         }
         // Ring columns (closed rails) and columns with no sharp corner
         // take the plain proportional path.
         let isClosedRing = railA.count > 1 && railA.first == railA.last
-        let corners = (parameters.satinMitreCorners && !isClosedRing) ? SatinCorners.findCorners(railA: railA, railB: railB) : []
+        let pairedRails = paired && railA.count == railB.count && railA.count > 1
+        let corners = (parameters.satinMitreCorners && !isClosedRing)
+            ? (pairedRails ? SatinCorners.findPairedCorners(railA: railA, railB: railB) : SatinCorners.findCorners(railA: railA, railB: railB)) : []
+        if ProcessInfo.processInfo.environment["DEBUG_RAILS"] != nil {
+            print("    fineRails: paired=\(paired) counts A=\(railA.count) B=\(railB.count) closedRing=\(isClosedRing) corners=\(corners.count)")
+        }
         guard !corners.isEmpty else { return plain() }
+        if pairedRails {
+            return pairedWithCorners(railA: railA, railB: railB, corners: corners, fineDensity: fineDensity, resample: pairedResample) ?? plain()
+        }
 
         var fineA: [Point2D] = [], fineB: [Point2D] = [], mitre: [Bool] = []
         var cursorA = 0.0, cursorB = 0.0
@@ -626,6 +667,53 @@ public enum SatinColumnGenerator {
         }
         append(proportional(SatinCorners.subPolyline(railA, from: cursorA, to: .infinity), SatinCorners.subPolyline(railB, from: cursorB, to: .infinity)), isMitre: false)
         guard fineA.count == fineB.count, fineA.count >= 3 else { return plain() }
+        return (fineA, fineB, mitre)
+    }
+
+    /// The piecewise-mitred rails for PAIRED rails: the pieces between
+    /// corners are cut at the same sample INDEX on both rails (the outer
+    /// rail's arc length locates the corner square, the pairing says
+    /// which inner sample goes with it), each piece is resampled paired,
+    /// and the corner's own mitre crossings sit between. Cutting the
+    /// inner rail by its own arc length instead -- `SatinCorners`' rule
+    /// for boundary-traced rails -- put the inner cut of the LIBBi "B"'s
+    /// stem corner a whole counter-width away from the outer one. Nil
+    /// when the corner positions don't advance, so the caller falls back.
+    private static func pairedWithCorners(railA: [Point2D], railB: [Point2D], corners: [SatinCorners.Corner], fineDensity: Double,
+                                          resample: ([Point2D], [Point2D]) -> (a: [Point2D], b: [Point2D])) -> (a: [Point2D], b: [Point2D], mitre: [Bool])? {
+        let count = railA.count
+        func cumulative(_ rail: [Point2D]) -> [Double] {
+            var out = [0.0]
+            for i in 1..<rail.count { out.append(out[i - 1] + rail[i].distance(to: rail[i - 1])) }
+            return out
+        }
+        let sA = cumulative(railA), sB = cumulative(railB)
+        var fineA: [Point2D] = [], fineB: [Point2D] = [], mitre: [Bool] = []
+        func append(_ piece: (a: [Point2D], b: [Point2D]), isMitre: Bool) {
+            var a = piece.a, b = piece.b
+            if let la = fineA.last, let lb = fineB.last, let fa = a.first, let fb = b.first, la.distance(to: fa) < 1e-6, lb.distance(to: fb) < 1e-6 {
+                a.removeFirst(); b.removeFirst()
+            }
+            fineA.append(contentsOf: a); fineB.append(contentsOf: b)
+            mitre.append(contentsOf: Array(repeating: isMitre, count: a.count))
+        }
+        var cursor = 0
+        for corner in corners {
+            let sOuter = corner.outerIsA ? sA : sB
+            // Last sample before the corner square, first sample after it.
+            guard let inIndex = sOuter.lastIndex(where: { $0 <= corner.sOuterIn }),
+                  let outIndex = sOuter.firstIndex(where: { $0 >= corner.sOuterOut }),
+                  inIndex >= cursor, outIndex > inIndex else { return nil }
+            if inIndex > cursor {
+                append(resample(Array(railA[cursor...inIndex]), Array(railB[cursor...inIndex])), isMitre: false)
+            }
+            append(SatinCorners.mitreCrossings(corner, spacingMM: fineDensity), isMitre: true)
+            cursor = outIndex
+        }
+        if cursor < count - 1 {
+            append(resample(Array(railA[cursor...]), Array(railB[cursor...])), isMitre: false)
+        }
+        guard fineA.count == fineB.count, fineA.count >= 3 else { return nil }
         return (fineA, fineB, mitre)
     }
 
@@ -1445,10 +1533,21 @@ public enum SatinColumnGenerator {
             let segment = segments[index]
             let count = segment.expandedA.count
             var lo = 0, hi = count
+            // The arm's own width away from its junctions: a crossing much
+            // wider than this near a node is still in the merge zone (the
+            // two bowls of a "B" flowing into their waist, 8-10 mm across
+            // where the arms are 6), even past the trim radius, and it is
+            // sewn better by the patch than as a fanned crossing of its own.
+            let sortedWidths = segment.widths.sorted()
+            let typicalWidth = sortedWidths.isEmpty ? 0 : sortedWidths[sortedWidths.count / 2]
+            func inMergeZone(_ i: Int, node: StrokeTopologyAnalyzer.Node, radius: Double) -> Bool {
+                segment.widths[i] > typicalWidth * junctionMergeWidthFactor
+                    && node.position.distance(to: midpoint(segment.expandedA[i], segment.expandedB[i])) <= radius * junctionMergeReachFactor
+            }
             if segment.edge.startNodeID != segment.edge.endNodeID {
                 if let node = nodesByID[segment.edge.startNodeID], patchedNodeIDs.contains(segment.edge.startNodeID) {
                     let radius = junctionTrimRadius(for: node)
-                    while lo < hi - 1, node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) <= radius {
+                    while lo < hi - 1, node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) <= radius || inMergeZone(lo, node: node, radius: radius) {
                         let reach = node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) + patchOverlap
                         patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? 0, reach)
                         lo += 1
@@ -1456,7 +1555,7 @@ public enum SatinColumnGenerator {
                 }
                 if let node = nodesByID[segment.edge.endNodeID], patchedNodeIDs.contains(segment.edge.endNodeID) {
                     let radius = junctionTrimRadius(for: node)
-                    while hi > lo + 1, node.position.distance(to: midpoint(segment.expandedA[hi - 1], segment.expandedB[hi - 1])) <= radius {
+                    while hi > lo + 1, node.position.distance(to: midpoint(segment.expandedA[hi - 1], segment.expandedB[hi - 1])) <= radius || inMergeZone(hi - 1, node: node, radius: radius) {
                         let reach = node.position.distance(to: midpoint(segment.expandedA[hi - 1], segment.expandedB[hi - 1])) + patchOverlap
                         patchRadiusByNode[node.id] = max(patchRadiusByNode[node.id] ?? 0, reach)
                         hi -= 1
@@ -1477,6 +1576,15 @@ public enum SatinColumnGenerator {
             let isRing = segment.edge.startNodeID == segment.edge.endNodeID
             let checked = interiorRange(count: count).clamped(to: lo..<hi)
             if !isRing, isTwisted(segment.expandedA, segment.expandedB, within: checked) {
+                if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil {
+                    for i in checked where i + 1 < count {
+                        let a0 = segment.expandedA[i], b0 = segment.expandedB[i], a1 = segment.expandedA[i + 1], b1 = segment.expandedB[i + 1]
+                        if segmentsIntersect(a0, b0, a1, b1), let pt = intersectionPoint(a0, b0, a1, b1), ![a0, b0, a1, b1].contains(where: { $0.distance(to: pt) <= fanPivotToleranceMM }) {
+                            print(String(format: "    twist: segment %d->%d crossing %d/%d at (%.1f,%.1f): A(%.1f,%.1f)-B(%.1f,%.1f) then A(%.1f,%.1f)-B(%.1f,%.1f) width %.1f mitre %d",
+                                         segment.edge.startNodeID, segment.edge.endNodeID, i, count, pt.x, pt.y, a0.x, a0.y, b0.x, b0.y, a1.x, a1.y, b1.x, b1.y, segment.widths[i], segment.mitre[i] ? 1 : 0))
+                        }
+                    }
+                }
                 throw SatinGenerationError.shapeNotSuitable("a branch segment's rails twist across each other")
             }
         }
@@ -1485,7 +1593,7 @@ public enum SatinColumnGenerator {
         for nodeID in patchedNodeIDs.sorted() {
             guard let node = nodesByID[nodeID] else { continue }
             let radius = patchRadiusByNode[nodeID] ?? junctionTrimRadius(for: node)
-            let axis = junctionPatchAxis(nodeID: nodeID, segments: segments)
+            let axis = junctionPatchAxis(nodeID: nodeID, node: node, segments: segments, outerBoundary: polygons.first ?? [])
             if let patch = junctionPatchFill(node: node, radius: radius, axis: axis, shapePolygons: polygons, parameters: parameters) {
                 patchByNode[nodeID] = patch
             }
@@ -1507,7 +1615,36 @@ public enum SatinColumnGenerator {
     /// was its widest arm and the patch was sewn as a dozen 7 mm
     /// stitches running the length of the 3.8 mm upright -- a flat block
     /// with the wrong sheen, found on the Oholi wordmark's first render.
-    private static func junctionPatchAxis(nodeID: Int, segments: [BranchSegment]) -> Point2D? {
+    private static func junctionPatchAxis(nodeID: Int, node: StrokeTopologyAnalyzer.Node, segments: [BranchSegment], outerBoundary: [Point2D]) -> Point2D? {
+        // First choice: the direction of the shape's OUTER edge nearest
+        // the node. A junction sits inside a column whose outside edge
+        // runs past it -- the right side of a "B" where its bowls meet,
+        // the upright of an "H", the bar of a "T" -- and that edge is the
+        // grain the patch should follow. Arm tangents alone could not tell
+        // a "B"'s two bowls (120 degrees apart, curving) from its waist,
+        // and paired the waist with a bowl as the through stroke: a dozen
+        // 9 mm diagonals across the letter's right side. Only when the
+        // outer edge is far off (a junction deep in a blob) do the arms
+        // decide.
+        // The grain runs at right angles to the line from the node to that
+        // nearest outer point, so the chords point at the edge -- the same
+        // as following a straight edge's tangent, and at a concave notch
+        // (the "B"'s waist, where its bowls meet) it points the chords
+        // into the notch rather than along one of the notch's slanted
+        // sides.
+        if outerBoundary.count >= 2 {
+            var best: (distance: Double, point: Point2D)? = nil
+            for i in 0..<outerBoundary.count {
+                let a = outerBoundary[i], b = outerBoundary[(i + 1) % outerBoundary.count]
+                let nearest = nearestPointOnSegment(node.position, a, b)
+                let d = node.position.distance(to: nearest)
+                if best == nil || d < best!.distance { best = (d, nearest) }
+            }
+            if let best, best.distance > 1e-6, best.distance <= max(node.widthMM, 1.0) * junctionEdgeReachFactor {
+                let toEdge = best.point - node.position
+                return Point2D(-toEdge.y, toEdge.x) * (1 / toEdge.length)
+            }
+        }
         struct Arm { var direction: Point2D; var width: Double }
         var arms: [Arm] = []
         for segment in segments where segment.edge.startNodeID == nodeID || segment.edge.endNodeID == nodeID {
@@ -1537,13 +1674,22 @@ public enum SatinColumnGenerator {
         return arms.max { $0.width < $1.width }?.direction
     }
 
+    /// See `junctionPatchAxis`: the outer edge decides the grain when it is
+    /// within this many node widths of the node.
+    private static let junctionEdgeReachFactor = 1.0
+
     /// See `junctionPatchAxis`: how far out along an arm its direction is
     /// measured (the first sample or two sit inside the junction's fan).
-    private static let junctionArmTangentReachMM = 1.5
+    private static let junctionArmTangentReachMM = 2.5
 
     /// See `junctionPatchAxis`: two arms count as one through stroke when
-    /// the angle between them is within ~45 degrees of straight.
-    private static let throughStrokeMinimumOpposition = 0.7
+    /// the angle between them is within ~60 degrees of straight. The two
+    /// bowls of a "B" leave their shared junction about 120 degrees apart
+    /// and are one column visually (the letter's right side); at 45
+    /// degrees they fell through to the widest-arm rule and the patch was
+    /// laid at the waist's angle, a dozen 8 mm diagonals across the
+    /// letter's grain.
+    private static let throughStrokeMinimumOpposition = 0.5
 
     /// How finely `hopStaysOnShape` samples a connector for leaving the
     /// shape -- a counter narrower than this could in principle be
@@ -1597,6 +1743,12 @@ public enum SatinColumnGenerator {
     /// one untrimmed fan. The PATCH's own radius is derived from what
     /// actually got trimmed (see `branchingPlan`), not from this directly.
     private static let junctionTrimRadiusFactor = 0.75
+
+    /// See `branchingPlan`'s trim loop: a crossing wider than this multiple
+    /// of its arm's median width, within `junctionMergeReachFactor` trim
+    /// radii of the node, is trimmed into the patch as well.
+    private static let junctionMergeWidthFactor = 1.35
+    private static let junctionMergeReachFactor = 3.0
 
     private static func junctionTrimRadius(for node: StrokeTopologyAnalyzer.Node) -> Double {
         max(node.widthMM, 1.0) * junctionTrimRadiusFactor
@@ -1922,6 +2074,10 @@ public enum SatinColumnGenerator {
             case (nil, nil):
                 continue
             }
+            if ProcessInfo.processInfo.environment["DEBUG_RAILS"] != nil, hitA.distance(to: hitB) > 1.5 * widthsMM[i] {
+                print(String(format: "    rail %d at (%.1f,%.1f) width %.1f: A %@ B %@ chord %.1f", i, polyline[i].x, polyline[i].y, widthsMM[i],
+                             validA.map { String(format: "(%.1f,%.1f)", $0.x, $0.y) } ?? "miss", validB.map { String(format: "(%.1f,%.1f)", $0.x, $0.y) } ?? "miss", hitA.distance(to: hitB)))
+            }
             }
             railA.append(hitA)
             railB.append(hitB)
@@ -2056,7 +2212,7 @@ public enum SatinColumnGenerator {
         // ruled out as the cause there).
         // Same fine-grid-then-decimate placement as `computeCrossings` --
         // see the comment there.
-        let (resampledA, resampledB, crossingCount, mitre) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters)
+        let (resampledA, resampledB, crossingCount, mitre) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters, paired: true)
         // No twist check here: `branchingPlan` applies `isTwisted` to each
         // segment's KEPT crossings after junction trimming (see its own
         // doc comment for why checking the untrimmed segment rejected

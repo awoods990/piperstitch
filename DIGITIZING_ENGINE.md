@@ -1115,6 +1115,58 @@ was measured against:
 Oholi simple at 105 mm: 23 trims to 14; corpus at 100 mm: cap-logo B 27
 to 14, Sigma Chi 164 to 30, Sarasota 56 to 30, no readiness score lower.
 
+## Third sew-out -- the LIBBi wordmark (September 2026)
+
+"LIBBi" at ~95 mm on the Brother, PES, cotton over tear-away; the
+customer saw holes in the fill and ragged letter edges. The engine had
+sewn every letter as tatami: the "B"s (6 mm strokes, two counters) were
+fill because the branching-satin path rejected them ("rails twist"),
+and the same-colour consistency pass then pulled the L, I and i -- which
+had classified as satin -- down to fill with them. The professionally
+digitized "SIESTA KEY" reference (26 mm block letters, ~6 mm strokes) is
+satin on every letter; so, now, is LIBBi.
+
+- **Lettering is a stroke network.** `StitchTypeClassifier.
+  separateStrokesFromAreas` offers the branching-satin path to any
+  fill-classified shape nowhere wider than `letterStrokeMaxWidthMM`
+  (7.5 mm; `ShapeMerger.isNowhereWiderThan`, an erosion test) -- whole,
+  counters and all. The 3 mm keyline split stays for shapes that are
+  part area, part line.
+- **Paired rails stay paired.** A branch segment's rails come one A and
+  one B per skeleton sample; `fineRails` was re-matching them
+  proportionally by each rail's own arc length, so where the inner rail
+  stalled on a counter's corner while the outer swept round the outside,
+  the stall soaked up samples and the pairing slid: crossings ran 15 mm
+  from the stem's outer edge across the counter. Paired rails are now
+  resampled at the same index fraction (`pairedResample`), and their
+  corners come from `SatinCorners.findPairedCorners` -- the outside
+  vertex is a sharp turn on either rail, the inside vertex is the other
+  rail's point at the same index -- with the pieces between corners cut
+  at the same index on both rails (`pairedWithCorners`). `findCorners`'
+  search had paired the "B"'s top-left corner with a stall 15 mm away and
+  run the mitre legs the length of the top bar.
+- **Junction grain from the nearest outer edge.** The patch's chords now
+  point at the shape's nearest outer boundary point (grain perpendicular
+  to that line) when it is within a node width; arm tangents decide only
+  deeper inside a blob. The "B"'s two bowls leave their shared waist node
+  ~120 degrees apart, curving, and every tangent rule chose a diagonal --
+  a dozen 9 mm diagonals across the letter's right side. Pointing the
+  chords into the notch between the bowls reads as the waist bar meeting
+  the right side, which is what the letter is.
+- **Merge-zone trim.** Arm crossings wider than 1.35x the arm's median
+  width within three trim radii of a node are trimmed into the patch too
+  (`junctionMergeWidthFactor`); the through-stroke opposition test relaxed
+  to 60 degrees off straight.
+- The cap-logo "B" test now tolerates connectors under
+  `visibleConnectorMM` clipping a concave notch, matching the engine's
+  own rule.
+
+LIBBi at 95 mm: six letters, all satin, 2 106 stitches, 8 trims (was
+1 871 stitches of fill with the ragged edges the sample shows). Corpus
+at 100 mm unchanged in readiness; Amerus's navy leg (nowhere wider than
+7.5 mm) is one satin network instead of two fill patches and an
+outline.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

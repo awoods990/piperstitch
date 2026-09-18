@@ -141,6 +141,23 @@ public enum ShapeMerger {
     /// area, no thick part means an ordinary stroke shape (the caller
     /// decides satin vs fill for it as before). Nil only for degenerate
     /// input.
+    /// True when no part of the shape is wider than `widthMM` -- an
+    /// erosion by half that width leaves nothing. How a letter is told
+    /// from an area: a 6 mm block letter with counters is a stroke network
+    /// a digitizer sews as satin, whatever its overall size.
+    public static func isNowhereWiderThan(_ shape: VectorShape, widthMM: Double) -> Bool {
+        guard !shape.subPaths.isEmpty, widthMM > 0, let sizing = rasterSizing(for: shape.boundingBox) else { return false }
+        let count = sizing.width * sizing.height
+        var mask = [Bool](repeating: false, count: count)
+        rasterize(polygons: shape.subPaths.map { $0.points }, into: &mask, width: sizing.width, height: sizing.height,
+                  originX: sizing.originX, originY: sizing.originY, scale: sizing.scale)
+        let radius = Int((widthMM / 2 * sizing.scale).rounded())
+        guard radius >= 1 else { return false }
+        var complement = mask.map { !$0 }
+        dilate(&complement, width: sizing.width, height: sizing.height, radius: radius)
+        return complement.allSatisfy { $0 }
+    }
+
     public static func splitThickAndThin(_ shape: VectorShape, thinWidthMM: Double, overlapMM: Double,
                                          minThinAreaMM2: Double = 2.0, minThickAreaMM2: Double = 6.0) -> (thick: [VectorShape], thin: [VectorShape])? {
         guard !shape.subPaths.isEmpty, thinWidthMM > 0 else { return nil }

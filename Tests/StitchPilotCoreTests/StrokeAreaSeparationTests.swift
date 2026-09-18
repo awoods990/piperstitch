@@ -64,6 +64,26 @@ struct StrokeAreaSeparationTests {
         #expect(report.issues.contains { $0.message.contains("too small to sew") && $0.message.hasPrefix("1 detail") })
     }
 
+    /// Lettering: a fill-classified shape nowhere wider than
+    /// `letterStrokeMaxWidthMM` is a stroke network and gets the
+    /// branching-satin path whole -- the professionally digitized
+    /// "SIESTA KEY" is satin on every 6 mm letter.
+    @Test func letterWidthStrokeNetworkBecomesSatin() {
+        // A 6 mm "H", 26 mm tall: no single column, no keyline -- fill by
+        // the plain classifier, satin as lettering.
+        let h = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(6, 0), Point2D(6, 10), Point2D(14, 10), Point2D(14, 0), Point2D(20, 0),
+            Point2D(20, 26), Point2D(14, 26), Point2D(14, 16), Point2D(6, 16), Point2D(6, 26), Point2D(0, 26),
+        ], closed: true)])
+        #expect(ShapeMerger.isNowhereWiderThan(h, widthMM: StitchTypeClassifier.letterStrokeMaxWidthMM))
+        #expect(!ShapeMerger.isNowhereWiderThan(VectorShape(subPaths: [SubPath(points: rect(0, 0, 20, 20), closed: true)]), widthMM: StitchTypeClassifier.letterStrokeMaxWidthMM))
+        let object = EmbroideryObject(name: "H", shape: h, stitchType: .tatamiFill, threadColor: .generic(RGBColor(hex: 0x000000)))
+        let result = StitchTypeClassifier.separateStrokesFromAreas([object])
+        #expect(result.count == 1)
+        #expect(result[0].stitchType == .satin)
+        #expect(result[0].parameters.allowBranchingSatin)
+    }
+
     @Test func aPlainSquareIsAllArea() throws {
         let square = VectorShape(subPaths: [SubPath(points: rect(0, 0, 20, 20), closed: true)])
         let split = try #require(ShapeMerger.splitThickAndThin(square, thinWidthMM: 3.0, overlapMM: 0.4))

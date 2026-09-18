@@ -307,6 +307,17 @@ public enum StitchTypeClassifier {
     /// ever a single satin column.
     public static let strokeSplitWidthMM = 3.0
 
+    /// A fill-classified shape nowhere wider than this is a stroke network
+    /// -- lettering, most often -- and is offered the branching-satin
+    /// path whole, holes and all, rather than being sewn as fill. The
+    /// professionally digitized "SIESTA KEY" reference (26 mm block
+    /// letters, ~6 mm strokes) is satin on every letter; the LIBBi
+    /// wordmark's 6 mm letters, sewn as fill by us, came off the machine
+    /// with ragged edges and thin spots that satin does not have. Kept
+    /// under `maxSatinWidthMM`: a 40-weight satin stitch much past 8 mm
+    /// snags, and a digitizer would fill a band that wide.
+    public static let letterStrokeMaxWidthMM = 7.5
+
     /// How far a separated stroke grows back over the area it was cut
     /// from, so the satin lands on fill rather than beside it.
     public static let strokeAreaOverlapMM = 0.4
@@ -391,8 +402,19 @@ public enum StitchTypeClassifier {
     public static func separateStrokesFromAreas(_ objects: [EmbroideryObject]) -> [EmbroideryObject] {
         var result: [EmbroideryObject] = []
         for object in objects {
-            guard object.stitchType == .tatamiFill,
-                  let split = ShapeMerger.splitThickAndThin(object.shape, thinWidthMM: strokeSplitWidthMM, overlapMM: strokeAreaOverlapMM) else {
+            guard object.stitchType == .tatamiFill, !object.stitchTypeIsManualOverride else {
+                result.append(object)
+                continue
+            }
+            // A letterform: nowhere wider than a satin column, so the whole
+            // thing is strokes -- even when every stroke is well over the
+            // 3 mm keyline threshold below.
+            let split: (thick: [VectorShape], thin: [VectorShape])
+            if ShapeMerger.isNowhereWiderThan(object.shape, widthMM: letterStrokeMaxWidthMM) {
+                split = ([], [object.shape])
+            } else if let s = ShapeMerger.splitThickAndThin(object.shape, thinWidthMM: strokeSplitWidthMM, overlapMM: strokeAreaOverlapMM) {
+                split = s
+            } else {
                 result.append(object)
                 continue
             }
