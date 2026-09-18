@@ -94,7 +94,17 @@ public enum StitchTypeClassifier {
         return averageWidth > letterStrokeMaxWidthMM && length < averageWidth * 3
     }
 
-    public static func classify(shape: VectorShape, parameters: StitchGenerationParameters) -> StitchType {
+    public static func classify(shape rawShape: VectorShape, parameters: StitchGenerationParameters) -> StitchType {
+        // A one-hole shape whose hole is too small to sew: `DigitizePipeline`
+        // drops it (`droppingUnsewable`) before generating, so a 5 mm "A"
+        // whose counter is under the area floor is, to the machine, a
+        // hole-less shape. Classified with the hole it read as a ring with
+        // arms and took the branching path, whose plan on the hole-less
+        // skeleton covered a third of the letter. Only this case: judging
+        // every shape by its sewable sub-paths re-routed the anti-alias
+        // halo rings of a transparent PNG too.
+        var shape = rawShape
+        if rawShape.subPaths.count == 2, let sewable = droppingUnsewable(rawShape), sewable.subPaths.count == 1 { shape = sewable }
         guard let outer = shape.subPaths.first, outer.points.count >= 3 else { return .runningStitch }
 
         let area = abs(PolygonGeometry.signedArea(outer.points))

@@ -243,8 +243,48 @@ public enum SatinColumnGenerator {
         var outer = shape.subPaths[0].points, hole = shape.subPaths[1].points
         if outer.count > 1, outer.first == outer.last { outer.removeLast() }
         if hole.count > 1, hole.first == hole.last { hole.removeLast() }
-        return (try? computeRingRails(outer: outer, hole: hole)) != nil
+        guard (try? computeRingRails(outer: outer, hole: hole)) != nil else { return false }
+        return !ringHasArms(shape)
     }
+
+    /// Whether a one-hole shape is more than a band round its hole: an
+    /// "a" (bowl, stem, hook), a "p" or "R" (bowl and stem) have a loop in
+    /// their skeleton AND arms leaving it. The radial sweep from the
+    /// hole's centre reaches all of such a letter -- so the reach test
+    /// passes -- but aims every crossing at the hole, and the stem and
+    /// hook come out as a fan of diagonals (the Sigma Chi "a"). Those
+    /// letters take the branching path, which rails each arm along its
+    /// own centreline and the loop as a ring. An "O", a "D", a plain
+    /// ring: a loop and nothing else, still a ring here.
+    public static func ringHasArms(_ shape: VectorShape) -> Bool {
+        guard let topology = StrokeTopologyAnalyzer.analyze(shape: shape) else { return false }
+        // The branching path sews the hole as a ring segment, so it needs
+        // the skeleton to have a loop to begin with. A 5 mm "A" whose
+        // counter is too small to leave one is a Y with a wide junction,
+        // and the branching path covered a third of it; the radial sweep
+        // covers all of it.
+        let debug = ProcessInfo.processInfo.environment["DEBUG_CLASSIFY"] != nil
+        guard topology.edges.contains(where: { $0.isClosedLoop || $0.startNodeID == $0.endNodeID }) else {
+            if debug { print("    ring: no skeleton loop -> ring") }
+            return false
+        }
+        for edge in topology.edges where !edge.isClosedLoop && edge.startNodeID != edge.endNodeID {
+            // A real arm is a stroke: longer than it is wide by a margin.
+            // A wide bar with a slot in it has skeleton "arms" into its
+            // solid ends that are as wide as they are long -- still a ring.
+            let width = edge.widthsMM.max() ?? 0
+            if PolygonGeometry.pathLength(edge.polyline) >= max(ringArmMinimumLengthMM, width * ringArmLengthToWidth) {
+                if debug { print(String(format: "    ring: arm %.1f mm (width %.1f) -> branching", PolygonGeometry.pathLength(edge.polyline), width)) }
+                return true
+            }
+        }
+        if debug { print("    ring: loop and no real arm -> ring") }
+        return false
+    }
+    /// An arm shorter than this (and than the stroke is wide) is a
+    /// pruning remnant, not a stem or a hook.
+    private static let ringArmMinimumLengthMM = 1.5
+    private static let ringArmLengthToWidth = 1.5
 
     /// A coarse centroid (plain vertex average, matching the same
     /// approximation `PolygonGeometry.principalAxis` already uses
@@ -1219,9 +1259,10 @@ public enum SatinColumnGenerator {
     /// other segment — see `computeSegmentRingRails`'s own doc comment
     /// for why a self-loop specifically needs the radial technique
     /// rather than the tangent-walk one every other segment uses.
-    private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]]) throws -> (railA: [Point2D], railB: [Point2D]) {
+    private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) throws -> (railA: [Point2D], railB: [Point2D]) {
+        let minimumWidth = parameters.minSatinWidthMM
         if edge.startNodeID == edge.endNodeID {
-            if let rails = computeSegmentRingRails(loopPolyline: edge.polyline, shapePolygons: shapePolygons) {
+            if let rails = computeSegmentRingRails(loopPolyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth) {
                 return rails
             }
             // The radial sweep only works for a roundish loop whose centroid
@@ -1236,9 +1277,9 @@ public enum SatinColumnGenerator {
             guard edge.polyline.count == edge.widthsMM.count, edge.polyline.count >= 3 else {
                 throw SatinGenerationError.shapeNotSuitable("couldn't trace a consistent ring column around this loop segment")
             }
-            return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons)
+            return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth)
         }
-        return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons)
+        return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth)
     }
 
     /// Generates satin stitches for a branching shape by decomposing it
@@ -1489,7 +1530,7 @@ public enum SatinColumnGenerator {
         var segments: [BranchSegment] = []
         for leg in orderedLegs(topology) {
             let edge = leg.edge
-            let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons)
+            let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons, parameters: parameters)
             guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters),
                   !crossings.expandedA.isEmpty else {
                 // A stub of skeleton too short to carry a single crossing
@@ -1511,7 +1552,40 @@ public enum SatinColumnGenerator {
             incidentEdgeCount[segment.edge.startNodeID, default: 0] += 1
             incidentEdgeCount[segment.edge.endNodeID, default: 0] += 1
         }
-        let patchedNodeIDs = Set(incidentEdgeCount.filter { $0.value >= minimumJunctionEdgeCount }.map { $0.key })
+        // A node is patched when at least two substantial arms meet there
+        // (an H's crossbar into its stem, a B's bowls at their waist). A
+        // hairline arch running into a stem -- a serif m's or n's top --
+        // is not a crease to cover: its own narrow satin simply runs into
+        // the stem's material, and the stem's crossings run up to the
+        // node. Trimming both back and chording across the gap was the
+        // X-marks at every arch top of the Sigma Chi "m".
+        var substantialArmCount: [Int: Int] = [:]
+        for segment in segments where segment.edge.startNodeID != segment.edge.endNodeID {
+            // An edge runs junction to end -- an m's arch AND the stem
+            // below it -- so the arm is judged near the node: the lower
+            // quartile of its widths over the first few node-widths of
+            // arc length (the widths right at the node are the stem's).
+            func armWidth(from start: Bool, node: StrokeTopologyAnalyzer.Node) -> Double {
+                let polyline = start ? segment.edge.polyline : segment.edge.polyline.reversed()
+                let widths = start ? segment.edge.widthsMM : segment.edge.widthsMM.reversed()
+                let reach = max(2.0, node.widthMM * 3)
+                var run = 0.0, sample: [Double] = []
+                for i in 0..<min(polyline.count, widths.count) {
+                    if i > 0 { run += polyline[i - 1].distance(to: polyline[i]) }
+                    if run > reach { break }
+                    sample.append(widths[i])
+                }
+                let sorted = sample.sorted()
+                return sorted.isEmpty ? 0 : sorted[sorted.count / 4]
+            }
+            if let node = nodesByID[segment.edge.startNodeID], armWidth(from: true, node: node) >= node.widthMM * substantialArmWidthFraction {
+                substantialArmCount[node.id, default: 0] += 1
+            }
+            if let node = nodesByID[segment.edge.endNodeID], armWidth(from: false, node: node) >= node.widthMM * substantialArmWidthFraction {
+                substantialArmCount[node.id, default: 0] += 1
+            }
+        }
+        let patchedNodeIDs = Set(incidentEdgeCount.filter { $0.value >= minimumJunctionEdgeCount && (substantialArmCount[$0.key] ?? 0) >= minimumJunctionEdgeCount }.map { $0.key })
 
         // Trim off whichever of each incident edge's own crossings near a
         // patched node fall within that node's trim radius -- those are
@@ -1716,6 +1790,11 @@ public enum SatinColumnGenerator {
     /// nothing for a patch to bridge.
     private static let minimumJunctionEdgeCount = 2
 
+    /// An arm whose median width is under this fraction of its node's is
+    /// a hairline meeting a stem, not a party to a crease -- see the
+    /// patched-node selection in `branchingPlan`.
+    private static let substantialArmWidthFraction = 0.6
+
     /// How many samples `junctionPatchFill`'s radial sweep casts around a
     /// full circle -- dense enough to trace a typical junction's own real
     /// boundary shape (including a concave corner where two arms meet)
@@ -1885,6 +1964,16 @@ public enum SatinColumnGenerator {
     /// merely happens to be on the narrow side.
     private static let taperCollapseWidthMM = 0.5
 
+    /// A near-zero width within this arc length of a segment's end is a
+    /// tapering tip (collapsed to a point); farther in it is a hairline
+    /// (sewn at the minimum width) -- see `computeSegmentRails`.
+    private static let tipZoneLengthMM = 1.0
+
+    /// A skeleton loop at least this long runs round a real counter (an
+    /// "a"'s bowl is 11 mm); shorter is a pinhole -- see
+    /// `computeSegmentRingRails`.
+    private static let realRingMinimumLoopLengthMM = 6.0
+
     /// Arc-length window (mm) `smoothedPolyline` averages each interior
     /// sample over before rail-fitting — see that function's own doc
     /// comment for why this exists at all. Chosen well under a typical
@@ -1987,11 +2076,22 @@ public enum SatinColumnGenerator {
     /// `segmentRailWidthToleranceFactor` times that estimate is rejected
     /// as having escaped into an unrelated connected branch rather than
     /// trusted as this segment's own boundary.
-    private static func computeSegmentRails(polyline rawPolyline: [Point2D], widthsMM: [Double], shapePolygons: [[Point2D]]) throws -> (railA: [Point2D], railB: [Point2D]) {
+    private static func computeSegmentRails(polyline rawPolyline: [Point2D], widthsMM: [Double], shapePolygons: [[Point2D]], minimumWidthMM: Double = 0) throws -> (railA: [Point2D], railB: [Point2D]) {
         guard rawPolyline.count >= 2, rawPolyline.count == widthsMM.count else {
             throw SatinGenerationError.shapeNotSuitable("a branch segment needs at least two centerline points")
         }
         let polyline = smoothedPolyline(rawPolyline)
+        // Arc length from each end, so a near-zero width is read as a
+        // tapering tip only near an end of the segment; in the middle it
+        // is a hairline -- a serif face's thin arch or bowl top -- and a
+        // hairline is sewn at the minimum satin width, centred on the
+        // stroke, not collapsed to a bare line. Every commercial digitizer
+        // thickens a hairline to what the thread can hold; a line with no
+        // zigzag is invisible on the fabric.
+        var fromStart = [Double](repeating: 0, count: polyline.count)
+        for i in 1..<polyline.count { fromStart[i] = fromStart[i - 1] + polyline[i - 1].distance(to: polyline[i]) }
+        let total = fromStart.last ?? 0
+        func isNearTip(_ i: Int) -> Bool { min(fromStart[i], total - fromStart[i]) <= tipZoneLengthMM }
         var railA: [Point2D] = []
         var railB: [Point2D] = []
         for i in 0..<polyline.count {
@@ -2006,9 +2106,9 @@ public enum SatinColumnGenerator {
             let tangentLength = tangent.length
             guard tangentLength > 1e-9 else { continue }
             let perp = Point2D(-tangent.y / tangentLength, tangent.x / tangentLength)
-            let hitA: Point2D
-            let hitB: Point2D
-            if widthsMM[i] <= taperCollapseWidthMM {
+            var hitA: Point2D
+            var hitB: Point2D
+            if widthsMM[i] <= taperCollapseWidthMM, isNearTip(i) {
                 // A genuinely tapering tip (a serif, a pointed stroke
                 // end) rather than merely a narrow section: collapse
                 // both rails to the segment's own centerline point here
@@ -2079,6 +2179,16 @@ public enum SatinColumnGenerator {
                              validA.map { String(format: "(%.1f,%.1f)", $0.x, $0.y) } ?? "miss", validB.map { String(format: "(%.1f,%.1f)", $0.x, $0.y) } ?? "miss", hitA.distance(to: hitB)))
             }
             }
+            if minimumWidthMM > 0, !isNearTip(i) || widthsMM[i] > taperCollapseWidthMM {
+                let chord = hitA.distance(to: hitB)
+                if chord < minimumWidthMM {
+                    // A hairline (or a rail pair the boundary noise pinched):
+                    // the minimum satin width, centred on the centreline,
+                    // across the stroke's own perpendicular.
+                    hitA = Point2D(polyline[i].x + perp.x * minimumWidthMM / 2, polyline[i].y + perp.y * minimumWidthMM / 2)
+                    hitB = Point2D(polyline[i].x - perp.x * minimumWidthMM / 2, polyline[i].y - perp.y * minimumWidthMM / 2)
+                }
+            }
             railA.append(hitA)
             railB.append(hitB)
         }
@@ -2145,8 +2255,25 @@ public enum SatinColumnGenerator {
     /// used: the first is this loop's own hole boundary, the second is
     /// whatever lies just beyond it (normally the shape's outer
     /// boundary, unless two holes sit unusually close together).
-    private static func computeSegmentRingRails(loopPolyline: [Point2D], shapePolygons: [[Point2D]]) -> (railA: [Point2D], railB: [Point2D])? {
+    private static func computeSegmentRingRails(loopPolyline: [Point2D], widthsMM: [Double] = [], shapePolygons: [[Point2D]], minimumWidthMM: Double = 0) -> (railA: [Point2D], railB: [Point2D])? {
         let center = vertexAverage(loopPolyline)
+        // The loop's own local width at the sample nearest a point: the
+        // bound on how far past the hole's edge the outer hit may be.
+        // Only a loop round a real counter is bounded this way. A loop
+        // round a pinhole in a raster-traced body (a speck of background
+        // inside the Oholi bird) is the sweep that covers that body: its
+        // rays are meant to reach the far edges, and its own local widths
+        // are the pinhole's, not the body's.
+        let isRealRing = PolygonGeometry.pathLength(loopPolyline) >= realRingMinimumLoopLengthMM
+        func localWidth(near point: Point2D) -> Double? {
+            guard isRealRing, widthsMM.count == loopPolyline.count, !widthsMM.isEmpty else { return nil }
+            var best = 0, bestDistance = Double.infinity
+            for (k, p) in loopPolyline.enumerated() {
+                let d = p.distance(to: point)
+                if d < bestDistance { bestDistance = d; best = k }
+            }
+            return widthsMM[best]
+        }
         // `pointInPolygons` even-odd across every one of the shape's own
         // boundaries reads "inside a hole" as *outside* the filled
         // shape (the same convention used everywhere else in this
@@ -2165,8 +2292,27 @@ public enum SatinColumnGenerator {
             let direction = Point2D(cos(theta), sin(theta))
             let hits = rayPolygonsIntersections(origin: center, direction: direction, polygons: shapePolygons)
             guard hits.count >= 2 else { continue }
-            railB.append(hits[0])
-            railA.append(hits[1])
+            var inner = hits[0], outer = hits[1]
+            // A ray that leaves the bowl through the stroke's own join
+            // with the rest of the letter (an "a"'s bowl into its stem)
+            // finds the far boundary of that stem, not this ring's own:
+            // bound it by the ring's local width, as `computeSegmentRails`
+            // does, and hold a hairline at the minimum satin width.
+            if let w = localWidth(near: inner) {
+                let chord = inner.distance(to: outer)
+                let wanted = max(w, minimumWidthMM)
+                if chord > w * segmentRailWidthToleranceFactor || chord < minimumWidthMM {
+                    outer = Point2D(inner.x + direction.x * wanted, inner.y + direction.y * wanted)
+                    if chord < minimumWidthMM {
+                        // Centre the widened pair on the stroke.
+                        let shift = (wanted - chord) / 2
+                        inner = Point2D(inner.x - direction.x * shift, inner.y - direction.y * shift)
+                        outer = Point2D(outer.x - direction.x * shift, outer.y - direction.y * shift)
+                    }
+                }
+            }
+            railB.append(inner)
+            railA.append(outer)
         }
         guard railA.count >= ringRailSampleCount * 3 / 4 else { return nil }
         // Same coverage requirement as `computeRingRails`, against the

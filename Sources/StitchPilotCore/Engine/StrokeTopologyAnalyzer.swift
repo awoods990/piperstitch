@@ -94,6 +94,26 @@ public enum StrokeTopologyAnalyzer {
         /// tiny width doesn't let a genuinely-too-short spurious branch
         /// survive.
         public var minPruneLengthMM: Double = 0.15
+        /// A spur is pruned only when its far end is thinner than this
+        /// fraction of the junction's width -- see `prune`.
+        public var spurTipWidthFraction: Double = 0.5
+        /// Under this fraction of the prune threshold a spur goes whatever
+        /// its end width (a T's bumps, half a stroke wide and a quarter
+        /// long); between it and the threshold only a tapering one does.
+        public var spurAlwaysPruneFraction: Double = 0.65
+        /// A spur shorter than this multiple of its junction's width whose
+        /// tip is thinner than `serifWingTipWidthFraction` of it is a
+        /// serif's wing, absorbed into the stroke's end -- see `prune`.
+        /// A real hook (the Red Sox "B", 1.33x its junction's width) does
+        /// not taper to a quarter of the stem.
+        public var serifWingLengthFactor: Double = 1.4
+        public var serifWingTipWidthFraction: Double = 0.3
+        /// ...and no longer than this fraction of the longest other arm at
+        /// the same junction (a serif's wing against its stem).
+        public var serifWingOtherArmFraction: Double = 0.4
+        /// Two junctions joined by an edge shorter than this multiple of
+        /// the wider one's width are one junction -- see `prune`.
+        public var junctionMergeDistanceFactor: Double = 1.5
 
         public init() {}
     }
@@ -721,9 +741,19 @@ public enum StrokeTopologyAnalyzer {
     /// cleaning up the skeleton's representation of it.
     private static func prune(_ topology: Topology, parameters: Parameters) -> Topology {
         guard !topology.nodes.isEmpty else { return topology }
+        let debug = ProcessInfo.processInfo.environment["DEBUG_TOPOLOGY"] != nil
+        func dump(_ label: String, _ nodes: [Int: Node], _ edges: [Edge]) {
+            guard debug else { return }
+            print("  topology \(label): nodes " + nodes.values.sorted { $0.id < $1.id }.map { "\($0.id)\($0.isJunction ? "J" : "e")w\(String(format: "%.1f", $0.widthMM))" }.joined(separator: " ")
+                  + " | edges " + edges.map { "\($0.startNodeID)-\($0.endNodeID):\(String(format: "%.1f", pathLength($0.polyline)))\($0.isClosedLoop ? "L" : "")" }.joined(separator: " "))
+        }
+        dump("raw", Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) }), topology.edges)
 
         var nodesByID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
         var edges = topology.edges
+        // Junctions demoted to ends once their spurs were pruned: a short
+        // edge ending on one is thinning residue whatever its width.
+        var demotedIDs = Set<Int>()
 
         var didPrune = true
         while didPrune {
@@ -734,7 +764,8 @@ public enum StrokeTopologyAnalyzer {
                 degreeCount[edge.endNodeID, default: 0] += 1
             }
 
-            if let spurIndex = edges.firstIndex(where: { edge in
+            if let spurIndex = edges.indices.first(where: { candidate in
+                let edge = edges[candidate]
                 guard !edge.isClosedLoop, edge.startNodeID != edge.endNodeID else { return false }
                 guard let a = nodesByID[edge.startNodeID], let b = nodesByID[edge.endNodeID] else { return false }
                 let (junction, endpoint) = a.isJunction ? (a, b) : (b, a)
@@ -742,12 +773,33 @@ public enum StrokeTopologyAnalyzer {
                 guard (degreeCount[endpoint.id] ?? 0) == 1 else { return false }
                 let length = pathLength(edge.polyline)
                 let threshold = max(parameters.minPruneLengthMM, parameters.pruneBranchLengthFactor * junction.widthMM)
-                return length < threshold
+                // Thinning's spurious branches run from the junction to a
+                // corner of the boundary and taper to nothing there. A
+                // short arm that is still a stroke's width at its end is
+                // real geometry: a 5 mm "A"'s apex, 2 mm above a 2.6 mm
+                // junction and 1.6 mm wide at the top, was pruned as noise
+                // and the letter sewn as a bare V.
+                let tapersToNothing = endpoint.widthMM <= parameters.spurTipWidthFraction * junction.widthMM || demotedIDs.contains(endpoint.id)
+                if length < threshold * parameters.spurAlwaysPruneFraction { return true }
+                if length < threshold, tapersToNothing { return true }
+                // A serif's wing: a spur not much longer than the stroke
+                // is wide that tapers to (nearly) nothing at its tip. As a
+                // branch it earns a junction and a radial patch at every
+                // foot; as part of the stem's own end the rails simply
+                // flare into it, which is how a serif is sewn.
+                guard length < parameters.serifWingLengthFactor * junction.widthMM,
+                      endpoint.widthMM <= parameters.serifWingTipWidthFraction * junction.widthMM else { return false }
+                // ...and short next to the junction's other arms: a small
+                // "A"'s tapering leg is not a wing on its own crossbar.
+                let longestOther = edges.indices.filter { $0 != candidate && (edges[$0].startNodeID == junction.id || edges[$0].endNodeID == junction.id) }
+                    .map { pathLength(edges[$0].polyline) }.max() ?? 0
+                return length <= longestOther * parameters.serifWingOtherArmFraction
             }) {
                 let removed = edges.remove(at: spurIndex)
                 let endpointID = nodesByID[removed.startNodeID]?.isJunction == false ? removed.startNodeID : removed.endNodeID
                 nodesByID.removeValue(forKey: endpointID)
                 didPrune = true
+                dump("spur pruned", nodesByID, edges)
                 continue
             }
 
@@ -802,10 +854,46 @@ public enum StrokeTopologyAnalyzer {
                 var demoted = node
                 demoted.isJunction = false
                 nodesByID[nodeID] = demoted
+                demotedIDs.insert(nodeID)
                 didPrune = true
             }
+            if didPrune { continue }
+
+            // Two junctions closer together than the stroke is wide are
+            // one junction that thinning split in two: an "a"'s bowl
+            // meets its stem at two points 2 mm apart on a 1.6 mm stem,
+            // and sewn as two junctions each got its own patch, the
+            // 2 mm of stem between them was trimmed from both sides, and
+            // the join was a knot. Contract the short edge between them:
+            // the bowl becomes one loop on one junction (a "P"'s own,
+            // proven path) and the stem runs straight through.
+            var merged = false
+            for (edgeIndex, edge) in edges.enumerated() where !edge.isClosedLoop && edge.startNodeID != edge.endNodeID {
+                guard let a = nodesByID[edge.startNodeID], let b = nodesByID[edge.endNodeID], a.isJunction, b.isJunction else { continue }
+                let width = max(a.widthMM, b.widthMM)
+                guard pathLength(edge.polyline) < width * parameters.junctionMergeDistanceFactor else { continue }
+                let keep = a.id, drop = b.id
+                let position = Point2D((a.position.x + b.position.x) / 2, (a.position.y + b.position.y) / 2)
+                nodesByID[keep] = Node(id: keep, position: position, isJunction: true, widthMM: width)
+                nodesByID.removeValue(forKey: drop)
+                edges.remove(at: edgeIndex)
+                for i in edges.indices {
+                    if edges[i].startNodeID == drop { edges[i].startNodeID = keep }
+                    if edges[i].endNodeID == drop { edges[i].endNodeID = keep }
+                }
+                // A second edge between the two becomes a short loop on
+                // the merged node and is left alone: on the Oholi bird
+                // that loop is what covers the body (its radial sweep
+                // reaches the far edges), and removing it lost half the
+                // stitches.
+                merged = true
+                dump("merged \(drop) into \(keep)", nodesByID, edges)
+                break
+            }
+            if merged { didPrune = true }
         }
 
+        dump("final", nodesByID, edges)
         return Topology(nodes: nodesByID.values.sorted { $0.id < $1.id }, edges: edges)
     }
 

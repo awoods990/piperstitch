@@ -187,6 +187,7 @@ if args.count >= 5, args[1] == "--lettering-preview" {
     let outputURL = URL(fileURLWithPath: args[4])
     let fontSizeMM = args.count > 5 ? (Double(args[5]) ?? 20) : 20
 
+    var previewPixelsPerMM = 20.0
     let spec = LetteringSpec(text: text, fontPostScriptName: fontPostScriptName, fontSizeMM: fontSizeMM)
     let rawShapes = try LetteringGenerator.generateShapes(spec: spec)
     var rawCombined = BoundingBox.empty
@@ -200,11 +201,16 @@ if args.count >= 5, args[1] == "--lettering-preview" {
     }
     var combined = BoundingBox.empty
     for shape in shapes { combined = combined.union(shape.boundingBox) }
-    let parameters = StitchGenerationParameters()
+    // The same parameters the web server's lettering route uses: satin
+    // along the strokes, branching where the glyph does.
+    var parameters = StitchGenerationParameters()
+    parameters.allowBranchingSatin = true
+    parameters.minSatinWidthMM = min(parameters.minSatinWidthMM, StitchTypeClassifier.strokeMinimumSatinWidthMM)
+    if let ppm = ProcessInfo.processInfo.environment["PIXELS_PER_MM"].flatMap(Double.init) { previewPixelsPerMM = ppm }
     let runType = StitchTypeClassifier.classifyLetteringRun(shapes: shapes, parameters: parameters, capHeightMM: fontSizeMM)
     print("Run stitch type: \(runType)")
     let objects = shapes.enumerated().map { i, shape -> EmbroideryObject in
-        let stitchType = StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType)
+        let stitchType = StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType, parameters: parameters)
         print("  glyph \(i): subPaths=\(shape.subPaths.count) -> \(stitchType)")
         return EmbroideryObject(name: "Letter \(i)", shape: shape, stitchType: stitchType,
                                  threadColor: .generic(RGBColor(hex: 0x1144AA)), parameters: parameters)
@@ -214,7 +220,7 @@ if args.count >= 5, args[1] == "--lettering-preview" {
     let plan = try DigitizePipeline.flatten(doc)
     print("Stitch count: \(plan.stitchCount)")
     var options = StitchRenderer.Options()
-    options.pixelsPerMM = 20
+    options.pixelsPerMM = previewPixelsPerMM
     guard let pngData = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: [.generic(RGBColor(hex: 0x1144AA))], options: options) else {
         print("Render failed"); exit(1)
     }

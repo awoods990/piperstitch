@@ -1377,6 +1377,69 @@ open: the serif "Sigma Chi" itself sews as branching satin with rough
 bowls and terminals (the a, the g, the S's ends) -- the generator on a
 contrast face, which wants its own session.
 
+## Branching satin on a contrast serif face (September 2026)
+
+The generator was built and tuned on block letters -- uniform strokes at
+clean junctions (LIBBi, Siesta Key, the Oholi H) -- and a serif face
+broke three of its assumptions. Judged on renders of the Sigma Chi
+letters at 89 mm (the a, g and m, at 40 px/mm) and on typed Georgia
+Bold and Times Bold at 12 and 8 mm, with the sew-out-tuned designs held
+to their previous output:
+
+- **Hairlines.** Any sample under 0.5 mm wide was treated as a tapering
+  tip and both rails collapsed to the centreline, so a serif m's arches
+  and a bowl's thin top sewed as a bare travel line. That collapse now
+  applies only within 1 mm of a segment's end (`tipZoneLengthMM`); in
+  the middle a hairline is sewn at the minimum satin width, centred on
+  the stroke, which is what every digitizer does with a line the thread
+  cannot follow. The Oholi thread line, 0.5-1 mm in the artwork, is now
+  a narrow satin along its whole length rather than satin in patches.
+- **Bowls.** A one-hole letter was a plain ring -- one radial sweep from
+  the counter's centre -- so an a's stem and hook took crossings aimed
+  at the hole (a fan of diagonals). `ringHasArms`: when the skeleton has
+  a loop AND an arm at least 1.5x its width, the letter takes the
+  branching path (bowl as a ring segment, arms along their own
+  centrelines; the P's proven path). An O, a D, a bar with a slot stay
+  rings. A ring segment's rays are now bounded by the loop's local width
+  (as open segments' already were), so a ray leaving the bowl through
+  the stem stops at the bowl's own edge; only on a real counter (loop
+  >= 6 mm) -- the Oholi bird's body is covered by the sweep from a
+  pinhole in its raster, and bounding that lost half its stitches.
+- **Serifs and junctions.** A serif's wing (a spur under 1.4x the
+  junction's width, tapering to under 0.3 of it, and under 0.4 of the
+  junction's other arms) is pruned into the stem's end, whose rails then
+  flare into it -- how a serif is sewn -- instead of earning a junction
+  and a radial patch (the bow-ties at every foot of the m). A node is
+  patched only when two of its arms are substantial (lower-quartile
+  width over the first few node-widths, >= 0.6 of the node's): an arch
+  running into a stem is not a crease. Two junctions closer than 1.5x
+  their width are one junction (an a's bowl met its stem twice, 2 mm
+  apart on a 1.6 mm stem). A short spur is pruned only when it tapers
+  (under 0.5 of the junction's width at its end) or ends on a demoted
+  junction -- a 5 mm A's apex, 2 mm long and 1.6 mm wide at the top, was
+  being pruned as thinning noise; under 0.65 of the threshold it goes
+  regardless (a T's bumps).
+- **Small letters with a counter too small to sew.** `classify` judges a
+  one-hole shape whose hole `droppingUnsewable` will drop as the
+  hole-less shape the generator gets (the 5 mm A took the branching
+  path on a skeleton that no longer had its loop, and covered a third of
+  itself). Only that case: judging every shape by its sewable sub-paths
+  re-routed the anti-alias halos of a transparent PNG and cost LIBBi
+  three points.
+- **Typed lettering** gets the same branching path (`classifyLetteringRun`
+  with `allowBranchingSatin`; the server route and the CLI preview set
+  it), so a re-typed serif face is satin along its strokes rather than
+  fill.
+
+Results: the Sigma Chi m, a, S, C, h, i clean; g's link and the Times a's
+hook/stem/bowl blob still knot at the junction (a patch on a blob where a
+thick hook end merges into a bowl -- the one junction type still
+imperfect). Corpus: no readiness regression; longest stitches equal or
+shorter; stitch counts up 2-8 % where hairlines became satin. Diagnostics:
+`DEBUG_TOPOLOGY=1` traces every pruning step, `DEBUG_CLASSIFY=1` the ring
+decision and per-object stroke-width percentiles, `PIXELS_PER_MM` sets the
+lettering preview's render scale.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from
