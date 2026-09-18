@@ -1440,6 +1440,22 @@ shorter; stitch counts up 2-8 % where hairlines became satin. Diagnostics:
 decision and per-object stroke-width percentiles, `PIXELS_PER_MM` sets the
 lettering preview's render scale.
 
+**Follow-up the same day -- the re-typed 4 mm "FOUNDATION" was a smear.**
+The hairline rule widened every stroke under `minSatinWidthMM` (1.0 mm on
+the lettering route) to 1.0 mm; Roboto Bold at 4 mm has 0.65 mm strokes,
+so every letter grew by half and the counters closed. The widening
+target is now the thread's own minimum, `ThreadWeight.hairlineSatinWidthMM`
+(0.6 mm for 40-weight, about a thread and a half; 0.8 already visibly
+closes an O at 4 mm), and `minSatinWidthMM` stays what it was: whether a
+stroke may be satin at all. And no junction patch on a node narrower
+than 1.5 mm (`minimumPatchNodeWidthMM`): at 0.65 mm strokes the corner a
+patch covers is smaller than a stitch, and the patch's trim and merge
+reach had eaten the whole F, N and A. "FOUNDATION" and "YOUR AI
+ORCHESTRATOR" read at 4 mm now; the F, N, A and S are still rough at
+that size. Every face in the web lettering list is a bold cut (chosen
+for sewing at larger sizes); at the 4 mm minimum a regular cut would keep
+the counters open -- a font-asset follow-up, not an engine one.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

@@ -1260,7 +1260,10 @@ public enum SatinColumnGenerator {
     /// for why a self-loop specifically needs the radial technique
     /// rather than the tangent-walk one every other segment uses.
     private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) throws -> (railA: [Point2D], railB: [Point2D]) {
-        let minimumWidth = parameters.minSatinWidthMM
+        // A hairline is widened to what the thread can show, not to the
+        // classification floor (`minSatinWidthMM` says whether a stroke may
+        // be satin at all; 1.0 mm on a 0.65 mm letter stroke is a blot).
+        let minimumWidth = min(parameters.minSatinWidthMM, parameters.threadWeight.hairlineSatinWidthMM)
         if edge.startNodeID == edge.endNodeID {
             if let rails = computeSegmentRingRails(loopPolyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth) {
                 return rails
@@ -1585,7 +1588,14 @@ public enum SatinColumnGenerator {
                 substantialArmCount[node.id, default: 0] += 1
             }
         }
-        let patchedNodeIDs = Set(incidentEdgeCount.filter { $0.value >= minimumJunctionEdgeCount && (substantialArmCount[$0.key] ?? 0) >= minimumJunctionEdgeCount }.map { $0.key })
+        // ...and only on strokes wide enough for the crease to matter: at a
+        // 4 mm letter's 0.65 mm strokes the uncovered corner is smaller
+        // than a stitch, and the patch (trim radius plus merge reach) ate
+        // the whole F, N and A of a re-typed "FOUNDATION".
+        let patchedNodeIDs = Set(incidentEdgeCount.filter {
+            $0.value >= minimumJunctionEdgeCount && (substantialArmCount[$0.key] ?? 0) >= minimumJunctionEdgeCount
+                && (nodesByID[$0.key]?.widthMM ?? 0) >= minimumPatchNodeWidthMM
+        }.map { $0.key })
 
         // Trim off whichever of each incident edge's own crossings near a
         // patched node fall within that node's trim radius -- those are
@@ -1794,6 +1804,10 @@ public enum SatinColumnGenerator {
     /// a hairline meeting a stem, not a party to a crease -- see the
     /// patched-node selection in `branchingPlan`.
     private static let substantialArmWidthFraction = 0.6
+
+    /// No junction patch on a node narrower than this: the arms' own
+    /// crossings overlap enough to cover the corner.
+    private static let minimumPatchNodeWidthMM = 1.5
 
     /// How many samples `junctionPatchFill`'s radial sweep casts around a
     /// full circle -- dense enough to trace a typical junction's own real

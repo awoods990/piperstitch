@@ -405,6 +405,20 @@ public enum ThreadWeight: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// The narrowest satin the thread can lay as a visible column --
+    /// about a thread and a half wide (40-weight is ~0.4 mm). A hairline
+    /// in the artwork is widened to this and no more: widening a 4 mm
+    /// letter's 0.65 mm strokes to the 1 mm classification floor closed
+    /// its counters and made "FOUNDATION" a smear.
+    public var hairlineSatinWidthMM: Double {
+        switch self {
+        case .wt30: return 0.75
+        case .wt40: return 0.6
+        case .wt60: return 0.45
+        case .wt80: return 0.4
+        }
+    }
+
     /// Added to satin density and fill row spacing (mm).
     public var spacingOffsetMM: Double {
         switch self {
