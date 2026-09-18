@@ -1167,6 +1167,159 @@ at 100 mm unchanged in readiness; Amerus's navy leg (nowhere wider than
 7.5 mm) is one satin network instead of two fill patches and an
 outline.
 
+## Twenty studio samples -- Ignition Drawing (September 2026)
+
+`TestArtwork/Professional Files/` gained twenty samples from Ignition
+Drawing's public sew-out gallery: each is a 428 x 312 crop of the
+customer artwork and a crop of the studio's sewn result, cut from the
+studio's own side-by-side image (`SOURCE.txt` in each folder). No stitch
+files, so the comparison is visual. Two things about the crops matter
+for reading the results: **every artwork is partial** -- a diagonal
+corner is covered by the other panel, and several are cut off at an
+edge ("ANSCEND THE GA", "INDBERGH XC", "eft Coast Thoroughbre") -- and
+the artwork is small and JPEG-blurred, which is exactly what customers
+send. The diagonal cut shows up in our output as a white triangle; it is
+the sample, not the engine. Renders at 80 mm wide, `scratchpad/pro/run.py`
+builds the artwork / studio / PiperStitch sheets.
+
+What the batch found, by how many samples it touched:
+
+- **Background from four corners -> Otsu (7 of 20).** The importer took
+  the page colour only when all four corners agreed; with one corner
+  cut to white it fell back to an Otsu light/dark split and kept the
+  minority class. On the grey-card eagle that kept white and yellow and
+  lost both blues; on the red-card lion it lost the black and the blue;
+  Quileute, Racecar, Steel Dog, Tiger, Eagle Sewout likewise. Now the
+  border's MAJORITY colour (60%) is the background, and when there is no
+  majority (a banner with a dark bar top and bottom) the image's
+  DOMINANT colour is, when it covers 30% of the picture and 20% of the
+  border. Otsu remains only for pictures with no dominant colour.
+  `ImageImportTests.backgroundIsTheBorderMajorityNotAllFourCorners`,
+  `...DominantColourWhenTheBorderHasNoMajority`.
+- **White thread invisible in the preview (6 of 20).** A design meant for
+  a navy or red garment previews on paper-coloured canvas: the Lindbergh
+  eagle was a white blank. The importer now reports the artwork's ground
+  (`ImageImportResult.backgroundColor`), the server passes it through
+  (`ImportResponse.backgroundColor`, only when `StitchRenderer.
+  isPreviewGround` -- anything but near-white), the editor draws the
+  fabric that colour and the CLI renders on it.
+- **A blob with a hole is not a ring (Eagle Graphic).** The ring-satin
+  test measured width as area over perimeter; a feathered outline
+  inflates the perimeter, so a 66 x 40 mm head with the eye cut out was
+  "9.7 mm wide" and sewn as a satin outline round nothing. Ring satin
+  now also requires the shape to be nowhere wider than a column
+  (`ShapeMerger.isNowhereWiderThan`), as does multi-hole branching satin.
+- **Hairlines sewn as running stitch (Tree, Horse, Sigma).** A closed
+  outline too narrow to sew (`isSewableSize`) but 4 mm or longer is now
+  sewn as a running stitch along its skeleton
+  (`StitchTypeClassifier.hairlineCenterlines`), lines that nearly touch
+  joined into one run; it was dropped, and before that sewn as a double
+  row round each line. The studio sews fine-line drawings exactly so.
+- **Small text (15 of 20).** Every sample with a tagline under ~3 mm --
+  "YEARS OF EXCELLENCE", "ALUMINUM", "The Toughest Pit in The Yard",
+  "Left Coast Thoroughbred" -- either drops it (correctly: 0.4 mm strokes)
+  or, worse, sews readable fragments of it. The studio re-types every one
+  as satin lettering at a size that works. The app has text detection
+  and font lettering for the user to do the same; doing it automatically
+  is the next big item, not this batch's.
+- **The background card (Tiger, Steel Dog, Excavation, Arch).** The
+  studio treats a coloured background as a card and sews the design's
+  own colours -- including white -- on the garment; the engine treats it
+  as the fabric, so a white tiger on red sews nothing where the artwork
+  is white. Both are defensible; ours follows the file. Worth a setting
+  ("this background is the garment / is part of the design") rather than
+  a rule.
+- Out of scope, noted: Moose is a painting and Quileute is a photograph
+  of a finished embroidery -- neither is artwork a digitizer starts from;
+  Racecar is airbrushed illustration. They now at least produce
+  something (they produced almost nothing before the background fix),
+  but nothing in them is a target.
+
+Regression corpus: unchanged except two or three trims where hairlines
+are now sewn (Sigma Chi 30 -> 32, Sarasota unchanged). 407 tests.
+
+## Small text: found by geometry, left out whole, re-typed with the user (September 2026)
+
+The studio samples' one pervasive gap was text under about 3 mm: traced,
+it either vanished or sewed as readable fragments of half-letters, and
+the studio re-sets every such line as lettering at a size that works.
+Three layers now do the same.
+
+**Finding it without OCR.** `TextLineFinder` (Engine/) works on the
+imported shapes alone: letter-sized shapes of one colour, alike in height
+(spread <= 0.35), close together (gap <= 2.2 letter heights, so a
+letter-spaced title still chains), three or more in a row much longer
+than tall. Each line carries its box, cap height (the 75th-percentile
+letter height), baseline angle (principal axis of the letter centres),
+ink fraction (bold from 0.42), whether the centres sit on an arc
+(residual > 0.18 x cap height) and a Kåsa circle fit's radius when they
+do. No Vision, so the Linux server has it; the Mac app's Vision-based
+`TextDetector` is untouched. False positives happen on tall lines (a
+shield's stripes chain up too) and cost nothing: a line that sews as
+traced is kept unless the user says otherwise.
+
+**Leaving it out whole.** `DocumentBuilder.build` (server) and the CLI
+drop every line whose cap height at the chosen size is under
+`TextLineFinder.minimumCapHeightMM` (4 mm for 40-weight, 3 mm for 60 and
+80, 5 mm for 30) and record the count on `StitchDocument.
+omittedTextLines`; `QualityAnalyzer` says so and points at the Text step.
+Fragments were the worst outcome in the batch; a clean omission with a
+reason is strictly better. Sarasota at 100 mm: 117 objects and 38 trims
+became 49 and 12, readiness 74 to 84.
+
+**Re-typing it.** The web setup gains a Text step (after size, only when
+lines were found): each line as a crop of the artwork, its height at the
+current size against the minimum, and three choices -- re-type as
+lettering, leave it out, keep as traced (disabled when too small) -- plus
+"make the design N mm wide and every line sews as traced". Re-typed
+lines are set from the browser's own font outlines (`lettering.ts`) at
+the greater of the original cap height and the minimum, in the artwork's
+colour (snapped to the thread library when the rest was), centred where
+the original sat, turned to its baseline angle (`/edit/lettering` gained
+`rotationDegrees`) and, for a curved line, on its fitted arc. When the
+typed word matches the letters found, the run is fitted to the
+original's width by letter spacing, then by condensing up to 25%; when
+more was typed than was found (a fragment of a blurry tagline), natural
+width, centred -- the move tool finishes it. Decisions travel in
+`SetupAnswers.textDecisions`; the build request's `dropShapeIndices` and
+`omittedTextLines` carry them to the server, and a client that passes
+them (even empty) has decided every line, so the server's own rule
+stands down.
+
+**Reading it.** Tesseract.js, in the browser (`ocr.ts`), pre-fills the
+field for any line that cannot sew as traced or that the user chose to
+re-type -- a padded crop, grey on white (inverted when the text is
+lighter than its ground), upscaled to ~60 px letters, straightened by
+the line's angle, single-line page mode, accepted at confidence 55 or
+more. The library and its English data come from a CDN on first use and
+nothing leaves the browser. It read "GOLDEN" from a 6 mm line of a
+428-pixel JPEG and nothing useful from the 3 mm "NUM" fragment below it,
+which is the expected shape of things and why it only ever pre-fills.
+
+**Choosing the face.** The finder cannot name the original font (the
+artwork is a raster; the letters are blobs), so it records what it can
+measure and the picker shows the rest. Each line now carries
+`mixedCase` (at least 30 % of its letters shorter than 85 % of the cap
+height, but not all of them: descender-free lower case and small caps
+both count as mixed) and `letterAspect` (median width/height of the
+letters). `lettering.ts` tags every face with its width class
+(condensed / normal / wide), whether it is capitals only, and whether its
+thin strokes need a minimum cap height (5 mm) to hold; `suggestFont`
+maps a line onto them -- capitals and narrow -> Anton (bold) or Bebas
+Neue; narrow and mixed -> Oswald; capitals, bold and wide -> Montserrat;
+otherwise Roboto or Open Sans by ink fraction. The Text step's picker is
+a tiled sheet under three headings (sans-serif, serif, script), each
+tile the user's own words in that face with the suggestion first and
+thin-stroke faces dimmed and labelled at sizes where they will not hold;
+above it, the crop of the original beside the chosen face set at the
+same on-screen letter height and condensed by the same ratio the run
+will be. "Show where this is in the artwork" drops the whole image in
+with the line outlined, so a script tagline and a block wordmark on the
+same jacket are decided in context; "Use this font for every line"
+carries one choice across a multi-line design. The fonts load through
+`ensureFontFaces` (the same files the outlines are cut from), so what
+the tile shows is what sews.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

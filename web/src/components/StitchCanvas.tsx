@@ -14,6 +14,8 @@ interface Props {
   hoop: CatalogSize | null;
   stale: boolean;
   showJumps: boolean;
+  /** The fabric colour to draw under the stitches; the paper default when absent. */
+  fabricColor?: RGBColor | null;
   /** Original artwork, drawn faintly under the stitches when nothing is digitized yet. */
   tool: Tool;
   selectedIDs: Set<string>;
@@ -117,6 +119,13 @@ export default function StitchCanvas(p: Props) {
     ctx.setTransform(res, 0, 0, res, 0, 0);
     ctx.fillStyle = PAPER; ctx.fillRect(0, 0, size.w, size.h);
     const { scale, offsetX, offsetY } = view;
+    if (p.fabricColor) {
+      // The artwork came on a coloured ground (a navy card, a grey field):
+      // draw the fabric that colour, so a white design for a dark shirt
+      // is not white on white.
+      ctx.fillStyle = `rgb(${p.fabricColor.r},${p.fabricColor.g},${p.fabricColor.b})`;
+      ctx.fillRect(offsetX, offsetY, doc.physicalWidthMM * scale, doc.physicalHeightMM * scale);
+    }
     drawFabric(ctx, view, doc.physicalWidthMM, doc.physicalHeightMM);
 
     if (hoop) {
@@ -171,7 +180,7 @@ export default function StitchCanvas(p: Props) {
       ctx.beginPath(); drag.points.forEach((pt, i) => { const q = toPx(pt); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }); ctx.stroke();
       if (drag.points.length === 1) { const q = toPx(drag.points[0]); ctx.beginPath(); ctx.arc(q.x, q.y, p.brushRadiusMM * scale, 0, Math.PI * 2); ctx.fillStyle = ctx.strokeStyle; ctx.fill(); }
     }
-  }, [view, size, digitized, hoop, doc, selectedIDs, drag, tool, p.showJumps, p.brushRadiusMM, p.paintColor]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, size, digitized, hoop, doc, selectedIDs, drag, tool, p.showJumps, p.fabricColor, p.brushRadiusMM, p.paintColor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- interaction --------------------------------------------------------
   const handleAt = (px: number, py: number, touch: boolean): { anchor: Point2D; corner: Point2D } | null => {

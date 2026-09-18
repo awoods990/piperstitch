@@ -254,10 +254,26 @@ public enum DigitizePipeline {
         // `StitchTypeClassifier.minimumObjectAreaMM2`); an object with
         // nothing sewable produces no runs and drops out of the sequence
         // here, and `QualityAnalyzer` tells the customer it was left out.
-        guard let sewable = StitchTypeClassifier.droppingUnsewable(object.shape) else { return [] }
+        // Hairline outlines are sewn as a running stitch down their
+        // centreline (`hairlineCenterlines`) rather than as outlines or
+        // not at all.
+        var hairlineRuns: [[Point2D]] = []
+        for line in StitchTypeClassifier.hairlineCenterlines(object.shape) {
+            let run = RunningStitchGenerator.generate(for: SubPath(points: line, closed: false), stitchLengthMM: object.parameters.stitchLengthMM,
+                                                      minStitchLengthMM: object.parameters.minStitchLengthMM)
+            guard run.count >= 2 else { continue }
+            // Lines that nearly touch are one run: a connector under
+            // `visibleConnectorMM` is invisible, a trim between them is not.
+            if let last = hairlineRuns.last?.last, let first = run.first, last.distance(to: first) <= visibleConnectorMM {
+                hairlineRuns[hairlineRuns.count - 1].append(contentsOf: run)
+            } else {
+                hairlineRuns.append(run)
+            }
+        }
+        guard let sewable = StitchTypeClassifier.droppingUnsewable(object.shape) else { return hairlineRuns }
         var object = object
         object.shape = sewable
-        let mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM)
+        let mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM) + hairlineRuns
         guard object.isApplique else { return mainRuns }
         // Placement + tack-down sew first, as their own separate runs --
         // `flattenWithColors` already trims and jumps between an object's

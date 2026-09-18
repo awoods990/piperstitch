@@ -76,11 +76,30 @@ enum DocumentBuilder {
     /// each source shape to the physical size, match its color to the
     /// palette, classify, then reconcile same-word outliers.
     static func build(source: ImportedSource, name: String, widthMM: Double, heightMM: Double,
-                      matchToThreadLibrary: Bool, palette: [ThreadColor]?, fabricType: FabricType) -> StitchDocument {
+                      matchToThreadLibrary: Bool, palette: [ThreadColor]?, fabricType: FabricType,
+                      threadWeight: ThreadWeight = .wt40, dropShapeIndices: [Int]? = nil, omittedTextLines: Int? = nil) -> StitchDocument {
         let effectivePalette = (palette?.isEmpty == false) ? palette! : ThreadLibrary.genericPalette
+        // Text too small to sew is left out whole rather than sewn as
+        // fragments of letters. A client that has been through the Text
+        // step passes its own list (re-typed and dropped lines); otherwise
+        // the rule applies here: any line whose capitals come out under
+        // `TextLineFinder.minimumCapHeightMM` at this size.
+        var dropped = Set(dropShapeIndices ?? [])
+        var omitted = omittedTextLines ?? 0
+        if dropShapeIndices == nil, source.pixelWidth > 0, source.bounds.width > 0 {
+            let scale = min(widthMM / source.bounds.width, heightMM / max(1e-9, source.bounds.height))
+            let minimum = TextLineFinder.minimumCapHeightMM(for: threadWeight)
+            for line in TextLineFinder.find(shapes: source.shapes, fillColors: source.fillColors, imageHeightPixels: source.pixelHeight)
+                where line.capHeightPixels * scale < minimum {
+                dropped.formUnion(line.shapeIndices)
+                omitted += 1
+            }
+        }
         var objects: [EmbroideryObject] = []
-        var fittedPieces: [[VectorShape]] = source.shapes.map { [$0.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: source.bounds)] }
-        if source.pixelWidth == 0 {
+        var fittedPieces: [[VectorShape]] = source.shapes.enumerated().map { i, shape in
+            dropped.contains(i) ? [] : [shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: source.bounds)]
+        }
+        if source.pixelWidth == 0, dropped.isEmpty {
             // Vector fills overlap back to front; sew each region once (C2).
             fittedPieces = DesignFinishing.removeOverlaps(fittedPieces.map { $0[0] }, opaque: source.fillColors.map { $0 != nil })
         }
@@ -111,7 +130,7 @@ enum DocumentBuilder {
         objects = StitchTypeClassifier.separateStrokesFromAreas(objects)
         objects = StitchTypeClassifier.harmonizeSameColorFillConsistency(objects)
         objects = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
-        return StitchDocument(name: name, physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
+        return StitchDocument(name: name, physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects, omittedTextLines: omitted)
     }
 
     /// `AppState.applyPhysicalSizeChange`: resize an existing document from

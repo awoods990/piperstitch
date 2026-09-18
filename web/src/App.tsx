@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type EditResponse, type PendingMerge } from "./api";
 import { decodeImage, isSVGFile, type DecodedImage } from "./decode";
-import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings, ThreadWeight } from "./types";
+import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings, ThreadWeight, VectorShape } from "./types";
 import { THREAD_WEIGHTS } from "./types";
 import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
@@ -21,6 +21,7 @@ import Onboarding from "./components/Onboarding";
 import { setDisplayUnits } from "./format";
 import { transformShape } from "./geometry";
 import { generateLetteringShapes, type LetteringSpec } from "./lettering";
+import { minimumCapHeightMM, textLinePoint, textLineScale } from "./textLines";
 import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
 
 interface Imported {
@@ -267,10 +268,79 @@ export default function App() {
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
 
-  const buildFrom = async (imp: Imported, a: SetupAnswers) => (await api.build({
-    source: imp.response.source, name: imp.name, widthMM: a.widthMM, heightMM: a.heightMM,
-    matchToThreadLibrary, palette: prefs.threadLibrary.length ? prefs.threadLibrary : undefined, fabricType: a.fabric,
-  })).document;
+  const runWidthMM = (shapes: VectorShape[]) => {
+    let lo = Infinity, hi = -Infinity;
+    for (const sh of shapes) for (const sp of sh.subPaths) for (const q of sp.points) { lo = Math.min(lo, q.x); hi = Math.max(hi, q.x); }
+    return hi > lo ? hi - lo : 0;
+  };
+
+  /** Build from the source shapes, applying the Text step's decisions:
+   *  dropped and re-typed lines leave their traced letters out, and each
+   *  re-typed line is set as real lettering -- the artwork's colour, at
+   *  least the sewable height, where and how the original ran. */
+  const buildFrom = async (imp: Imported, a: SetupAnswers) => {
+    const lines = imp.response.textLines ?? [];
+    const decisions = a.textDecisions && a.textDecisions.length === lines.length ? a.textDecisions : null;
+    const dropShapeIndices = decisions ? lines.flatMap((l, i) => decisions[i].action === "keep" ? [] : l.shapeIndices) : undefined;
+    const omittedTextLines = decisions ? decisions.filter((d) => d.action === "drop" || (d.action === "retype" && !d.text.trim())).length : undefined;
+    let doc = (await api.build({
+      source: imp.response.source, name: imp.name, widthMM: a.widthMM, heightMM: a.heightMM,
+      matchToThreadLibrary, palette: prefs.threadLibrary.length ? prefs.threadLibrary : undefined, fabricType: a.fabric, threadWeight: a.threadWeight,
+      dropShapeIndices, omittedTextLines,
+    })).document;
+    if (!decisions) return doc;
+    const bounds = imp.response.source.bounds;
+    const scale = textLineScale(bounds, a.widthMM, a.heightMM);
+    const minCap = minimumCapHeightMM(a.threadWeight);
+    for (let i = 0; i < lines.length; i++) {
+      const d = decisions[i], line = lines[i];
+      if (d.action !== "retype" || !d.text.trim()) continue;
+      const capHeightMM = Math.max(line.capHeightPixels * scale, minCap);
+      const arcRadiusMM = line.curved && line.arcRadiusPixels ? line.arcRadiusPixels * scale : null;
+      const box = line.boundingBoxPixels;
+      // Fit the run to the original's width (grown in proportion if the
+      // letters had to grow): first with letter spacing, then, if the face
+      // is simply wider than the original's, by condensing a little --
+      // what a digitizer does so re-set text sits where the old text did
+      // and clears its neighbours.
+      const targetWidthMM = (box.maxX - box.minX) * scale * (capHeightMM / Math.max(1e-6, line.capHeightPixels * scale));
+      const letters = Array.from(d.text.trim()).length;
+      let shapes: VectorShape[];
+      try {
+        shapes = await generateLetteringShapes({ text: d.text.trim(), fontID: d.fontID, fontSizeMM: capHeightMM, letterSpacingMM: 0, arcRadiusMM });
+        const natural = runWidthMM(shapes);
+        // Only when the detected line is (roughly) the whole word: a
+        // fragment of a blurry tagline is narrower than the text typed for
+        // it, and fitting to it would crush the run. Natural width then,
+        // centred on what was found; the move tool finishes the job.
+        const wholeWord = letters <= line.shapeIndices.length * 1.34 + 1;
+        if (letters > 1 && natural > 0 && !arcRadiusMM && wholeWord) {
+          const spacing = Math.max(-0.12 * capHeightMM, Math.min(0.6 * capHeightMM, (targetWidthMM - natural) / (letters - 1)));
+          shapes = await generateLetteringShapes({ text: d.text.trim(), fontID: d.fontID, fontSizeMM: capHeightMM, letterSpacingMM: spacing, arcRadiusMM });
+          const spaced = runWidthMM(shapes);
+          if (spaced > targetWidthMM * 1.02) {
+            const k = Math.max(0.75, targetWidthMM / spaced);
+            const cx = shapes.reduce((m, sh) => Math.min(m, ...sh.subPaths.flatMap((sp) => sp.points.map((q) => q.x))), Infinity) + spaced / 2;
+            shapes = shapes.map((sh) => ({ subPaths: sh.subPaths.map((sp) => ({ ...sp, points: sp.points.map((q) => ({ x: cx + (q.x - cx) * k, y: q.y })) })) }));
+          }
+        }
+      } catch { continue; }
+      const center = textLinePoint(bounds, a.widthMM, a.heightMM, (box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
+      const rgb = line.color ?? { r: 0, g: 0, b: 0 };
+      // The artwork's colour for the line -- snapped to the user's thread
+      // library when the rest of the design was, else kept exactly.
+      const nearest = matchToThreadLibrary && prefs.threadLibrary.length
+        ? prefs.threadLibrary.reduce((best, t) => {
+            const d = (t.rgb.r - rgb.r) ** 2 + (t.rgb.g - rgb.g) ** 2 + (t.rgb.b - rgb.b) ** 2;
+            return d < best.d ? { d, t } : best;
+          }, { d: Infinity, t: null as ThreadColor | null }).t
+        : null;
+      const threadColor: ThreadColor = nearest ?? { id: crypto.randomUUID(), name: "Artwork colour", rgb };
+      const r = await api.lettering({ document: doc, shapes, capHeightMM, threadColor, targetCenter: center, rotationDegrees: line.rotationDegrees });
+      doc = r.document;
+    }
+    return doc;
+  };
 
   const reimportIfNeeded = async (imp: Imported, preset: ColorPresetId, hoop: CatalogSize | null): Promise<Imported> => {
     if (!catalog || imp.isVector || !imp.decoded) return imp;
@@ -618,6 +688,7 @@ export default function App() {
 
   if (phase === "setup" && imported && answers) {
     return <><SetupFlow catalog={catalog} ownedHoopNames={prefs.ownedHoopNames} onEditHoops={() => setSheet("settingsBusiness")} fileName={imported.fileName} isVector={imported.isVector} recommendedWidthMM={imported.response.recommendedWidthMM}
+      textLines={imported.response.textLines} image={imported.decoded} sourceBounds={imported.response.source.bounds}
       recommendedHeightMM={imported.response.recommendedHeightMM} aspectRatio={imported.response.aspectRatio} initial={answers} busy={busy}
       matchToThreadLibrary={matchToThreadLibrary} onMatchToThreadLibraryChange={(on) => setPrefs({ ...prefs, matchToThreadLibrary: on })}
       onFinish={onSetupFinish} onCancel={onStartOver} />{sheets}</>;
@@ -626,7 +697,7 @@ export default function App() {
   if (phase === "editor" && document && answers) {
     return (
       <>
-        <Editor catalog={catalog} document={document} digitized={digitized} stale={stale} busy={busy} error={error} status={status}
+        <Editor catalog={catalog} document={document} digitized={digitized} stale={stale} busy={busy} error={error} status={status} fabricColor={imported?.response.backgroundColor ?? null}
           prefs={prefs} palette={palette} selectedIDs={selectedIDs} tool={tool} canUndo={undoStack.length > 0}
           hoop={answers.hoop} fabric={answers.fabric} colorPreset={answers.colorPreset} isVector={imported?.isVector ?? true} hasSource={!!imported}
           matchToThreadLibrary={matchToThreadLibrary} globalSatinDensityMM={globalSatin} globalFillSpacingMM={globalFill}

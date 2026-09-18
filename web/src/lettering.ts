@@ -22,23 +22,47 @@ import lobster from "@fontsource/lobster/files/lobster-latin-400-normal.woff?url
 import pacifico from "@fontsource/pacifico/files/pacifico-latin-400-normal.woff?url";
 import dancing from "@fontsource/dancing-script/files/dancing-script-latin-700-normal.woff?url";
 
-export interface LetteringFont { id: string; displayName: string; group: string; url: string }
+export interface LetteringFont {
+  id: string; displayName: string; group: string; url: string;
+  /** Letter width class, for matching a face to traced text: condensed, normal or wide. */
+  width: "condensed" | "normal" | "wide";
+  /** Thin strokes (hairlines, script joins) that need about 5 mm of cap height to hold as satin. */
+  thinStrokes?: boolean;
+  /** Capitals only -- the face has no distinct lowercase to speak of. */
+  capsOnly?: boolean;
+}
 
 /** Bold weights where the family has one -- embroidery wants stroke width. */
 export const LETTERING_FONTS: LetteringFont[] = [
-  { id: "roboto", displayName: "Roboto Bold", group: "Sans-serif", url: roboto },
-  { id: "open-sans", displayName: "Open Sans Bold", group: "Sans-serif", url: openSans },
-  { id: "montserrat", displayName: "Montserrat Bold", group: "Sans-serif", url: montserrat },
-  { id: "oswald", displayName: "Oswald Bold", group: "Sans-serif", url: oswald },
-  { id: "anton", displayName: "Anton", group: "Sans-serif", url: anton },
-  { id: "bebas-neue", displayName: "Bebas Neue", group: "Sans-serif", url: bebas },
-  { id: "playfair", displayName: "Playfair Display Bold", group: "Serif", url: playfair },
-  { id: "merriweather", displayName: "Merriweather Bold", group: "Serif", url: merriweather },
-  { id: "alfa-slab", displayName: "Alfa Slab One", group: "Serif", url: alfaSlab },
-  { id: "lobster", displayName: "Lobster", group: "Script", url: lobster },
-  { id: "pacifico", displayName: "Pacifico", group: "Script", url: pacifico },
-  { id: "dancing-script", displayName: "Dancing Script Bold", group: "Script", url: dancing },
+  { id: "roboto", displayName: "Roboto Bold", group: "Sans-serif", url: roboto, width: "normal" },
+  { id: "open-sans", displayName: "Open Sans Bold", group: "Sans-serif", url: openSans, width: "normal" },
+  { id: "montserrat", displayName: "Montserrat Bold", group: "Sans-serif", url: montserrat, width: "wide" },
+  { id: "oswald", displayName: "Oswald Bold", group: "Sans-serif", url: oswald, width: "condensed" },
+  { id: "anton", displayName: "Anton", group: "Sans-serif", url: anton, width: "condensed" },
+  { id: "bebas-neue", displayName: "Bebas Neue", group: "Sans-serif", url: bebas, width: "condensed", capsOnly: true },
+  { id: "playfair", displayName: "Playfair Display Bold", group: "Serif", url: playfair, width: "normal", thinStrokes: true },
+  { id: "merriweather", displayName: "Merriweather Bold", group: "Serif", url: merriweather, width: "wide" },
+  { id: "alfa-slab", displayName: "Alfa Slab One", group: "Serif", url: alfaSlab, width: "wide" },
+  { id: "lobster", displayName: "Lobster", group: "Script", url: lobster, width: "normal", thinStrokes: true },
+  { id: "pacifico", displayName: "Pacifico", group: "Script", url: pacifico, width: "wide", thinStrokes: true },
+  { id: "dancing-script", displayName: "Dancing Script Bold", group: "Script", url: dancing, width: "normal", thinStrokes: true },
 ];
+
+/** Cap height below which a thin-stroked face sews as a wobbling run rather than satin. */
+export const THIN_STROKE_MIN_CAP_MM = 5;
+
+/** The face to start from for a traced line: its weight, case and letter
+ *  width say which group of faces will look right; the user sees the crop
+ *  beside every candidate and makes the final call. */
+export function suggestFont(line: { inkFraction: number; mixedCase?: boolean; letterAspect?: number }): string {
+  const bold = line.inkFraction >= 0.42;
+  const aspect = line.letterAspect ?? 0.7;
+  const caps = line.mixedCase === false;
+  if (caps && aspect < 0.6) return bold ? "anton" : "bebas-neue";
+  if (aspect < 0.6) return "oswald";
+  if (caps && bold && aspect > 0.85) return "montserrat";
+  return bold ? "roboto" : "open-sans";
+}
 
 /** The CSS font-family under which `ensureFontFaces` registers each font,
  *  so a picker can show a font's own name in its own face. */

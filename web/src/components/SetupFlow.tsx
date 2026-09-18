@@ -3,11 +3,15 @@
 // stitch preview is withheld until the last step so the first thing the
 // user sees comes from their own answers, not unconfirmed defaults.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { THREAD_WEIGHTS, type ThreadWeight } from "../types";
-import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType } from "../types";
+import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType, TextDecision, TextLine } from "../types";
 import { approx, len, size, displayUnitLabel, toDisplay, fromDisplay } from "../format";
 import { hoopGroups, smallestHoopThatFits } from "../hoops";
+import { LETTERING_FONTS, THIN_STROKE_MIN_CAP_MM, ensureFontFaces, fontFaceFamily, suggestFont } from "../lettering";
+import { cropLine, readLine } from "../ocr";
+import type { DecodedImage } from "../decode";
+import { minimumCapHeightMM, textLineScale } from "../textLines";
 
 
 export interface SetupAnswers {
@@ -22,6 +26,8 @@ export interface SetupAnswers {
   threadWeight: ThreadWeight;
   /** Sew a laydown first to flatten the nap (offered for terry). */
   laydown?: boolean;
+  /** One per detected text line, in order; absent when the artwork has none. */
+  textDecisions?: TextDecision[];
 }
 
 interface Props {
@@ -36,18 +42,23 @@ interface Props {
   aspectRatio: number;
   initial: SetupAnswers;
   busy: string | null;
+  /** Text lines the importer found, with the image and its shape bounds to crop them from. */
+  textLines?: TextLine[];
+  image?: DecodedImage | null;
+  sourceBounds?: { minX: number; minY: number; maxX: number; maxY: number };
   matchToThreadLibrary: boolean;
   onMatchToThreadLibraryChange: (on: boolean) => void;
   onFinish: (answers: SetupAnswers) => void;
   onCancel: () => void;
 }
 
-const STEPS = ["placement", "size", "hoop", "fabric", "colors"] as const;
-type Step = (typeof STEPS)[number];
+const ALL_STEPS = ["placement", "size", "text", "hoop", "fabric", "colors"] as const;
+type Step = (typeof ALL_STEPS)[number];
 
 const TITLES: Record<Step, string> = {
   placement: "Where is this going?",
   size: "How big should it be?",
+  text: "There's text in this artwork",
   hoop: "Which hoop will you use?",
   fabric: "What will it be sewn on?",
   colors: "How many thread colours?",
@@ -96,7 +107,41 @@ export default function SetupFlow(props: Props) {
   // Hoop, Durkee EZ Frame) sit behind "More" -- opened up front if the
   // current hoop is already one of them, so it's never hidden.
   const [moreHoops, setMoreHoops] = useState(() => !!props.initial.hoop && /^(Mighty Hoop|Durkee)/.test(props.initial.hoop.name));
+  const textLines = props.textLines ?? [];
+  // The Text step exists only when the importer found text.
+  const STEPS = useMemo(() => ALL_STEPS.filter((s) => s !== "text" || textLines.length > 0), [textLines.length]);
   const stepIndex = STEPS.indexOf(step);
+  // Letter heights at the chosen size, and the size at which the smallest
+  // line would sew as traced.
+  const scale = props.sourceBounds ? textLineScale(props.sourceBounds, a.widthMM, a.heightMM) : 0;
+  const minCap = minimumCapHeightMM(a.threadWeight);
+  const capMM = (line: TextLine) => line.capHeightPixels * scale;
+  const smallLines = textLines.filter((l) => capMM(l) < minCap);
+  const widthForAllText = useMemo(() => {
+    if (!smallLines.length || !props.sourceBounds) return null;
+    const smallestCapPx = Math.min(...smallLines.map((l) => l.capHeightPixels));
+    // scale needed = minCap / capPx; width = scale * bounds.width (aspect kept)
+    const b = props.sourceBounds;
+    return Math.ceil((minCap / smallestCapPx) * (b.maxX - b.minX));
+  }, [smallLines, props.sourceBounds, minCap]);
+  // The decision for each line: what the user chose, else the default for
+  // the CURRENT size -- keep a line that sews as traced, leave out one that
+  // doesn't. A kept line that the size has since made too small is left
+  // out (keeping it is not an option any more).
+  const defaultDecision = (l: TextLine): TextDecision => ({ action: "drop", text: "", fontID: suggestFont(l) });
+  const decisions: TextDecision[] = textLines.map((l, i) => {
+    const d = a.textDecisions?.[i] ?? defaultDecision(l);
+    const tooSmall = capMM(l) < minCap;
+    if (!a.textDecisions?.[i] && !tooSmall) return { ...d, action: "keep" };
+    if (d.action === "keep" && tooSmall) return { ...d, action: "drop" };
+    return d;
+  });
+  const setDecision = (i: number, patch: Partial<TextDecision>) => {
+    const next = decisions.map((d, k) => (k === i ? { ...d, ...patch } : d));
+    setA({ ...a, textDecisions: next });
+  };
+  const setFontForAll = (fontID: string) => setA({ ...a, textDecisions: decisions.map((d) => ({ ...d, fontID })) });
+  useEffect(() => { if (textLines.length) ensureFontFaces().catch(() => { /* tiles fall back to the system font */ }); }, [textLines.length]);
 
   const isCap = a.placement && a.placement !== "custom" && /cap|hat/i.test(a.placement.name);
 
@@ -125,6 +170,10 @@ export default function SetupFlow(props: Props) {
     switch (step) {
       case "placement":
         return "Pick the spot on the garment and I'll start from the size that's standard there.";
+      case "text":
+        return smallLines.length
+          ? `${smallLines.length === textLines.length ? (textLines.length === 1 ? "It" : "All of it") : `${smallLines.length} of ${textLines.length} lines`} would sew smaller than ${len(minCap)} ${displayUnitLabel()} tall at ${size(a.widthMM, a.heightMM)} — too small for lettering to read. Type the words and I'll set them in a real font at a size that sews, or leave them out.`
+          : "Every line is tall enough to sew as traced. Re-type any of them for cleaner lettering, or carry on.";
       case "size":
         if (a.placement && a.placement !== "custom") {
           const p = a.placement;
@@ -169,7 +218,7 @@ export default function SetupFlow(props: Props) {
   const finish = () => {
     const hoop = a.hoopMode === "none" ? null : a.hoopMode === "recommend"
       ? smallestHoopThatFits(catalog.hoops, a.widthMM, a.heightMM, owned) : a.hoop;
-    props.onFinish({ ...a, hoop });
+    props.onFinish({ ...a, hoop, textDecisions: textLines.length ? decisions : undefined });
   };
 
   return (
@@ -229,6 +278,22 @@ export default function SetupFlow(props: Props) {
                     setA({ ...a, lockAspect: lock, heightMM: lock && aspectRatio > 0 ? a.widthMM / aspectRatio : a.heightMM });
                   }} /> Keep proportions</label>
               </div>
+            </div>
+          )}
+
+          {step === "text" && (
+            <div className="stack">
+              {widthForAllText && widthForAllText > a.widthMM && (
+                <div className="text-enlarge">
+                  Or make the whole design <b>{len(widthForAllText)} {displayUnitLabel()}</b> wide and every line sews as traced.
+                  <button className="btn small" type="button" onClick={() => setSize(widthForAllText)}>Use {len(widthForAllText)} {displayUnitLabel()}</button>
+                </div>
+              )}
+              {textLines.map((line, i) => (
+                <TextLineRow key={i} line={line} decision={decisions[i]} capMM={capMM(line)} minCap={minCap}
+                  image={props.image ?? null} onChange={(patch) => setDecision(i, patch)}
+                  onFontForAll={textLines.length > 1 ? setFontForAll : undefined} />
+              ))}
             </div>
           )}
 
@@ -355,5 +420,152 @@ export function Choice({ title, subtitle, selected, warning, disabled, onClick }
       <span className="choice-title">{title}</span>
       <span className="choice-sub">{subtitle}</span>
     </button>
+  );
+}
+
+/** One detected line in the Text step: its crop, what it would sew at, and
+ *  what to do with it. OCR pre-fills the words the first time the row shows. */
+function TextLineRow({ line, decision, capMM, minCap, image, onChange, onFontForAll }: {
+  line: TextLine; decision: TextDecision; capMM: number; minCap: number; image: DecodedImage | null;
+  onChange: (patch: Partial<TextDecision>) => void;
+  onFontForAll?: (fontID: string) => void;
+}) {
+  const canvasHost = useRef<HTMLDivElement>(null);
+  const [reading, setReading] = useState(false);
+  const [showWhole, setShowWhole] = useState(false);
+  // Screen pixels per artwork pixel in the comparison crop, measured once
+  // it is laid out (the canvas is scaled by CSS to fit its cell).
+  const [cropDisplayScale, setCropDisplayScale] = useState<number | null>(null);
+  const compareHost = useRef<HTMLDivElement>(null);
+  const read = useRef(false);
+  const tooSmall = capMM < minCap;
+  const sewnCap = Math.max(capMM, minCap);
+  useEffect(() => {
+    if (!image || !canvasHost.current) return;
+    const crop = cropLine(image, line.boundingBoxPixels, 0);
+    crop.className = "text-crop";
+    canvasHost.current.replaceChildren(crop);
+  }, [image, line]);
+  // Read the words once, when they will be needed: a line that cannot sew
+  // as traced, or one the user has chosen to re-type.
+  useEffect(() => {
+    if (!image || read.current || decision.text || (!tooSmall && decision.action !== "retype")) return;
+    read.current = true;
+    let cancelled = false;
+    setReading(true);
+    readLine(cropLine(image, line.boundingBoxPixels, line.rotationDegrees)).then((guess) => {
+      if (cancelled) return;
+      setReading(false);
+      if (guess.text && guess.confidence >= 55) onChange({ text: guess.text, action: "retype" });
+    });
+    return () => { cancelled = true; };
+  }, [image, line, tooSmall, decision.action]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const host = compareHost.current;
+    if (!image || !host || decision.action !== "retype") return;
+    const crop = cropLine(image, line.boundingBoxPixels, 0);
+    crop.className = "text-crop";
+    host.replaceChildren(crop);
+    const canvasScale = Math.min(8, Math.max(1, 60 / (line.boundingBoxPixels.maxY - line.boundingBoxPixels.minY)));
+    const measure = () => { if (crop.height > 0) setCropDisplayScale(canvasScale * (crop.clientHeight / crop.height)); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(crop);
+    return () => ro.disconnect();
+  }, [image, line, decision.action]);
+
+  const suggested = suggestFont(line);
+  const groups = ["Sans-serif", "Serif", "Script"].map((g) => ({
+    group: g,
+    fonts: LETTERING_FONTS.filter((f) => f.group === g).sort((x, y) => (x.id === suggested ? -1 : y.id === suggested ? 1 : 0)),
+  }));
+  const sample = decision.text.trim() || "Sample";
+  const chosen = LETTERING_FONTS.find((f) => f.id === decision.fontID);
+  // The crop shows the line's letters at a known screen height; the
+  // comparison sample is set so its capitals match, and condensed the
+  // same way the run will be on the fabric.
+  const box = line.boundingBoxPixels;
+  const cropScale = cropDisplayScale ?? Math.min(64 / ((box.maxY - box.minY) * 1.7), 1e9);
+  // The face is compared at the original's on-screen height; the label
+  // carries the height it will actually sew at, and the condensing is
+  // worked out at that size.
+  const letterPx = Math.max(10, Math.min(60, line.capHeightPixels * cropScale));
+  const enlarge = sewnCap / Math.max(1e-6, capMM);
+  const naturalWidthPx = letterPx * 0.62 * Math.max(1, Array.from(sample).length) * (chosen?.width === "condensed" ? 0.8 : chosen?.width === "wide" ? 1.15 : 1);
+  const targetWidthPx = (box.maxX - box.minX) * cropScale * enlarge;
+  const condense = Math.max(0.75, Math.min(1, targetWidthPx / Math.max(1, naturalWidthPx)));
+  const wholeBox = image ? {
+    left: `${(box.minX / image.width) * 100}%`, top: `${(box.minY / image.height) * 100}%`,
+    width: `${((box.maxX - box.minX) / image.width) * 100}%`, height: `${((box.maxY - box.minY) / image.height) * 100}%`,
+  } : null;
+
+  return (
+    <div className={"text-line" + (tooSmall ? " small" : "")}>
+      <div className="text-line-head">
+        <div ref={canvasHost} className="text-crop-host" />
+        <div className="text-line-meta">
+          <b>{line.shapeIndices.length} letters{line.curved ? ", on a curve" : ""}{line.mixedCase === false ? ", capitals" : ""}</b>
+          <span className={"text-status" + (tooSmall ? " warn" : "")}>
+            {tooSmall ? `about ${len(capMM)} ${displayUnitLabel()} tall here — needs ${len(minCap)}` : `about ${len(capMM)} ${displayUnitLabel()} tall — sews as traced`}
+          </span>
+          {image && <button type="button" className="text-link" onClick={() => setShowWhole((v) => !v)}>{showWhole ? "Hide the whole artwork" : "Show where this is in the artwork"}</button>}
+        </div>
+      </div>
+      {showWhole && image && wholeBox && (
+        <div className="text-whole">
+          <img src={image.previewURL} alt="" />
+          <span className="text-whole-box" style={wholeBox} />
+        </div>
+      )}
+      <div className="text-line-actions">
+        <label className={"text-action" + (decision.action === "retype" ? " on" : "")}>
+          <input type="radio" name={`text-${line.shapeIndices[0]}`} checked={decision.action === "retype"} onChange={() => onChange({ action: "retype" })} />
+          <span>Re-type as lettering</span>
+        </label>
+        <label className={"text-action" + (decision.action === "drop" ? " on" : "")}>
+          <input type="radio" name={`text-${line.shapeIndices[0]}`} checked={decision.action === "drop"} onChange={() => onChange({ action: "drop" })} />
+          <span>Leave it out</span>
+        </label>
+        <label className={"text-action" + (decision.action === "keep" ? " on" : "") + (tooSmall ? " disabled" : "")} title={tooSmall ? "Too small to sew as traced at this size" : undefined}>
+          <input type="radio" name={`text-${line.shapeIndices[0]}`} checked={decision.action === "keep"} disabled={tooSmall} onChange={() => onChange({ action: "keep" })} />
+          <span>Keep as traced</span>
+        </label>
+      </div>
+      {decision.action === "retype" && (
+        <div className="text-retype">
+          <input type="text" value={decision.text} placeholder={reading ? "Reading the artwork…" : "Type the words exactly as they should sew"}
+            onChange={(e) => onChange({ text: e.target.value })} maxLength={80} />
+          <div className="text-compare">
+            <div className="text-compare-cell"><span className="text-compare-label">Original</span><div className="text-compare-crop" ref={compareHost} /></div>
+            <div className="text-compare-cell">
+              <span className="text-compare-label">{chosen?.displayName ?? "Lettering"} · {len(sewnCap)} {displayUnitLabel()} tall{condense < 0.99 ? ` · condensed ${Math.round((1 - condense) * 100)}%` : ""}</span>
+              <div className="text-compare-sample" style={{ fontFamily: `"${fontFaceFamily(decision.fontID)}", sans-serif`, fontSize: `${letterPx / 0.7}px`, transform: `scaleX(${condense})` }}>{chosen?.capsOnly ? sample.toUpperCase() : sample}</div>
+            </div>
+          </div>
+          {groups.map((g) => (
+            <div key={g.group} className="font-group">
+              <div className="font-group-name">{g.group}</div>
+              <div className="font-tiles">
+                {g.fonts.map((f) => {
+                  const thin = !!f.thinStrokes && sewnCap < THIN_STROKE_MIN_CAP_MM;
+                  return (
+                    <button key={f.id} type="button" className={"font-tile" + (decision.fontID === f.id ? " on" : "") + (thin ? " thin" : "")}
+                      onClick={() => onChange({ fontID: f.id })} title={f.displayName + (thin ? ` — thin strokes need ${len(THIN_STROKE_MIN_CAP_MM)} ${displayUnitLabel()} to hold` : "")}>
+                      <span className="font-tile-sample" style={{ fontFamily: `"${fontFaceFamily(f.id)}", sans-serif` }}>{f.capsOnly ? sample.toUpperCase() : sample}</span>
+                      <span className="font-tile-name">{f.displayName}{f.id === suggested ? " · suggested" : ""}{thin ? " · too fine at this size" : ""}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <span className="hint">
+            Set at {len(sewnCap)} {displayUnitLabel()} tall{line.curved ? ", following the curve" : ""}, in the artwork's colour, where the original sits.
+            {onFontForAll && <> <button type="button" className="text-link" onClick={() => onFontForAll(decision.fontID)}>Use this font for every line</button></>}
+          </span>
+        </div>
+      )}
+    </div>
   );
 }

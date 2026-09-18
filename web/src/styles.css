@@ -526,3 +526,47 @@ a.choice { text-decoration: none; }
 @media (max-width: 760px) { .tip-cards.four { grid-template-columns: 1fr; } }
 .pill.primary.proofs-pill { background: var(--navy700); border-color: var(--navy700); }
 .pill.primary.proofs-pill:hover:not(:disabled) { background: var(--navy800); border-color: var(--navy800); }
+
+/* --- setup: the Text step --- */
+.text-enlarge { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: 10px; background: var(--sky, #eef6fd); color: var(--ink2); font-size: 13px; }
+.text-enlarge b { color: var(--navy800); }
+.text-line { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; background: var(--panel); }
+.text-line.small { border-color: #f2c9a0; }
+.text-line-head { display: flex; gap: 14px; align-items: center; }
+.text-crop-host { flex: none; max-width: 46%; }
+.text-crop { max-width: 100%; max-height: 64px; height: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; image-rendering: auto; }
+.text-line-meta { display: grid; gap: 3px; min-width: 0; }
+.text-line-meta b { color: var(--navy800); font-size: 13px; }
+.text-status { font-size: 12.5px; color: var(--ink2); }
+.text-status.warn { color: #a8621f; font-weight: 600; }
+.text-line-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.text-action { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); font-size: 12.5px; color: var(--ink2); cursor: pointer; }
+.text-action input { margin: 0; }
+.text-action.on { border-color: var(--blue200); background: var(--sky, #eef6fd); color: var(--navy800); }
+.text-action.disabled { opacity: .5; cursor: not-allowed; }
+.text-retype { display: grid; gap: 10px; }
+.text-retype input[type=text] { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.text-link { background: none; border: none; padding: 0; color: var(--blue500, #2b86e8); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.text-link:hover { text-decoration: underline; }
+.text-whole { position: relative; max-width: 420px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+.text-whole img { display: block; width: 100%; height: auto; }
+.text-whole-box { position: absolute; border: 2px solid #e0533a; box-shadow: 0 0 0 2px rgba(255,255,255,.7); border-radius: 3px; pointer-events: none; }
+.text-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.text-compare-cell { display: grid; gap: 4px; min-width: 0; }
+.text-compare-label { font-size: 11px; color: var(--label); letter-spacing: .04em; text-transform: uppercase; }
+.text-compare-crop, .text-compare-sample { border: 1px solid var(--line); border-radius: 8px; background: #fff; min-height: 64px; display: flex; align-items: center; justify-content: center; padding: 6px 10px; overflow: hidden; }
+.text-compare-sample { color: var(--ink); white-space: nowrap; line-height: 1; transform-origin: center; }
+.font-group { display: grid; gap: 6px; }
+.font-group-name { font-size: 11px; color: var(--label); letter-spacing: .04em; text-transform: uppercase; }
+.font-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.font-tile { display: grid; gap: 4px; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); cursor: pointer; color: var(--ink); min-width: 0; }
+.font-tile:hover { border-color: var(--blue200); }
+.font-tile.on { border-color: var(--blue500, #2b86e8); box-shadow: 0 0 0 2px rgba(43,134,232,.18); }
+.font-tile.thin { opacity: .6; }
+.font-tile-sample { font-size: 22px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.font-tile-name { font-size: 11px; color: var(--label); }
+@media (max-width: 760px) {
+  .text-line-head { flex-direction: column; align-items: flex-start; }
+  .text-crop-host { max-width: 100%; }
+  .text-retype { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,78 @@
+import Testing
+import Foundation
+@testable import StitchPilotCore
+
+/// `TextLineFinder`: text found by geometry alone -- a row of letter-sized
+/// shapes of one colour at one height -- so the pipeline can leave a
+/// too-small tagline out whole and the setup can offer to re-type it.
+struct TextLineFinderTests {
+    private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> VectorShape {
+        VectorShape(subPaths: [SubPath(points: [Point2D(x, y), Point2D(x + w, y), Point2D(x + w, y + h), Point2D(x, y + h)], closed: true)])
+    }
+
+    @Test func aRowOfLetterSizedShapesIsOneLine() {
+        // Six "letters" 12 px tall in a row, a big logo mark above, a speck.
+        var shapes: [VectorShape] = []
+        var colors: [RGBColor?] = []
+        for i in 0..<6 { shapes.append(rect(20 + Double(i) * 14, 100, 9, 12)); colors.append(RGBColor(hex: 0x203060)) }
+        shapes.append(rect(20, 10, 80, 70)); colors.append(RGBColor(hex: 0x203060))
+        shapes.append(rect(150, 120, 2, 2)); colors.append(RGBColor(hex: 0x203060))
+        let lines = TextLineFinder.find(shapes: shapes, fillColors: colors, imageHeightPixels: 160)
+        #expect(lines.count == 1)
+        guard let line = lines.first else { return }
+        #expect(line.shapeIndices == [0, 1, 2, 3, 4, 5])
+        #expect(abs(line.capHeightPixels - 12) < 0.01)
+        #expect(abs(line.rotationDegrees) < 1)
+        #expect(!line.curved)
+        #expect(line.suggestsBold, "solid rectangles are as bold as letters get")
+    }
+
+    @Test func aTiltedRowReportsItsAngleAndDifferentColoursDoNotJoin() {
+        var shapes: [VectorShape] = []
+        var colors: [RGBColor?] = []
+        // A row rising to the right at about 15 degrees (Y down, so y falls).
+        for i in 0..<5 {
+            let x = 20 + Double(i) * 16, y = 100 - Double(i) * 16 * tan(15 * Double.pi / 180)
+            shapes.append(rect(x, y, 10, 12)); colors.append(RGBColor(hex: 0x000000))
+        }
+        // Three shapes of another colour on the same row: not the same line.
+        for i in 0..<3 { shapes.append(rect(120 + Double(i) * 16, 100, 10, 12)); colors.append(RGBColor(hex: 0xC02020)) }
+        let lines = TextLineFinder.find(shapes: shapes, fillColors: colors, imageHeightPixels: 160)
+        #expect(lines.count == 2, "one black line and one red line, got \(lines.count)")
+        if let black = lines.first(where: { $0.color == RGBColor(hex: 0x000000) }) {
+            #expect(abs(abs(black.rotationDegrees) - 15) < 3, "rotation \(black.rotationDegrees)")
+        }
+    }
+
+    @Test func lettersOnAnArcAreCurved() {
+        var shapes: [VectorShape] = []
+        var colors: [RGBColor?] = []
+        for i in 0..<9 {
+            let angle = (-60 + Double(i) * 15) * Double.pi / 180
+            let cx = 100 + 70 * sin(angle), cy = 100 - 70 * cos(angle)
+            shapes.append(rect(cx - 5, cy - 6, 10, 12)); colors.append(RGBColor(hex: 0x000000))
+        }
+        let lines = TextLineFinder.find(shapes: shapes, fillColors: colors, imageHeightPixels: 200)
+        #expect(lines.count == 1)
+        #expect(lines.first?.curved == true)
+        if let r = lines.first?.arcRadiusPixels { #expect(abs(r - 70) < 8, "radius \(r)") }
+    }
+
+    @Test func minimumCapHeightFollowsThreadWeight() {
+        #expect(TextLineFinder.minimumCapHeightMM(for: .wt40) == 4)
+        #expect(TextLineFinder.minimumCapHeightMM(for: .wt60) == 3)
+        #expect(TextLineFinder.minimumCapHeightMM(for: .wt30) == 5)
+    }
+
+    @Test func omittedTextLinesSurviveTheDocumentRoundTripAndAreReported() throws {
+        var doc = StitchDocument(name: "d", physicalWidthMM: 50, physicalHeightMM: 50, objects: [
+            EmbroideryObject(name: "square", shape: rect(5, 5, 20, 20), stitchType: .tatamiFill, threadColor: .generic(RGBColor(hex: 0x000000))),
+        ], omittedTextLines: 2)
+        let data = try JSONEncoder().encode(doc)
+        doc = try JSONDecoder().decode(StitchDocument.self, from: data)
+        #expect(doc.omittedTextLines == 2)
+        let plan = try DigitizePipeline.flatten(doc)
+        let report = QualityAnalyzer.analyze(plan, document: doc)
+        #expect(report.issues.contains { $0.message.hasPrefix("2 lines of text") })
+    }
+}

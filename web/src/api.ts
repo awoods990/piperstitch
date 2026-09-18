@@ -101,7 +101,10 @@ export const api = {
 
   build: (body: {
     source: ImportResponse["source"]; name: string; widthMM: number; heightMM: number;
-    matchToThreadLibrary?: boolean; palette?: ThreadColor[]; fabricType?: FabricType;
+    matchToThreadLibrary?: boolean; palette?: ThreadColor[]; fabricType?: FabricType; threadWeight?: string;
+    /** Source shapes to leave out (dropped or re-typed text). Passing this, even empty, means the text lines have been decided. */
+    dropShapeIndices?: number[];
+    omittedTextLines?: number;
   }) => postJSON<{ document: StitchDocument }>("/build", body),
 
   resize: (document: StitchDocument, widthMM: number, heightMM: number) =>
@@ -121,7 +124,7 @@ export const api = {
   classify: (document: StitchDocument, objectIDs: string[]) => postJSON<EditResponse>("/edit/classify", { document, objectIDs }),
   outlines: (document: StitchDocument) => postJSON<EditResponse>("/edit/outlines", { document }),
   border: (document: StitchDocument, threadColor: ThreadColor, widthMM?: number) => postJSON<EditResponse>("/edit/border", { document, threadColor, widthMM }),
-  lettering: (body: { document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D; replaceIDs?: string[] }) =>
+  lettering: (body: { document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D; replaceIDs?: string[]; rotationDegrees?: number }) =>
     postJSON<EditResponse>("/edit/lettering", body),
 
   sendFeedback: (body: {

@@ -35,8 +35,8 @@ export const TIPS: Tip[] = [
   },
   {
     title: "Smaller isn't free",
-    short: "Below about 1 mm a stroke can't be satin; trust the size step's advice.",
-    body: "Below about 1 mm a stroke can't be satin and small lettering loses its shape. The size step tells you how small your artwork's finest detail can go — trust it, or simplify the design.",
+    short: "Below about 1 mm a stroke can't be satin, and text under 4 mm tall can't be sewn as traced — the Text step lets you re-type it in a real font.",
+    body: "Below about 1 mm a stroke can't be satin, and lettering under about 4 mm tall (3 mm with 60-weight thread) loses its shape entirely. The size step tells you how small your artwork's finest detail can go, and when PiperStitch finds text that small it asks in the Text step: type the words and it sets them in a real font at a size that sews, exactly where the original sat — which is what a digitizer does — or leave them out.",
   },
   {
     title: "The preview is a prediction, not a photo",

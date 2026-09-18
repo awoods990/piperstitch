@@ -104,6 +104,35 @@ export interface ImportResponse {
   recommendedWidthMM: number;
   recommendedHeightMM: number;
   aspectRatio: number;
+  /** The artwork's page or card colour when it is a real colour (navy, grey, red): the fabric is drawn in it so white thread shows. */
+  backgroundColor?: RGBColor | null;
+  /** Lines of text found by their geometry, in artwork pixels; the Text step asks what they say. */
+  textLines?: TextLine[];
+}
+
+/** A run of letter-sized shapes the importer found in a line (see TextLineFinder). Pixel space. */
+export interface TextLine {
+  shapeIndices: number[];
+  boundingBoxPixels: BoundingBox;
+  rotationDegrees: number;
+  capHeightPixels: number;
+  inkFraction: number;
+  curved: boolean;
+  arcRadiusPixels?: number | null;
+  color?: RGBColor | null;
+  /** Letters of two heights: mixed case rather than all capitals. */
+  mixedCase?: boolean;
+  /** Median letter width over cap height: ~0.5 condensed, ~0.75 normal, >0.9 wide. */
+  letterAspect?: number;
+}
+
+export type TextAction = "retype" | "drop" | "keep";
+
+/** What to do with one detected text line when the design is built. */
+export interface TextDecision {
+  action: TextAction;
+  text: string;
+  fontID: string;
 }
 
 /** [code, x, y] per command; codes 0 stitch, 1 jump, 2 color change, 3 trim, 4 stop, 5 end. */

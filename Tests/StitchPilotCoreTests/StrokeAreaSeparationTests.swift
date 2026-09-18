@@ -84,6 +84,25 @@ struct StrokeAreaSeparationTests {
         #expect(result[0].parameters.allowBranchingSatin)
     }
 
+    /// A hairline (0.3 mm wide, 20 mm long) is sewn as a running stitch
+    /// down its centreline, not dropped; a 0.3 mm speck still is.
+    @Test func hairlinesAreSewnAlongTheirCentreline() throws {
+        let line = VectorShape(subPaths: [SubPath(points: rect(0, 10, 20, 10.3), closed: true)])
+        let centrelines = StitchTypeClassifier.hairlineCenterlines(line)
+        #expect(centrelines.count == 1, "one centreline, got \(centrelines.count)")
+        if let c = centrelines.first {
+            #expect(PolygonGeometry.pathLength(c) > 15, "runs most of the line's 20 mm, got \(PolygonGeometry.pathLength(c))")
+            #expect(c.allSatisfy { abs($0.y - 10.15) < 0.4 }, "stays on the line's middle")
+        }
+        #expect(StitchTypeClassifier.hairlineCenterlines(VectorShape(subPaths: [SubPath(points: rect(0, 0, 0.3, 0.3), closed: true)])).isEmpty)
+        let object = EmbroideryObject(name: "line", shape: line, stitchType: .tripleRun, threadColor: .generic(RGBColor(hex: 0x000000)))
+        let doc = StitchDocument(name: "d", physicalWidthMM: 30, physicalHeightMM: 20, objects: [object])
+        let plan = try DigitizePipeline.flatten(doc)
+        #expect(plan.stitchCount >= 5, "the hairline is sewn, got \(plan.stitchCount) stitches")
+        let report = QualityAnalyzer.analyze(plan, document: doc)
+        #expect(!report.issues.contains { $0.message.contains("too small to sew") }, "a sewn hairline is not reported as left out")
+    }
+
     @Test func aPlainSquareIsAllArea() throws {
         let square = VectorShape(subPaths: [SubPath(points: rect(0, 0, 20, 20), closed: true)])
         let split = try #require(ShapeMerger.splitThickAndThin(square, thinWidthMM: 3.0, overlapMM: 0.4))

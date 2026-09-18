@@ -10,6 +10,7 @@ import StitchPilotCore
 
 extension ImportedSource: Content {}
 extension StitchDocument: Content {}
+extension TextLine: Content {}
 
 struct ImportResponse: Content {
     var source: ImportedSource
@@ -17,6 +18,14 @@ struct ImportResponse: Content {
     var recommendedHeightMM: Double
     /// Width / height of the artwork, for aspect-locked size editing.
     var aspectRatio: Double
+    /// The artwork's page or card colour, when the importer found one and
+    /// it is worth previewing on (`StitchRenderer.isPreviewGround`): the
+    /// editor draws the fabric that colour so white thread shows.
+    var backgroundColor: RGBColor?
+    /// Lines of text found by their geometry (`TextLineFinder`), pixel
+    /// space, so the setup can ask what they say and whether to re-type,
+    /// keep or leave them out.
+    var textLines: [TextLine]
 }
 
 struct BuildRequest: Content {
@@ -28,6 +37,16 @@ struct BuildRequest: Content {
     /// The user's own thread inventory, when they've defined one.
     var palette: [ThreadColor]?
     var fabricType: FabricType?
+    var threadWeight: ThreadWeight?
+    /// Source shapes to leave out -- the letters of text lines the user
+    /// chose to drop or re-type. Passing this (even empty) means the
+    /// client has decided about every text line; absent, the server
+    /// leaves out any line whose letters are too small to sew at this
+    /// size and reports the count on the document.
+    var dropShapeIndices: [Int]?
+    /// How many text lines the client left out as too small, for the
+    /// readiness report (re-typed lines don't count).
+    var omittedTextLines: Int?
 }
 
 struct ResizeRequest: Content {

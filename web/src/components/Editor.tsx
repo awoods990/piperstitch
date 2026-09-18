@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CatalogSize, DigitizeResponse, FabricType, StitchDocument } from "../types";
+import type { CatalogSize, DigitizeResponse, FabricType, RGBColor, StitchDocument } from "../types";
 import type { Preferences } from "../prefs";
 import { rgbHex, hexRGB } from "../prefs";
 import StitchCanvas, { type Tool } from "./StitchCanvas";
@@ -14,6 +14,8 @@ export interface EditorProps extends Omit<InspectorProps, "busy" | "palette" | "
   error: string | null;
   status: string;
   stale: boolean;
+  /** The artwork's ground colour, drawn as the fabric when it is a real colour. */
+  fabricColor?: RGBColor | null;
   prefs: Preferences;
   palette: InspectorProps["palette"];
   fabric: FabricType;
@@ -136,7 +138,7 @@ export default function Editor(p: EditorProps) {
           {showOriginal && p.previewURL ? (
             <div className="original"><img src={p.previewURL} alt="Original artwork" /></div>
           ) : (
-            <StitchCanvas document={doc} digitized={digitized} hoop={p.hoop} stale={p.stale} showJumps={p.prefs.showJumps}
+            <StitchCanvas document={doc} digitized={digitized} hoop={p.hoop} stale={p.stale} showJumps={p.prefs.showJumps} fabricColor={p.fabricColor}
               tool={p.tool} selectedIDs={p.selectedIDs} brushRadiusMM={p.prefs.paintBrushRadiusMM} paintColor={p.prefs.paintColor}
               onSelect={p.onSelect} onTranslate={p.onTranslate} onScale={p.onScale} onStroke={p.onStroke} />
           )}

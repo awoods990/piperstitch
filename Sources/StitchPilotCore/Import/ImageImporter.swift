@@ -28,6 +28,12 @@ public struct ImageImportResult {
     public var fillColors: [RGBColor?]
     public var pixelWidth: Int
     public var pixelHeight: Int
+    /// The colour the importer took for the page or card behind the
+    /// artwork, when it found one -- what the preview should draw the
+    /// fabric as, so a white design for a navy shirt is not white on
+    /// white. Nil for transparent canvases and for images with no
+    /// dominant ground.
+    public var backgroundColor: RGBColor? = nil
 }
 
 /// Imports raster artwork (PNG/JPEG/TIFF/BMP/WEBP/GIF) by finding
@@ -47,6 +53,12 @@ public enum ImageImporter {
     /// Pixels closer than this (0-255 per channel, summed) to the detected
     /// background color are treated as background.
     private static let colorDistanceThreshold: Double = 45
+
+    /// See the ramp handling in `importShapes(rgba:)`: a ramp cluster
+    /// whose distance to the nearest real colour is under this fraction of
+    /// its distance to the background is a shade of that colour, and its
+    /// pixels join it rather than being voted on.
+    private static let shadeOfRealRatio = 0.35
     /// Connected components smaller than this many pixels are dropped —
     /// "eliminate insignificant isolated pixels" (spec §7).
     private static let minComponentAreaPixels = 8
@@ -157,6 +169,12 @@ public enum ImageImporter {
         // pass because one of its tests is spatial (see the function).
         let backgroundRampIndices = backgroundRampClusterIndices(clusters, backgroundColor: backgroundColor,
                                                                  labels: labels, foregroundMask: foregroundMask, width: width, height: height)
+        if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil {
+            print("  import: background \(backgroundColor.map { "(\($0.r),\($0.g),\($0.b))" } ?? "none"), \(clusters.count) clusters")
+            for (i, c) in clusters.enumerated() {
+                print("    cluster \(i): (\(c.rgb.r),\(c.rgb.g),\(c.rgb.b)) \(c.pixelCount) px\(backgroundRampIndices.contains(i) ? " -- background ramp" : "")")
+            }
+        }
         if !backgroundRampIndices.isEmpty {
             // A ramp pixel that is decisively nearer the background than any
             // real design colour IS background, whatever its neighbours
@@ -168,7 +186,27 @@ public enum ImageImporter {
             // decides those; the vote still handles the genuinely
             // in-between pixels along the edges.
             let realClusters = clusters.indices.filter { !backgroundRampIndices.contains($0) }
+            // A ramp cluster that is itself a shade of a real colour -- much
+            // nearer that colour than the background -- IS that colour:
+            // its pixels join the nearest real cluster outright. Left
+            // "ambiguous" and decided by their neighbours, the dark
+            // blue-grey letters of a blurry tagline (whose only neighbours
+            // are the white page) dissolved into the background, and the
+            // ATS sample lost both its lines of text at import.
+            var shadeOf: [Int: Int] = [:]
+            if let backgroundColor {
+                for c in backgroundRampIndices {
+                    guard let nearest = realClusters.min(by: { RGBColor.deltaE(clusters[c].rgb, clusters[$0].rgb) < RGBColor.deltaE(clusters[c].rgb, clusters[$1].rgb) }) else { continue }
+                    let toReal = RGBColor.deltaE(clusters[c].rgb, clusters[nearest].rgb)
+                    let toBackground = RGBColor.deltaE(clusters[c].rgb, backgroundColor)
+                    if toReal < shadeOfRealRatio * toBackground { shadeOf[c] = nearest }
+                }
+            }
             for i in 0..<(width * height) where labels[i] >= 0 && backgroundRampIndices.contains(labels[i]) {
+                if let real = shadeOf[labels[i]] {
+                    labels[i] = real
+                    continue
+                }
                 isAmbiguous[i] = true
                 guard let backgroundColor, !realClusters.isEmpty else { continue }
                 let color = RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2])
@@ -241,11 +279,23 @@ public enum ImageImporter {
         // larger merged shape's box, and stays correctly preserved as a
         // real hole. Reversing this order would risk stripping exactly
         // the hole this pass exists to protect.
+        if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil {
+            for (i, shape) in shapes.enumerated() {
+                let box = shape.boundingBox
+                print(String(format: "    traced %d: %@ %d subPaths, %.0fx%.0f px", i, fillColors[i].map { "(\($0.r),\($0.g),\($0.b))" } ?? "?", shape.subPaths.count, box.width, box.height))
+            }
+        }
         mergeColorIslandsIntoLargestSameColorShape(&shapes, fillColors: &fillColors)
         removeHolesCoveredByAnotherShape(&shapes, fillColors: fillColors)
+        if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil {
+            for (i, shape) in shapes.enumerated() {
+                let box = shape.boundingBox
+                print(String(format: "    merged %d: %@ %d subPaths, %.0fx%.0f px", i, fillColors[i].map { "(\($0.r),\($0.g),\($0.b))" } ?? "?", shape.subPaths.count, box.width, box.height))
+            }
+        }
 
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
-        return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height)
+        return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height, backgroundColor: backgroundColor)
     }
 
     /// Companion to `ColorQuantizer.mergeAntiAliasingClusters`, which folds
@@ -886,6 +936,18 @@ public enum ImageImporter {
     /// `smoothAmbiguousBoundaryLabels`'s ambiguity test to the foreground/
     /// background boundary too, not just boundaries between two foreground
     /// colors -- see that function's own doc comment.
+    /// See `computeForegroundMask`: this share of the border pixels must
+    /// match the border's median colour for it to be the background.
+    /// Three grey sides and one white edge is ~75%; a canvas split
+    /// between two colours is ~50% and falls through to Otsu.
+    private static let borderMajorityFraction = 0.6
+
+    /// See `computeForegroundMask`: with no border majority, the image's
+    /// dominant colour is the background when it covers this share of
+    /// the picture and this share of the border.
+    private static let dominantColorImageFraction = 0.3
+    private static let dominantColorBorderFraction = 0.2
+
     private static func computeForegroundMask(pixels: [UInt8], width: Int, height: Int) throws -> (mask: [Bool], backgroundColor: RGBColor?) {
         func pixel(_ x: Int, _ y: Int) -> (r: Double, g: Double, b: Double, a: Double) {
             let i = (y * width + x) * 4
@@ -915,24 +977,60 @@ public enum ImageImporter {
             return (mask, nil)
         }
 
-        let cornersAgree = corners.allSatisfy { c in
-            let ref = corners[0]
-            return abs(c.r - ref.r) + abs(c.g - ref.g) + abs(c.b - ref.b) < 30
+        // The background colour is the per-channel median of every
+        // border pixel, not the single top-left pixel: JPEG ringing put
+        // a (255, 227, 255) pink at one corner of a white-background
+        // phone screenshot, and with that as the reference the real
+        // white was 28 units "away" -- close enough to still count as
+        // background, but far enough to break the anti-aliasing ramp
+        // test, which measures every blend colour against this value.
+        //
+        // The border decides by MAJORITY, not by all four corners
+        // agreeing: a logo on a grey card with one corner cut away (the
+        // crop of a studio's side-by-side, a screenshot with a
+        // watermark, a photo with a finger in it) has three grey corners
+        // and one white, and the all-corners rule sent it to the Otsu
+        // fallback below, which split the image into light and dark and
+        // kept the minority -- the white and yellow of an eagle, losing
+        // both its blues to the "background" class along with the grey.
+        var rs: [Double] = [], gs: [Double] = [], bs: [Double] = []
+        for x in 0..<width { for y in [0, height - 1] { let p = pixel(x, y); rs.append(p.r); gs.append(p.g); bs.append(p.b) } }
+        for y in 0..<height { for x in [0, width - 1] { let p = pixel(x, y); rs.append(p.r); gs.append(p.g); bs.append(p.b) } }
+        func median(_ v: [Double]) -> Double { let s = v.sorted(); return s.isEmpty ? 0 : s[s.count / 2] }
+        func borderShare(of reference: (r: Double, g: Double, b: Double)) -> Double {
+            var agreeing = 0
+            for i in rs.indices where abs(rs[i] - reference.r) + abs(gs[i] - reference.g) + abs(bs[i] - reference.b) <= colorDistanceThreshold { agreeing += 1 }
+            return rs.isEmpty ? 0 : Double(agreeing) / Double(rs.count)
+        }
+        var bg = (r: median(rs), g: median(gs), b: median(bs), a: 255.0)
+        var borderAgrees = borderShare(of: (bg.r, bg.g, bg.b)) >= borderMajorityFraction
+        if !borderAgrees {
+            // No majority around the median: a banner cut off at the sides,
+            // with a dark bar along its top and bottom edges and pale sky
+            // between, has a border median that matches nothing. The
+            // image's DOMINANT colour decides instead, when it covers a
+            // real share of the picture and reaches the border -- the pale
+            // ground of that banner, the grey card behind a mascot -- and
+            // only a picture with no dominant colour (a painting, a
+            // photograph) falls through to Otsu, which treated the
+            // banner's whole pale sky, sun and rays as background and kept
+            // only the green.
+            var sample: [RGBColor] = []
+            sample.reserveCapacity(width * height / 4 + 1)
+            for i in stride(from: 0, to: width * height, by: 4) {
+                sample.append(RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2]))
+            }
+            if let dominant = ColorQuantizer.quantize(pixels: sample, maxColors: 6).max(by: { $0.pixelCount < $1.pixelCount }),
+               Double(dominant.pixelCount) / Double(max(1, sample.count)) >= dominantColorImageFraction {
+                let candidate = (r: Double(dominant.rgb.r), g: Double(dominant.rgb.g), b: Double(dominant.rgb.b))
+                if borderShare(of: candidate) >= dominantColorBorderFraction {
+                    bg = (candidate.r, candidate.g, candidate.b, 255.0)
+                    borderAgrees = true
+                }
+            }
         }
 
-        if cornersAgree {
-            // The background colour is the per-channel median of every
-            // border pixel, not the single top-left pixel: JPEG ringing
-            // put a (255, 227, 255) pink at one corner of a white-background
-            // phone screenshot, and with that as the reference the real
-            // white was 28 units "away" -- close enough to still count as
-            // background, but far enough to break the anti-aliasing ramp
-            // test, which measures every blend colour against this value.
-            var rs: [Double] = [], gs: [Double] = [], bs: [Double] = []
-            for x in 0..<width { for y in [0, height - 1] { let p = pixel(x, y); rs.append(p.r); gs.append(p.g); bs.append(p.b) } }
-            for y in 0..<height { for x in [0, width - 1] { let p = pixel(x, y); rs.append(p.r); gs.append(p.g); bs.append(p.b) } }
-            func median(_ v: [Double]) -> Double { let s = v.sorted(); return s.isEmpty ? 0 : s[s.count / 2] }
-            let bg = (r: median(rs), g: median(gs), b: median(bs), a: 255.0)
+        if borderAgrees {
             for y in 0..<height {
                 for x in 0..<width {
                     let p = pixel(x, y)

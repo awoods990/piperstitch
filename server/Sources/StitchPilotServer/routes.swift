@@ -135,7 +135,9 @@ func routes(_ app: Application) throws {
         }
         return importResponse(shapes: result.shapes, fillColors: result.fillColors,
                               pixelWidth: result.pixelWidth, pixelHeight: result.pixelHeight,
-                              hoopWidthMM: q.hoopWidthMM, hoopHeightMM: q.hoopHeightMM)
+                              hoopWidthMM: q.hoopWidthMM, hoopHeightMM: q.hoopHeightMM,
+                              backgroundColor: result.backgroundColor.flatMap { StitchRenderer.isPreviewGround($0) ? $0 : nil },
+                              textLines: TextLineFinder.find(shapes: result.shapes, fillColors: result.fillColors, imageHeightPixels: result.pixelHeight))
     }
 
     // SVG import: the file's text, as-is.
@@ -162,7 +164,8 @@ func routes(_ app: Application) throws {
         let document = try await Engine.run {
             DocumentBuilder.build(source: body.source, name: body.name, widthMM: body.widthMM, heightMM: body.heightMM,
                                   matchToThreadLibrary: body.matchToThreadLibrary ?? true, palette: body.palette,
-                                  fabricType: body.fabricType ?? .standard)
+                                  fabricType: body.fabricType ?? .standard, threadWeight: body.threadWeight ?? .wt40,
+                                  dropShapeIndices: body.dropShapeIndices, omittedTextLines: body.omittedTextLines)
         }
         return DocumentResponse(document: document)
     }
@@ -216,13 +219,13 @@ func routes(_ app: Application) throws {
 }
 
 private func importResponse(shapes: [VectorShape], fillColors: [RGBColor?], pixelWidth: Int, pixelHeight: Int,
-                            hoopWidthMM: Double?, hoopHeightMM: Double?) -> ImportResponse {
+                            hoopWidthMM: Double?, hoopHeightMM: Double?, backgroundColor: RGBColor? = nil, textLines: [TextLine] = []) -> ImportResponse {
     var bounds = BoundingBox.empty
     for shape in shapes { bounds = bounds.union(shape.boundingBox) }
     let source = ImportedSource(shapes: shapes, fillColors: fillColors, bounds: bounds, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
     let size = DocumentBuilder.recommendedSize(for: source, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM)
     let aspect = bounds.height > 0 ? bounds.width / bounds.height : 1
-    return ImportResponse(source: source, recommendedWidthMM: size.widthMM, recommendedHeightMM: size.heightMM, aspectRatio: aspect)
+    return ImportResponse(source: source, recommendedWidthMM: size.widthMM, recommendedHeightMM: size.heightMM, aspectRatio: aspect, backgroundColor: backgroundColor, textLines: textLines)
 }
 
 /// The same five machine formats `AppState.exportChoosingFormat` offers.

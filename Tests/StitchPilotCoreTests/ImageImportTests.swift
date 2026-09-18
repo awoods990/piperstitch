@@ -53,6 +53,67 @@ struct ImageImportTests {
     /// the blend-colour test, and the grey outnumbered the dark colour so
     /// the size guard on that test let it through. The holes must import
     /// as holes (bare fabric), not as a light-grey object.
+    /// A mid-grey card with one corner cut away to white -- the crop of a
+    /// studio's side-by-side, a screenshot with a watermark. Three grey
+    /// corners and one white corner sent this to the Otsu fallback, which
+    /// split light from dark and kept the minority: an eagle's blues went
+    /// to "background" with the grey. The border's majority decides now.
+    @Test func backgroundIsTheBorderMajorityNotAllFourCorners() throws {
+        let size = 80
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(0.36, 0.36, 0.36, in: colorSpace))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        // The cut corner: a white triangle over the top-right.
+        context.setFillColor(deviceColor(1, 1, 1, in: colorSpace))
+        context.move(to: CGPoint(x: 55, y: size)); context.addLine(to: CGPoint(x: size, y: size)); context.addLine(to: CGPoint(x: size, y: 40)); context.closePath(); context.fillPath()
+        // A navy shape and a light-blue shape, both darker than white and
+        // one darker than the grey.
+        context.setFillColor(deviceColor(0.10, 0.20, 0.45, in: colorSpace))
+        context.fill(CGRect(x: 10, y: 10, width: 30, height: 20))
+        context.setFillColor(deviceColor(0.40, 0.70, 0.90, in: colorSpace))
+        context.fill(CGRect(x: 10, y: 40, width: 30, height: 20))
+        let png = encodePNG(context.makeImage()!)
+
+        let result = try ImageImporter.importShapes(from: png, maxColors: 4)
+        let colors = result.fillColors.compactMap { $0 }
+        #expect(colors.contains { $0.b > 90 && $0.r < 60 }, "the navy shape must survive: \(colors)")
+        #expect(colors.contains { $0.b > 200 && $0.g > 150 && $0.r < 130 }, "the light-blue shape must survive: \(colors)")
+        #expect(!colors.contains { abs(Int($0.r) - 92) < 12 && abs(Int($0.g) - 92) < 12 }, "the grey is the background, not a shape: \(colors)")
+        let bg = try #require(result.backgroundColor)
+        #expect(abs(Int(bg.r) - 92) < 12 && abs(Int(bg.g) - 92) < 12 && abs(Int(bg.b) - 92) < 12, "background \(bg)")
+    }
+
+    /// A banner cut off at the sides: a green bar along the top and bottom
+    /// edges, pale ground between, a yellow sun and green text. No border
+    /// majority -- the image's dominant colour (the pale ground) is the
+    /// background, and the sun survives. Otsu had kept only the green.
+    @Test func backgroundIsTheDominantColourWhenTheBorderHasNoMajority() throws {
+        let size = 100
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(deviceColor(0.95, 0.97, 0.94, in: colorSpace))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        context.setFillColor(deviceColor(0.12, 0.48, 0.22, in: colorSpace))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: 5))
+        context.fill(CGRect(x: 0, y: size - 5, width: size, height: 5))
+        context.fill(CGRect(x: 10, y: 60, width: 60, height: 14))   // "text"
+        context.setFillColor(deviceColor(0.98, 0.78, 0.15, in: colorSpace))
+        context.fillEllipse(in: CGRect(x: 55, y: 20, width: 34, height: 34))  // the sun
+        let png = encodePNG(context.makeImage()!)
+
+        let result = try ImageImporter.importShapes(from: png, maxColors: 4)
+        let colors = result.fillColors.compactMap { $0 }
+        #expect(colors.contains { $0.r > 200 && $0.g > 150 && $0.b < 100 }, "the yellow sun must survive: \(colors)")
+        #expect(colors.contains { $0.g > 90 && $0.r < 80 }, "the green must survive: \(colors)")
+        let bg = try #require(result.backgroundColor)
+        #expect(bg.r > 220 && bg.g > 220 && bg.b > 220, "the pale ground is the background, got \(bg)")
+        #expect(!StitchRenderer.isPreviewGround(bg), "a near-white ground previews on the default paper")
+        #expect(StitchRenderer.isPreviewGround(RGBColor(r: 30, g: 40, b: 90)), "a navy ground is worth previewing on")
+    }
+
     @Test func blurryEnclosedGapsAreHolesNotALightGreyObject() throws {
         let size = 60
         let colorSpace = CGColorSpaceCreateDeviceRGB()

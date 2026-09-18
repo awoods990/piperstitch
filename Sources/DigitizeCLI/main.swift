@@ -254,6 +254,8 @@ do {
 
     let rawShapes: [VectorShape]
     let fillColors: [RGBColor?]
+    var artworkBackground: RGBColor? = nil
+    var artworkPixelHeight = 0
     if isSVG {
         let result = try SVGImporter.importShapes(from: data)
         rawShapes = result.shapes
@@ -262,6 +264,8 @@ do {
         let result = try ImageImporter.importShapes(from: data, maxColors: maxColors)
         rawShapes = result.shapes
         fillColors = result.fillColors
+        artworkBackground = result.backgroundColor
+        artworkPixelHeight = result.pixelHeight
     }
     guard !rawShapes.isEmpty else { fail("No usable shapes found in \(inputURL.lastPathComponent).") }
     checkpoint("Imported \(rawShapes.count) raw shapes")
@@ -269,8 +273,31 @@ do {
     var combined = BoundingBox.empty
     for shape in rawShapes { combined = combined.union(shape.boundingBox) }
 
+    // Text too small to sew at this size is left out whole (the web app's
+    // Text step lets the customer re-type it; here the rule alone applies).
+    // KEEP_SMALL_TEXT=1 sews it anyway, for comparison.
+    var droppedShapeIndices = Set<Int>()
+    var omittedTextLines = 0
+    if !isSVG, combined.width > 0 {
+        let scale = min(widthMM / combined.width, heightMM / max(1e-9, combined.height))
+        let minimum = TextLineFinder.minimumCapHeightMM(for: .wt40)
+        let lines = TextLineFinder.find(shapes: rawShapes, fillColors: fillColors, imageHeightPixels: artworkPixelHeight)
+        for (k, line) in lines.enumerated() {
+            let capMM = line.capHeightPixels * scale
+            let tooSmall = capMM < minimum
+            if tooSmall, ProcessInfo.processInfo.environment["KEEP_SMALL_TEXT"] == nil {
+                droppedShapeIndices.formUnion(line.shapeIndices)
+                omittedTextLines += 1
+            }
+            print(String(format: "  text line %d: %d letters, cap %.1f mm, %.0f deg, %@%@%@", k + 1, line.shapeIndices.count, capMM, line.rotationDegrees,
+                         line.suggestsBold ? "bold" : "regular", line.curved ? ", curved" : "", tooSmall ? " -- too small, left out" : ""))
+        }
+    }
+
     var objects: [EmbroideryObject] = []
-    var fittedPieces: [[VectorShape]] = rawShapes.map { [$0.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: combined)] }
+    var fittedPieces: [[VectorShape]] = rawShapes.enumerated().map { i, shape in
+        droppedShapeIndices.contains(i) ? [] : [shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: combined)]
+    }
     if isSVG {
         // Vector fills overlap back to front; sew each region once (C2).
         fittedPieces = DesignFinishing.removeOverlaps(fittedPieces.map { $0[0] }, opaque: fillColors.map { $0 != nil })
@@ -315,7 +342,7 @@ do {
     }
 
     var document = StitchDocument(name: inputURL.deletingPathExtension().lastPathComponent,
-                                  physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
+                                  physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects, omittedTextLines: omittedTextLines)
     // LAYDOWN=1: a white laydown stitch first (`LaydownSettings`).
     if ProcessInfo.processInfo.environment["LAYDOWN"] != nil {
         document.laydown = LaydownSettings(threadColor: .generic(RGBColor(hex: 0xF2EFE8), name: "Ecru"))
@@ -405,6 +432,12 @@ do {
 
     var renderOptions = StitchRenderer.Options()
     renderOptions.pixelsPerMM = pixelsPerMM
+    // Preview on the artwork's own ground when it is a real colour (a
+    // navy card, a grey field): the stitches meant for that garment are
+    // otherwise white on the paper-coloured default.
+    if let bg = artworkBackground, StitchRenderer.isPreviewGround(bg) {
+        renderOptions.backgroundColor = (Double(bg.r) / 255, Double(bg.g) / 255, Double(bg.b) / 255)
+    }
     guard let pngData = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: colors, options: renderOptions) else {
         fail("Rendering failed.")
     }

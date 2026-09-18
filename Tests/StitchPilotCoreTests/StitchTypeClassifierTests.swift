@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import StitchPilotCore
 
 struct StitchTypeClassifierTests {
@@ -514,5 +515,22 @@ struct StitchTypeClassifierTests {
         }
         let reconciled = StitchTypeClassifier.reconcileRunningStitchOutliers(objects)
         #expect(reconciled[0].stitchType == .runningStitch)
+    }
+
+    /// A big blob with a small hole is an area with a hole, not a ring: its
+    /// area-over-perimeter "width" is small only because a spiky outline
+    /// inflates the perimeter (an eagle's head with the eye cut out, sewn as
+    /// a satin ring -- an outline round nothing).
+    @Test func aWideBlobWithASmallHoleIsFillNotARingSatin() {
+        var outer: [Point2D] = []
+        for k in 0..<72 {
+            let a = Double(k) / 72 * .pi * 2
+            let r = (k % 2 == 0) ? 30.0 : 24.0   // spiky
+            outer.append(Point2D(35 + r * cos(a), 35 + r * sin(a)))
+        }
+        var hole: [Point2D] = []
+        for k in 0..<24 { let a = Double(k) / 24 * .pi * 2; hole.append(Point2D(45 + 4 * cos(a), 30 + 4 * sin(a))) }
+        let shape = VectorShape(subPaths: [SubPath(points: outer, closed: true), SubPath(points: hole, closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: shape, parameters: StitchGenerationParameters()) == .tatamiFill)
     }
 }

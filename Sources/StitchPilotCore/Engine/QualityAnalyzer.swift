@@ -261,7 +261,15 @@ public enum QualityAnalyzer {
     /// penalised by `checkFragmentation`.
     private static func checkUnsewableDetail(_ document: StitchDocument?, into issues: inout [QualityIssue]) {
         guard let document else { return }
-        let leftOut = document.objects.filter { StitchTypeClassifier.droppingUnsewable($0.shape) == nil }.count
+        if document.omittedTextLines > 0 {
+            let n = document.omittedTextLines
+            issues.append(QualityIssue(
+                severity: .warning,
+                message: "\(n) line\(n == 1 ? "" : "s") of text in the artwork \(n == 1 ? "is" : "are") too small to sew at this size and \(n == 1 ? "was" : "were") left out. Re-type \(n == 1 ? "it" : "them") as lettering (the Text step, or Add lettering), or enlarge the design.",
+                scorePenalty: 0
+            ))
+        }
+        let leftOut = document.objects.filter { StitchTypeClassifier.droppingUnsewable($0.shape) == nil && StitchTypeClassifier.hairlineCenterlines($0.shape).isEmpty }.count
         guard leftOut > 0 else { return }
         issues.append(QualityIssue(
             severity: leftOut >= minimumFragmentCount ? .warning : .info,

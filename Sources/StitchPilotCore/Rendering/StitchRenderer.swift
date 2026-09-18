@@ -59,6 +59,19 @@ public enum StitchRenderer {
     /// be the actual per-run color sequence — `DigitizePipeline.
     /// colorSequence(for:)` — not guessed from a document's raw object
     /// order, since `ObjectSequencer` can reorder objects relative to that.
+    /// Whether an imported artwork's background is worth previewing on:
+    /// anything but near-white. The default paper ground already stands in
+    /// for a white page, and a pale cream or grey card looks the same on
+    /// fabric; a navy, red or mid-grey ground changes what the customer
+    /// sees -- white and yellow thread most of all.
+    public static func isPreviewGround(_ color: RGBColor) -> Bool {
+        let luminance = 0.299 * Double(color.r) + 0.587 * Double(color.g) + 0.114 * Double(color.b)
+        return luminance < previewGroundMaxLuminance
+    }
+
+    /// See `isPreviewGround`.
+    public static let previewGroundMaxLuminance = 225.0
+
     public static func render(_ plan: StitchPlan, widthMM: Double, heightMM: Double, colors: [ThreadColor], options: Options = Options()) -> CGImage? {
         let pxWidth = max(1, Int((widthMM * options.pixelsPerMM).rounded()))
         let pxHeight = max(1, Int((heightMM * options.pixelsPerMM).rounded()))

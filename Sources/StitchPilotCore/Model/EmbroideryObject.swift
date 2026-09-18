@@ -579,9 +579,14 @@ public struct StitchDocument: Codable, Sendable {
     /// none -- `LaydownSettings`. Generated at flatten time from the
     /// current objects, so it follows every edit.
     public var laydown: LaydownSettings?
+    /// Lines of text in the artwork left out of this document because
+    /// their letters were too small to sew at this size
+    /// (`TextLineFinder`); the readiness report tells the customer, who
+    /// can re-type them as lettering or enlarge the design.
+    public var omittedTextLines: Int = 0
 
     public init(name: String, physicalWidthMM: Double, physicalHeightMM: Double, objects: [EmbroideryObject] = [],
-                startAndEndAtCenter: Bool = false, laydown: LaydownSettings? = nil) {
+                startAndEndAtCenter: Bool = false, laydown: LaydownSettings? = nil, omittedTextLines: Int = 0) {
         self.schemaVersion = Self.currentSchemaVersion
         self.name = name
         self.physicalWidthMM = physicalWidthMM
@@ -589,10 +594,11 @@ public struct StitchDocument: Codable, Sendable {
         self.objects = objects
         self.startAndEndAtCenter = startAndEndAtCenter
         self.laydown = laydown
+        self.omittedTextLines = omittedTextLines
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, name, physicalWidthMM, physicalHeightMM, objects, startAndEndAtCenter, laydown
+        case schemaVersion, name, physicalWidthMM, physicalHeightMM, objects, startAndEndAtCenter, laydown, omittedTextLines
     }
 
     public init(from decoder: Decoder) throws {
@@ -605,6 +611,7 @@ public struct StitchDocument: Codable, Sendable {
         // Files saved before the flag existed decode as "off".
         startAndEndAtCenter = try c.decodeIfPresent(Bool.self, forKey: .startAndEndAtCenter) ?? false
         laydown = try c.decodeIfPresent(LaydownSettings.self, forKey: .laydown)
+        omittedTextLines = try c.decodeIfPresent(Int.self, forKey: .omittedTextLines) ?? 0
     }
 
     /// The point the machine starts from and returns to when

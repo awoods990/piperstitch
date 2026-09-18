@@ -204,6 +204,9 @@ func editRoutes(_ engine: RoutesBuilder) {
         struct In: Content {
             var document: StitchDocument; var shapes: [VectorShape]; var capHeightMM: Double
             var threadColor: ThreadColor; var targetCenter: Point2D; var replaceIDs: [UUID]?
+            /// Turn the run about its centre, degrees clockwise on screen
+            /// (Y down) -- a tagline re-set over a tilted original.
+            var rotationDegrees: Double?
         }
         let body = try req.content.decode(In.self)
         return try await Engine.run {
@@ -213,8 +216,14 @@ func editRoutes(_ engine: RoutesBuilder) {
             for shape in body.shapes { combined = combined.union(shape.boundingBox) }
             let offsetX = body.targetCenter.x - (combined.minX + combined.width / 2)
             let offsetY = body.targetCenter.y - (combined.minY + combined.height / 2)
+            let theta = (body.rotationDegrees ?? 0) * .pi / 180
+            let (cosT, sinT) = (cos(theta), sin(theta))
+            let cx = combined.minX + combined.width / 2, cy = combined.minY + combined.height / 2
             let translated = body.shapes.map { shape in
-                VectorShape(subPaths: shape.subPaths.map { sp in SubPath(points: sp.points.map { Point2D($0.x + offsetX, $0.y + offsetY) }, closed: sp.closed) })
+                VectorShape(subPaths: shape.subPaths.map { sp in SubPath(points: sp.points.map { p in
+                    let dx = p.x - cx, dy = p.y - cy
+                    return Point2D(cx + dx * cosT - dy * sinT + offsetX, cy + dx * sinT + dy * cosT + offsetY)
+                }, closed: sp.closed) })
             }
             let parameters = StitchGenerationParameters()
             let runType = StitchTypeClassifier.classifyLetteringRun(shapes: translated, parameters: parameters, capHeightMM: body.capHeightMM)

@@ -107,7 +107,8 @@ public enum StitchTypeClassifier {
             // one self-loop edge per hole, same as the single-hole case
             // stage 3 already extended this way. Still gated behind the
             // same opt-in as every other branching-path use here.
-            if parameters.allowBranchingSatin, SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
+            if parameters.allowBranchingSatin, ShapeMerger.isNowhereWiderThan(shape, widthMM: parameters.maxSatinWidthMM * 1.5),
+               SatinColumnGenerator.canRepresentAsBranchingSatinColumn(shape: shape, parameters: parameters) {
                 return .satin
             }
             return .tatamiFill
@@ -124,6 +125,13 @@ public enum StitchTypeClassifier {
             let meanCircumference = (holePerimeter + outerPerimeter) / 2
             let ringWidth = meanCircumference > 0 ? ringArea / meanCircumference : averageWidth
             guard ringWidth <= parameters.maxSatinWidthMM else { return .tatamiFill }
+            // ...and nowhere actually wider than a column. The mean-width
+            // figure above is area over perimeter, and a spiky outline
+            // inflates the perimeter: an eagle's head, 66 x 40 mm with an
+            // eye cut out of it and feathered edges, came out at "9.7 mm"
+            // by that measure and was sewn as a satin ring -- an outline
+            // with nothing inside (found against a real mascot logo).
+            guard ShapeMerger.isNowhereWiderThan(shape, widthMM: parameters.maxSatinWidthMM * 1.1) else { return .tatamiFill }
             // ...and only if the radial ring rails actually cover it (a
             // ribbon with a loop at one end is not a ring). Otherwise the
             // branching path may still sew it as satin, if allowed.
@@ -366,6 +374,33 @@ public enum StitchTypeClassifier {
         }
         return perimeter <= 0 || 2 * area / perimeter >= minimumMeanWidthMM
     }
+
+    /// The centrelines of a shape's hairline outlines -- closed sub-paths
+    /// too narrow to sew as a filled stroke (`isSewableSize`) but long
+    /// enough to mean something -- as open polylines, for a running stitch
+    /// along them. A fine-line drawing (a tree of 0.3 mm pen strokes in a
+    /// blurry 400-pixel logo) is what a digitizer sews as running stitch
+    /// down the middle of each line; traced as outlines those lines were
+    /// either dropped as hairlines or, before that rule, sewn as a double
+    /// row round each one. Empty when nothing qualifies.
+    public static func hairlineCenterlines(_ shape: VectorShape) -> [[Point2D]] {
+        var lines: [[Point2D]] = []
+        for subPath in shape.subPaths where subPath.closed && !isSewableSize(subPath) {
+            let box = subPath.boundingBox
+            guard max(box.width, box.height) >= minimumHairlineLengthMM else { continue }
+            var parameters = StrokeTopologyAnalyzer.Parameters()
+            parameters.pixelsPerMM = 20
+            guard let topology = StrokeTopologyAnalyzer.analyze(shape: VectorShape(subPaths: [subPath]), parameters: parameters) else { continue }
+            for edge in topology.edges where PolygonGeometry.pathLength(edge.polyline) >= minimumHairlineLengthMM {
+                lines.append(edge.polyline)
+            }
+        }
+        return lines
+    }
+
+    /// See `hairlineCenterlines`: a hairline shorter than this is a speck
+    /// or a fragment of unreadable text, not a drawn line.
+    public static let minimumHairlineLengthMM = 4.0
 
     /// The shape without its unsewable sub-paths, or nil when nothing
     /// sewable is left. A sub-path is judged on its own: a hairline
