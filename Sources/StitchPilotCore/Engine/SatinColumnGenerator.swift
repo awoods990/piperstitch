@@ -1485,6 +1485,8 @@ public enum SatinColumnGenerator {
         var nodes: [StrokeTopologyAnalyzer.Node]
         var segments: [BranchSegment]
         var patchByNode: [Int: [Point2D]]
+        /// The same patches as rail pairs, for `columnPlan`.
+        var patchColumnByNode: [Int: SatinColumn] = [:]
     }
 
     /// Everything `generateBranchingRuns` sews, decided in one place so
@@ -1674,6 +1676,7 @@ public enum SatinColumnGenerator {
         }
 
         var patchByNode: [Int: [Point2D]] = [:]
+        var patchColumnByNode: [Int: SatinColumn] = [:]
         for nodeID in patchedNodeIDs.sorted() {
             guard let node = nodesByID[nodeID] else { continue }
             let radius = patchRadiusByNode[nodeID] ?? junctionTrimRadius(for: node)
@@ -1681,8 +1684,11 @@ public enum SatinColumnGenerator {
             if let patch = junctionPatchFill(node: node, radius: radius, axis: axis, shapePolygons: polygons, parameters: parameters) {
                 patchByNode[nodeID] = patch
             }
+            if let column = junctionPatchColumn(node: node, radius: radius, axis: axis, shapePolygons: polygons, parameters: parameters) {
+                patchColumnByNode[nodeID] = column
+            }
         }
-        return BranchingPlan(polygons: polygons, nodes: topology.nodes, segments: segments, patchByNode: patchByNode)
+        return BranchingPlan(polygons: polygons, nodes: topology.nodes, segments: segments, patchByNode: patchByNode, patchColumnByNode: patchColumnByNode)
     }
 
     /// The direction the junction patch's satin grain runs along, so its
@@ -1897,6 +1903,38 @@ public enum SatinColumnGenerator {
     /// hard knot at every serif of the Red Sox halo that the customer
     /// could not pick out. A fan looks right in a render and is wrong on
     /// fabric.
+    /// `junctionPatchFill`'s chords as a column: the +across ends as one
+    /// rail, the -across ends as the other, along the patch axis. Sewn
+    /// back through `computeSegmentCrossings` it zigzags the same chords.
+    private static func junctionPatchColumn(node: StrokeTopologyAnalyzer.Node, radius: Double, axis: Point2D?, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> SatinColumn? {
+        guard radius > 0 else { return nil }
+        let along = axis ?? Point2D(1, 0)
+        let across = Point2D(-along.y, along.x)
+        let density = parameters.effectiveSatinDensityMM
+        let steps = max(2, Int((2 * radius / density).rounded()))
+        func chordEnd(from origin: Point2D, side: Double) -> Point2D {
+            let direction = across * side
+            let toRim = (radius * radius - origin.distance(to: node.position) * origin.distance(to: node.position)).squareRoot()
+            var reach = toRim
+            if let hit = rayPolygonsIntersection(origin: origin, direction: direction, polygons: shapePolygons) {
+                reach = min(reach, max(0, origin.distance(to: hit) - 0.05))
+            }
+            return origin + direction * reach
+        }
+        var railA: [Point2D] = [], railB: [Point2D] = []
+        for i in 0...steps {
+            let t = -radius + Double(i) / Double(steps) * 2 * radius
+            let clampedT = max(-radius + 1e-6, min(radius - 1e-6, t))
+            guard radius * radius - clampedT * clampedT > density * density / 4 else { continue }
+            let origin = node.position + along * clampedT
+            guard PolygonGeometry.pointInPolygons(origin, polygons: shapePolygons) else { continue }
+            railA.append(chordEnd(from: origin, side: 1))
+            railB.append(chordEnd(from: origin, side: -1))
+        }
+        guard railA.count >= 2 else { return nil }
+        return SatinColumn(railA: railA, railB: railB)
+    }
+
     private static func junctionPatchFill(node: StrokeTopologyAnalyzer.Node, radius: Double, axis: Point2D?, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters) -> [Point2D]? {
         guard radius > 0 else { return nil }
         let along = axis ?? Point2D(1, 0)
@@ -2552,5 +2590,213 @@ public enum SatinColumnGenerator {
                                     isClosedLoop: edge.isClosedLoop,
                                     polyline: Array(edge.polyline.reversed()),
                                     widthsMM: Array(edge.widthsMM.reversed()))
+    }
+}
+
+// MARK: - Columns as data (the glyph library)
+
+extension SatinColumnGenerator {
+    /// The satin columns this generator would sew `shape` with, in sew
+    /// order, as paired chords (railA[i] to railB[i]) at this parameter
+    /// set's density, without pull compensation. What the glyph library
+    /// stores: digitized once at a size where the generator is reliable,
+    /// scaled to any size and re-spaced at sew time (`sewColumns`). The
+    /// pairing is kept rather than re-derived from two rails: on a
+    /// diagonal or round a corner the generator's own pairing is the
+    /// whole point, and pairing the rails again by arc length skews the
+    /// inner against the outer and twists the column.
+    public static func columnPlan(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [SatinColumn] {
+        let density = parameters.effectiveSatinDensityMM
+        func paired(_ railA: [Point2D], _ railB: [Point2D], alreadyPaired: Bool) -> SatinColumn? {
+            let (a, b, count, _) = fineThenDecimatedRails(railA: railA, railB: railB, density: density, parameters: parameters, paired: alreadyPaired)
+            guard count >= 1, a.count > count, b.count > count else { return nil }
+            return SatinColumn(railA: Array(a[0...count]), railB: Array(b[0...count]))
+        }
+        // A glyph with a junction in its skeleton (N, A, K, an R's leg) is
+        // strokes, not one column, even when the single-column rail fit
+        // happens to succeed on it: that fit lays one zigzag across the
+        // whole letter, counters and all. Digitized once, it can afford
+        // the branching path.
+        let hasJunction = StrokeTopologyAnalyzer.analyze(shape: shape)?.nodes.contains { $0.isJunction } ?? false
+        if shape.subPaths.count == 1, !hasJunction, canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) {
+            let rails = try computeRails(for: shape)
+            if let column = paired(rails.railA, rails.railB, alreadyPaired: false) { return [column] }
+        }
+        if shape.subPaths.count == 2, !hasJunction, canRepresentAsRingSatinColumn(shape: shape) {
+            var outer = shape.subPaths[0].points, hole = shape.subPaths[1].points
+            if outer.count > 1, outer.first == outer.last { outer.removeLast() }
+            if hole.count > 1, hole.first == hole.last { hole.removeLast() }
+            let rails = try computeRingRails(outer: outer, hole: hole)
+            if let column = paired(rails.railA, rails.railB, alreadyPaired: true) { return [column] }
+        }
+        let plan = try branchingPlan(for: shape, parameters: parameters)
+        var columns: [SatinColumn] = []
+        var emittedPatchNodes = Set<Int>()
+        func emitPatch(at nodeID: Int) {
+            if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil {
+                print("    columns: patch at node \(nodeID): stitches \(plan.patchByNode[nodeID]?.count ?? -1), column chords \(plan.patchColumnByNode[nodeID]?.railA.count ?? -1)")
+            }
+            guard !emittedPatchNodes.contains(nodeID), let column = plan.patchColumnByNode[nodeID] else { return }
+            emittedPatchNodes.insert(nodeID)
+            columns.append(column)
+        }
+        var lastTouch: [Int: Int] = [:]
+        for (index, segment) in plan.segments.enumerated() {
+            lastTouch[segment.edge.startNodeID] = index
+            lastTouch[segment.edge.endNodeID] = index
+        }
+        // The same order `generateBranchingRuns` sews: a dead-end arm is
+        // travelled out and sewn back, a junction's patch goes down at
+        // the node's last visit. The plan's chords carry pull
+        // compensation; take it back off so the stored column is the
+        // stroke itself.
+        for (index, segment) in plan.segments.enumerated() {
+            if lastTouch[segment.edge.startNodeID] == index, !segment.outAndBack { emitPatch(at: segment.edge.startNodeID) }
+            if !segment.kept.isEmpty {
+                var a = Array(segment.expandedA[segment.kept]), b = Array(segment.expandedB[segment.kept])
+                let widths = zip(a, b).map { $0.distance(to: $1) }
+                let average = widths.reduce(0, +) / Double(max(1, widths.count))
+                let pull = parameters.pullCompensationMM
+                    ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: average, fabricType: parameters.fabricType)
+                for i in a.indices where widths[i] > pull {
+                    let ai = a[i], bi = b[i]
+                    a[i] = pushOutward(ai, from: bi, by: -pull / 2)
+                    b[i] = pushOutward(bi, from: ai, by: -pull / 2)
+                }
+                if segment.outAndBack {
+                    columns.append(SatinColumn(railA: Array(a.reversed()), railB: Array(b.reversed()), travelOut: true))
+                } else {
+                    columns.append(SatinColumn(railA: a, railB: b))
+                }
+            }
+            if lastTouch[segment.edge.endNodeID] == index { emitPatch(at: segment.edge.endNodeID) }
+            if lastTouch[segment.edge.startNodeID] == index, segment.outAndBack { emitPatch(at: segment.edge.startNodeID) }
+        }
+        guard !columns.isEmpty else { throw SatinGenerationError.shapeNotSuitable("no usable columns") }
+        return columns
+    }
+
+    /// `columnPlan`, falling back to the single-column or ring fit when
+    /// the branching path cannot take a junctioned glyph.
+    public static func columnPlanWithFallback(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [SatinColumn] {
+        do { return try columnPlan(for: shape, parameters: parameters) } catch {
+            let density = parameters.effectiveSatinDensityMM
+            if shape.subPaths.count == 1, canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) {
+                let rails = try computeRails(for: shape)
+                let (a, b, count, _) = fineThenDecimatedRails(railA: rails.railA, railB: rails.railB, density: density, parameters: parameters, paired: false)
+                if count >= 1, a.count > count, b.count > count { return [SatinColumn(railA: Array(a[0...count]), railB: Array(b[0...count]))] }
+            }
+            if shape.subPaths.count == 2, canRepresentAsRingSatinColumn(shape: shape) {
+                var outer = shape.subPaths[0].points, hole = shape.subPaths[1].points
+                if outer.count > 1, outer.first == outer.last { outer.removeLast() }
+                if hole.count > 1, hole.first == hole.last { hole.removeLast() }
+                let rails = try computeRingRails(outer: outer, hole: hole)
+                let (a, b, count, _) = fineThenDecimatedRails(railA: rails.railA, railB: rails.railB, density: density, parameters: parameters, paired: true)
+                if count >= 1, a.count > count, b.count > count { return [SatinColumn(railA: Array(a[0...count]), railB: Array(b[0...count]))] }
+            }
+            throw error
+        }
+    }
+
+    /// Sews stored columns: the paired chords re-spaced along the column
+    /// at the parameters' density, pull compensation for this size, a
+    /// hairline held at the thread's minimum, the pieces joined into runs
+    /// wherever the hop between them is short or stays on the shape
+    /// (`polygons`), as the branching path does.
+    public static func sewColumns(_ columns: [SatinColumn], parameters: StitchGenerationParameters, polygons: [[Point2D]]) -> [[Point2D]] {
+        let hairline = parameters.threadWeight.hairlineSatinWidthMM
+        let density = parameters.effectiveSatinDensityMM
+        var pieces: [[Point2D]] = []
+        for column in columns {
+            guard let chords = respacedChords(column, density: density) else { continue }
+            var a = chords.a, b = chords.b
+            var widths = zip(a, b).map { $0.distance(to: $1) }
+            let average = widths.reduce(0, +) / Double(max(1, widths.count))
+            let pull = parameters.pullCompensationMM
+                ?? PullCompensationCalculator.estimate(stitchType: .satin, densityMM: density, objectWidthMM: average, fabricType: parameters.fabricType)
+            for i in a.indices {
+                if widths[i] > 1e-6 && widths[i] < hairline {
+                    let mid = Point2D((a[i].x + b[i].x) / 2, (a[i].y + b[i].y) / 2)
+                    let dir = Point2D((b[i].x - a[i].x) / widths[i], (b[i].y - a[i].y) / widths[i])
+                    a[i] = Point2D(mid.x - dir.x * hairline / 2, mid.y - dir.y * hairline / 2)
+                    b[i] = Point2D(mid.x + dir.x * hairline / 2, mid.y + dir.y * hairline / 2)
+                }
+                let ai = a[i], bi = b[i]
+                a[i] = pushOutward(ai, from: bi, by: pull / 2)
+                b[i] = pushOutward(bi, from: ai, by: pull / 2)
+                widths[i] = a[i].distance(to: b[i])
+            }
+            let stitches = stitchesSplittingByWidth(expandedA: a, expandedB: b, widths: widths,
+                                                    mitre: Array(repeating: false, count: a.count), overWide: .splitSatin, parameters: parameters)
+            if ProcessInfo.processInfo.environment["DEBUG_SEW"] != nil {
+                var box = BoundingBox.empty
+                for p in stitches { box = box.union(BoundingBox(minX: p.x, minY: p.y, maxX: p.x, maxY: p.y)) }
+                print(String(format: "    sew: column %d chords -> %d respaced, widths %.2f..%.2f, %d stitches in (%.1f,%.1f)-(%.1f,%.1f)%@",
+                             column.railA.count, a.count, widths.min() ?? 0, widths.max() ?? 0, stitches.count, box.minX, box.minY, box.maxX, box.maxY, column.travelOut ? " travelOut" : ""))
+            }
+            guard !stitches.isEmpty else { continue }
+            if column.travelOut {
+                let travel = RunningStitchGenerator.generate(for: SubPath(points: Array(column.midline.reversed()), closed: false),
+                                                             stitchLengthMM: parameters.underlayStitchLengthMM,
+                                                             minStitchLengthMM: parameters.minStitchLengthMM)
+                pieces.append(travel + stitches)
+            } else {
+                pieces.append(stitches)
+            }
+        }
+        return joinedRuns(pieces, polygons: polygons)
+    }
+
+    /// The column's chords, interpolated along its midline at `density`.
+    /// Unpaired rails (different counts) are paired by arc length first.
+    private static func respacedChords(_ column: SatinColumn, density: Double) -> (a: [Point2D], b: [Point2D])? {
+        var a = column.railA, b = column.railB
+        if a.count != b.count {
+            let n = max(a.count, b.count, 2)
+            a = (0..<n).map { SatinColumn.point(along: column.railA, fraction: Double($0) / Double(n - 1)) }
+            b = (0..<n).map { SatinColumn.point(along: column.railB, fraction: Double($0) / Double(n - 1)) }
+        }
+        guard a.count >= 2 else { return nil }
+        let mids = zip(a, b).map { Point2D(($0.x + $1.x) / 2, ($0.y + $1.y) / 2) }
+        var cumulative = [0.0]
+        for i in 1..<mids.count { cumulative.append(cumulative[i - 1] + mids[i - 1].distance(to: mids[i])) }
+        guard let total = cumulative.last, total > 1e-6 else { return nil }
+        let count = max(2, Int((total / density).rounded()) + 1)
+        var outA: [Point2D] = [], outB: [Point2D] = []
+        var k = 0
+        for i in 0..<count {
+            let s = total * Double(i) / Double(count - 1)
+            while k < cumulative.count - 2, cumulative[k + 1] < s { k += 1 }
+            let span = cumulative[k + 1] - cumulative[k]
+            let f = span > 1e-9 ? max(0, min(1, (s - cumulative[k]) / span)) : 0
+            outA.append(Point2D(a[k].x + (a[k + 1].x - a[k].x) * f, a[k].y + (a[k + 1].y - a[k].y) * f))
+            outB.append(Point2D(b[k].x + (b[k + 1].x - b[k].x) * f, b[k].y + (b[k + 1].y - b[k].y) * f))
+        }
+        return (outA, outB)
+    }
+
+    /// A centre-run underlay along each column's midline, in column order.
+    public static func columnUnderlayRuns(_ columns: [SatinColumn], parameters: StitchGenerationParameters, polygons: [[Point2D]]) -> [[Point2D]] {
+        let pieces = columns.compactMap { column -> [Point2D]? in
+            let midline = column.midline
+            guard midline.count >= 2 else { return nil }
+            return RunningStitchGenerator.generate(for: SubPath(points: midline, closed: false),
+                                                   stitchLengthMM: parameters.underlayStitchLengthMM,
+                                                   minStitchLengthMM: parameters.minStitchLengthMM)
+        }
+        return joinedRuns(pieces, polygons: polygons)
+    }
+
+    private static func joinedRuns(_ pieces: [[Point2D]], polygons: [[Point2D]]) -> [[Point2D]] {
+        var runs: [[Point2D]] = []
+        for piece in pieces where !piece.isEmpty {
+            if let last = runs.last?.last,
+               last.distance(to: piece[0]) <= DigitizePipeline.visibleConnectorMM || hopStaysOnShape(from: last, to: piece[0], polygons: polygons) {
+                runs[runs.count - 1].append(contentsOf: piece)
+            } else {
+                runs.append(piece)
+            }
+        }
+        return runs
     }
 }

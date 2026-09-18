@@ -178,6 +178,180 @@ if args.count >= 3, args[1] == "--detect-text" {
     exit(0)
 }
 
+// --- Glyph column library --------------------------------------------------
+// `--build-glyph-library <font.outlines.json> <out.columns.json> [capMM=22]`
+// runs every glyph's outline (from web/scripts/export-glyph-outlines.mjs,
+// cap height 1000 units, y down) through the satin generator at `capMM`
+// and stores the resulting columns in units. `--glyph-sheet <columns.json>
+// <out.png> [capMM=8] [text]` sews the library at a size and renders it
+// for review. `--emit-glyph-data <dir> <out.swift>` embeds every
+// *.columns.json in the directory as Swift source for the Core.
+struct GlyphOutlineFile: Decodable {
+    struct Glyph: Decodable { var advance: Double; var contours: [[[Double]]] }
+    var fontID: String
+    var capHeightUnits: Double
+    var glyphs: [String: Glyph]
+}
+
+func glyphShape(_ glyph: GlyphOutlineFile.Glyph, capMM: Double, offset: Point2D) -> VectorShape {
+    let scale = capMM / 1000
+    return VectorShape(subPaths: glyph.contours.map { contour in
+        SubPath(points: contour.map { Point2D($0[0] * scale + offset.x, $0[1] * scale + offset.y) }, closed: true)
+    })
+}
+
+/// A glyph's contours as separate pieces: each outer contour with the
+/// holes inside it (an "i" is a stem and a dot; a "%" three pieces; a
+/// "B" one piece with two holes). Fed in as one shape the dot read as a
+/// hole and sewed as an outlined box.
+func glyphPieces(_ shape: VectorShape) -> [VectorShape] {
+    let contours = shape.subPaths
+    guard contours.count > 1 else { return [shape] }
+    func contains(_ outer: [Point2D], _ inner: [Point2D]) -> Bool {
+        guard let p = inner.first else { return false }
+        return PolygonGeometry.pointInPolygons(p, polygons: [outer])
+    }
+    // Depth = how many other contours enclose it: even is an outer, odd a hole.
+    let depth = contours.indices.map { i in contours.indices.filter { $0 != i && contains(contours[$0].points, contours[i].points) }.count }
+    var pieces: [VectorShape] = []
+    for i in contours.indices where depth[i] % 2 == 0 {
+        var subPaths = [contours[i]]
+        for j in contours.indices where depth[j] == depth[i] + 1 && contains(contours[i].points, contours[j].points) {
+            subPaths.append(contours[j])
+        }
+        pieces.append(VectorShape(subPaths: subPaths))
+    }
+    return pieces.isEmpty ? [shape] : pieces
+}
+
+func glyphParameters() -> StitchGenerationParameters {
+    var parameters = StitchGenerationParameters()
+    parameters.allowBranchingSatin = true
+    parameters.minSatinWidthMM = min(parameters.minSatinWidthMM, StitchTypeClassifier.strokeMinimumSatinWidthMM)
+    return parameters
+}
+
+if args.count >= 4, args[1] == "--build-glyph-library" {
+    let outlines = try JSONDecoder().decode(GlyphOutlineFile.self, from: Data(contentsOf: URL(fileURLWithPath: args[2])))
+    let capMM = args.count > 4 ? (Double(args[4]) ?? 22) : 22
+    let parameters = glyphParameters()
+    // Work in positive millimetre space: the glyph frame has capitals at
+    // negative y.
+    let offset = Point2D(5, capMM * 1.6)
+    var glyphs: [String: GlyphColumns] = [:]
+    var missing: [String] = []
+    var stitchTotal = 0
+    for (character, glyph) in outlines.glyphs.sorted(by: { $0.key < $1.key }) {
+        let shape = glyphShape(glyph, capMM: capMM, offset: offset)
+        if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil { print("  glyph \(character): \(shape.subPaths.count) sub-paths") }
+        do {
+            var columns: [SatinColumn] = []
+            for piece in glyphPieces(shape) {
+                // A stray contour in the font (Merriweather's h carries a
+                // 0.3 mm one) is not a piece of the letter; an i's dot at
+                // this size is a few square millimetres.
+                guard let outer = piece.subPaths.first, abs(PolygonGeometry.signedArea(outer.points)) >= 0.5 else { continue }
+                columns += try SatinColumnGenerator.columnPlanWithFallback(for: piece, parameters: parameters)
+            }
+            // A stub the skeleton left (an M's 0.8 mm edge, a demoted
+            // junction) is a column with no width and no length: drop it.
+            columns.removeAll { column in
+                let widest = zip(column.railA, column.railB).map { $0.distance(to: $1) }.max() ?? 0
+                return widest < 0.2 || PolygonGeometry.pathLength(column.midline) < 0.4
+            }
+            guard !columns.isEmpty else { missing.append(character); continue }
+            if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil { print("    -> \(columns.count) columns: " + columns.map { "\($0.railA.count)\($0.travelOut ? "t" : "")" }.joined(separator: " ")) }
+            // Back to units, rails thinned to what a 0.05 mm tolerance keeps.
+            let toUnits = 1000 / capMM
+            let stored = columns.map { column in
+                column.thinned(epsilon: ProcessInfo.processInfo.environment["THIN_MM"].flatMap(Double.init) ?? 0.05).mapped { Point2D(($0.x - offset.x) * toUnits, ($0.y - offset.y) * toUnits) }
+            }
+            let runs = SatinColumnGenerator.sewColumns(columns, parameters: parameters, polygons: shape.subPaths.map { $0.points })
+            let count = runs.reduce(0) { $0 + $1.count }
+            guard count > 0 else { missing.append(character); continue }
+            stitchTotal += count
+            glyphs[character] = GlyphColumns(advance: glyph.advance, columns: stored)
+        } catch {
+            missing.append(character)
+        }
+    }
+    let font = GlyphColumnFont(fontID: outlines.fontID, digitizedCapHeightMM: capMM, glyphs: glyphs, missing: missing)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(font)
+    try data.write(to: URL(fileURLWithPath: args[3]))
+    print("\(outlines.fontID): \(glyphs.count) glyphs, \(missing.count) missing\(missing.isEmpty ? "" : " (" + missing.joined() + ")"), \(stitchTotal) stitches at \(capMM) mm, \(data.count / 1024) KB")
+    exit(0)
+}
+
+if args.count >= 4, args[1] == "--glyph-sheet" {
+    let font = try GlyphColumnLibrary.load(from: URL(fileURLWithPath: args[2]))
+    // The glyph outlines (GLYPH_OUTLINES=<font.outlines.json>) give each
+    // object its real shape, as the lettering route does; without them a
+    // bounding box stands in and hops across a counter read as covered.
+    let outlines: GlyphOutlineFile? = ProcessInfo.processInfo.environment["GLYPH_OUTLINES"].flatMap { path in
+        try? JSONDecoder().decode(GlyphOutlineFile.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+    }
+    let capMM = args.count > 4 ? (Double(args[4]) ?? 8) : 8
+    let text = args.count > 5 ? args[5] : "ABCDEFGHIJKLM\nNOPQRSTUVWXYZ\nabcdefghijklm\nnopqrstuvwxyz\n0123456789&@#\n.,;:!?'\"()-/%$"
+    let parameters = glyphParameters()
+    let scale = capMM / GlyphColumnLibrary.capHeightUnits
+    let gap = capMM * 0.12
+    var objects: [EmbroideryObject] = []
+    var y = capMM * 1.4
+    var widest = 0.0
+    for line in text.split(separator: "\n") {
+        var x = capMM * 0.5
+        for character in line {
+            let key = String(character)
+            guard let glyph = font.glyphs[key] else { x += capMM * 0.5; continue }
+            let origin = Point2D(x, y)
+            let columns = GlyphColumnLibrary.columns(font: font, character: key, capHeightMM: capMM, origin: origin) ?? []
+            let shape: VectorShape
+            if let outline = outlines?.glyphs[key] {
+                shape = glyphShape(outline, capMM: capMM, offset: origin)
+            } else {
+                var box = BoundingBox.empty
+                for column in columns { for p in column.railA + column.railB { box = box.union(BoundingBox(minX: p.x, minY: p.y, maxX: p.x, maxY: p.y)) } }
+                shape = VectorShape(subPaths: [SubPath(points: [Point2D(box.minX, box.minY), Point2D(box.maxX, box.minY), Point2D(box.maxX, box.maxY), Point2D(box.minX, box.maxY)], closed: true)])
+            }
+            objects.append(EmbroideryObject(name: key, shape: shape, stitchType: .satin, threadColor: .generic(RGBColor(hex: 0x1144AA)),
+                                            parameters: parameters, stitchTypeIsManualOverride: true, satinColumns: columns))
+            x += glyph.advance * scale + gap
+        }
+        widest = max(widest, x)
+        y += capMM * 1.6
+    }
+    let widthMM = widest + capMM * 0.5, heightMM = y
+    let doc = StitchDocument(name: "sheet", physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
+    let plan = try DigitizePipeline.flatten(doc)
+    var options = StitchRenderer.Options()
+    options.pixelsPerMM = ProcessInfo.processInfo.environment["PIXELS_PER_MM"].flatMap(Double.init) ?? 20
+    guard let png = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: [.generic(RGBColor(hex: 0x1144AA))], options: options) else {
+        print("Render failed"); exit(1)
+    }
+    try png.write(to: URL(fileURLWithPath: args[3]))
+    print("\(font.fontID) at \(capMM) mm: \(objects.count) glyphs, \(plan.stitchCount) stitches -> \(args[3])")
+    exit(0)
+}
+
+if args.count >= 4, args[1] == "--emit-glyph-data" {
+    let dir = URL(fileURLWithPath: args[2])
+    let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        .filter { $0.lastPathComponent.hasSuffix(".columns.json") }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    var swift = "// Generated by `DigitizeCLI --emit-glyph-data`; do not edit by hand.\n// One JSON document per web font id (see GlyphColumnLibrary).\nenum GlyphColumnData {\n    static func json(for fontID: String) -> String? { fonts[fontID] }\n    static let fonts: [String: String] = [\n"
+    for file in files {
+        let font = try GlyphColumnLibrary.load(from: file)
+        let json = String(decoding: try Data(contentsOf: file), as: UTF8.self)
+        swift += "        \"\(font.fontID)\": #\"\"\"\n\(json)\n\"\"\"#,\n"
+    }
+    swift += "    ]\n}\n"
+    try swift.write(to: URL(fileURLWithPath: args[3]), atomically: true, encoding: .utf8)
+    print("\(files.count) fonts -> \(args[3])")
+    exit(0)
+}
+
 if args.count >= 5, args[1] == "--lettering-preview" {
     // Diagnostic: render real lettering (generated the same way AppState's
     // Add Lettering path does, including the run-level stitch-type
@@ -234,6 +408,9 @@ guard args.count >= 3 else {
     print("       DigitizeCLI --recommend-size <input>")
     print("       DigitizeCLI --detect-text <input>")
     print("       DigitizeCLI --lettering-preview <text> <fontPostScriptName> <output.png> [fontSizeMM=20]")
+    print("       DigitizeCLI --build-glyph-library <font.outlines.json> <out.columns.json> [capMM=22]")
+    print("       DigitizeCLI --glyph-sheet <font.columns.json> <out.png> [capMM=8] [text]")
+    print("       DigitizeCLI --emit-glyph-data <dir> <out.swift>")
     exit(1)
 }
 

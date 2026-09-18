@@ -348,6 +348,22 @@ public enum DigitizePipeline {
             for run in fillRuns { appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false) }
             return runs
         case .satin:
+            // Pre-digitized columns (a glyph from the library): sew exactly
+            // those, centre-run underlay first, and never derive rails
+            // from the shape.
+            if let columns = object.satinColumns, !columns.isEmpty {
+                let polygons = object.shape.subPaths.map { $0.points }
+                var runs: [[Point2D]] = []
+                for run in SatinColumnGenerator.columnUnderlayRuns(columns, parameters: object.parameters, polygons: polygons) {
+                    appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false)
+                }
+                let satin = SatinColumnGenerator.sewColumns(columns, parameters: object.parameters, polygons: polygons)
+                if let first = satin.first {
+                    appendJoiningIfCovered(first, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false)
+                    runs.append(contentsOf: satin.dropFirst())
+                }
+                if !runs.isEmpty { return runs }
+            }
             // Spec: "automatically divide or convert excessively wide satin
             // regions to another stitch type." generatePartial keeps
             // whatever sections of the column fit as real satin and

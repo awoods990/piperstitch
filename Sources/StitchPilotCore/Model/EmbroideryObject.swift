@@ -494,10 +494,16 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
     /// like any other object; this only adds the two outline passes
     /// before it.
     public var isApplique: Bool = false
+    /// Pre-digitized satin columns (a font glyph from `GlyphColumnLibrary`,
+    /// placed in millimetres). When present and the stitch type is satin,
+    /// `DigitizePipeline` sews exactly these columns and never derives
+    /// rails from `shape`, which then serves for bounds, selection and
+    /// sequencing only.
+    public var satinColumns: [SatinColumn]? = nil
 
     public init(id: UUID = UUID(), name: String, shape: VectorShape, stitchType: StitchType,
                 threadColor: ThreadColor, parameters: StitchGenerationParameters = StitchGenerationParameters(),
-                stitchTypeIsManualOverride: Bool = false, isApplique: Bool = false) {
+                stitchTypeIsManualOverride: Bool = false, isApplique: Bool = false, satinColumns: [SatinColumn]? = nil) {
         self.id = id
         self.name = name
         self.shape = shape
@@ -506,10 +512,11 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
         self.parameters = parameters
         self.stitchTypeIsManualOverride = stitchTypeIsManualOverride
         self.isApplique = isApplique
+        self.satinColumns = satinColumns
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, shape, stitchType, threadColor, parameters, stitchTypeIsManualOverride, isApplique
+        case id, name, shape, stitchType, threadColor, parameters, stitchTypeIsManualOverride, isApplique, satinColumns
     }
 
     /// Custom decoding so older `.stitchpilot` documents saved before
@@ -526,6 +533,7 @@ public struct EmbroideryObject: Codable, Identifiable, Sendable {
         parameters = try container.decode(StitchGenerationParameters.self, forKey: .parameters)
         stitchTypeIsManualOverride = try container.decodeIfPresent(Bool.self, forKey: .stitchTypeIsManualOverride) ?? false
         isApplique = try container.decodeIfPresent(Bool.self, forKey: .isApplique) ?? false
+        satinColumns = try container.decodeIfPresent([SatinColumn].self, forKey: .satinColumns)
     }
 }
 

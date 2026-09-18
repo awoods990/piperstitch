@@ -201,12 +201,25 @@ func editRoutes(_ engine: RoutesBuilder) {
     /// server classifies the run and builds the objects, replacing
     /// `replaceIDs` (the raster-traced fragments) when given.
     edit.post("lettering") { req -> EditResponse in
+        struct GlyphPlacement: Content { var character: String; var originXMM: Double }
+        struct Condense: Content { var k: Double; var centerXMM: Double }
         struct In: Content {
             var document: StitchDocument; var shapes: [VectorShape]; var capHeightMM: Double
             var threadColor: ThreadColor; var targetCenter: Point2D; var replaceIDs: [UUID]?
             /// Turn the run about its centre, degrees clockwise on screen
             /// (Y down) -- a tagline re-set over a tilted original.
             var rotationDegrees: Double?
+            /// The font and where each glyph sits on the straight
+            /// baseline (one per shape): with these the run sews the
+            /// font's pre-digitized columns (`GlyphColumnLibrary`) -- the
+            /// same letter the same way at every size -- and the outlines
+            /// serve for bounds and selection. The browser's own arc and
+            /// condensing are re-applied to the columns here.
+            var fontID: String?
+            var glyphs: [GlyphPlacement]?
+            var arcRadiusMM: Double?
+            var totalWidthMM: Double?
+            var condense: Condense?
         }
         let body = try req.content.decode(In.self)
         return try await Engine.run {
@@ -219,11 +232,39 @@ func editRoutes(_ engine: RoutesBuilder) {
             let theta = (body.rotationDegrees ?? 0) * .pi / 180
             let (cosT, sinT) = (cos(theta), sin(theta))
             let cx = combined.minX + combined.width / 2, cy = combined.minY + combined.height / 2
+            func place(_ p: Point2D) -> Point2D {
+                let dx = p.x - cx, dy = p.y - cy
+                return Point2D(cx + dx * cosT - dy * sinT + offsetX, cy + dx * sinT + dy * cosT + offsetY)
+            }
             let translated = body.shapes.map { shape in
-                VectorShape(subPaths: shape.subPaths.map { sp in SubPath(points: sp.points.map { p in
-                    let dx = p.x - cx, dy = p.y - cy
-                    return Point2D(cx + dx * cosT - dy * sinT + offsetX, cy + dx * sinT + dy * cosT + offsetY)
-                }, closed: sp.closed) })
+                VectorShape(subPaths: shape.subPaths.map { sp in SubPath(points: sp.points.map(place), closed: sp.closed) })
+            }
+            // Library columns for each glyph, through the same frame the
+            // browser put the outlines through: arc, condensing, then the
+            // rotation and centring above.
+            var columnsByIndex: [Int: [SatinColumn]] = [:]
+            if let fontID = body.fontID, let placements = body.glyphs, placements.count == body.shapes.count,
+               let font = GlyphColumnLibrary.font(fontID) {
+                let arcRadius = body.arcRadiusMM ?? 0
+                let totalWidth = body.totalWidthMM ?? combined.width
+                func browserFrame(_ p: Point2D) -> Point2D {
+                    var q = p
+                    if arcRadius != 0 {
+                        // web/src/lettering.ts remapToArc
+                        let centeredX = q.x - totalWidth / 2
+                        let t = centeredX / arcRadius
+                        let effectiveRadius = arcRadius - q.y
+                        q = Point2D(effectiveRadius * sin(t), effectiveRadius * (1 - cos(t)) - (effectiveRadius - arcRadius))
+                    }
+                    if let c = body.condense { q = Point2D(c.centerXMM + (q.x - c.centerXMM) * c.k, q.y) }
+                    return place(q)
+                }
+                for (i, placement) in placements.enumerated() {
+                    if let columns = GlyphColumnLibrary.columns(font: font, character: placement.character, capHeightMM: body.capHeightMM,
+                                                                origin: Point2D(placement.originXMM, 0), transform: browserFrame) {
+                        columnsByIndex[i] = columns
+                    }
+                }
             }
             // The run takes the document's thread weight (the density panel
             // sets it on every object), so the satin-or-outline rule agrees
@@ -236,8 +277,14 @@ func editRoutes(_ engine: RoutesBuilder) {
             parameters.minSatinWidthMM = min(parameters.minSatinWidthMM, StitchTypeClassifier.strokeMinimumSatinWidthMM)
             let runType = StitchTypeClassifier.classifyLetteringRun(shapes: translated, parameters: parameters, capHeightMM: body.capHeightMM)
             let objects = translated.enumerated().map { i, shape -> EmbroideryObject in
-                EmbroideryObject(name: "Letter \(i + 1)", shape: shape, stitchType: StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType, parameters: parameters),
-                                 threadColor: body.threadColor, parameters: parameters, stitchTypeIsManualOverride: true)
+                if let columns = columnsByIndex[i] {
+                    // A library glyph is satin whatever the run's size says:
+                    // its columns hold a hairline at the thread's minimum.
+                    return EmbroideryObject(name: "Letter \(i + 1)", shape: shape, stitchType: .satin, threadColor: body.threadColor,
+                                            parameters: parameters, stitchTypeIsManualOverride: true, satinColumns: columns)
+                }
+                return EmbroideryObject(name: "Letter \(i + 1)", shape: shape, stitchType: StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType, parameters: parameters),
+                                        threadColor: body.threadColor, parameters: parameters, stitchTypeIsManualOverride: true)
             }
             let replace = Set(body.replaceIDs ?? [])
             let insertAt = current.objects.firstIndex(where: { replace.contains($0.id) }) ?? current.objects.count

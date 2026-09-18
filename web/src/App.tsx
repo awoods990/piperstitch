@@ -20,7 +20,7 @@ import { loadPrefs, savePrefs, withDefaults, type Preferences } from "./prefs";
 import Onboarding from "./components/Onboarding";
 import { setDisplayUnits } from "./format";
 import { transformShape } from "./geometry";
-import { generateLetteringShapes, type LetteringSpec } from "./lettering";
+import { generateLetteringRun, type LetteringRun, type LetteringSpec } from "./lettering";
 import { minimumCapHeightMM, textLinePoint, textLineScale } from "./textLines";
 import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
 
@@ -310,10 +310,11 @@ export default function App() {
       // and clears its neighbours.
       const targetWidthMM = (box.maxX - box.minX) * scale * (capHeightMM / Math.max(1e-6, line.capHeightPixels * scale));
       const letters = Array.from(d.text.trim()).length;
-      let shapes: VectorShape[];
+      let run: LetteringRun;
+      let condense: { k: number; centerXMM: number } | undefined;
       try {
-        shapes = await generateLetteringShapes({ text: d.text.trim(), fontID: d.fontID, fontSizeMM: capHeightMM, letterSpacingMM: 0, arcRadiusMM });
-        const natural = runWidthMM(shapes);
+        run = await generateLetteringRun({ text: d.text.trim(), fontID: d.fontID, fontSizeMM: capHeightMM, letterSpacingMM: 0, arcRadiusMM });
+        const natural = runWidthMM(run.shapes);
         // Only when the detected line is (roughly) the whole word: a
         // fragment of a blurry tagline is narrower than the text typed for
         // it, and fitting to it would crush the run. Natural width then,
@@ -321,15 +322,17 @@ export default function App() {
         const wholeWord = letters <= line.shapeIndices.length * 1.34 + 1;
         if (letters > 1 && natural > 0 && !arcRadiusMM && wholeWord) {
           const spacing = Math.max(-0.12 * capHeightMM, Math.min(0.6 * capHeightMM, (targetWidthMM - natural) / (letters - 1)));
-          shapes = await generateLetteringShapes({ text: d.text.trim(), fontID: d.fontID, fontSizeMM: capHeightMM, letterSpacingMM: spacing, arcRadiusMM });
-          const spaced = runWidthMM(shapes);
+          run = await generateLetteringRun({ text: d.text.trim(), fontID: d.fontID, fontSizeMM: capHeightMM, letterSpacingMM: spacing, arcRadiusMM });
+          const spaced = runWidthMM(run.shapes);
           if (spaced > targetWidthMM * 1.02) {
             const k = Math.max(0.75, targetWidthMM / spaced);
-            const cx = shapes.reduce((m, sh) => Math.min(m, ...sh.subPaths.flatMap((sp) => sp.points.map((q) => q.x))), Infinity) + spaced / 2;
-            shapes = shapes.map((sh) => ({ subPaths: sh.subPaths.map((sp) => ({ ...sp, points: sp.points.map((q) => ({ x: cx + (q.x - cx) * k, y: q.y })) })) }));
+            const cx = run.shapes.reduce((m, sh) => Math.min(m, ...sh.subPaths.flatMap((sp) => sp.points.map((q) => q.x))), Infinity) + spaced / 2;
+            run = { ...run, shapes: run.shapes.map((sh) => ({ subPaths: sh.subPaths.map((sp) => ({ ...sp, points: sp.points.map((q) => ({ x: cx + (q.x - cx) * k, y: q.y })) })) })) };
+            condense = { k, centerXMM: cx };
           }
         }
       } catch { continue; }
+      const shapes = run.shapes;
       const center = textLinePoint(bounds, a.widthMM, a.heightMM, (box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
       const rgb = line.color ?? { r: 0, g: 0, b: 0 };
       // The artwork's colour for the line -- snapped to the user's thread
@@ -341,7 +344,8 @@ export default function App() {
           }, { d: Infinity, t: null as ThreadColor | null }).t
         : null;
       const threadColor: ThreadColor = nearest ?? { id: crypto.randomUUID(), name: "Artwork colour", rgb };
-      const r = await api.lettering({ document: doc, shapes, capHeightMM, threadColor, targetCenter: center, rotationDegrees: line.rotationDegrees });
+      const r = await api.lettering({ document: doc, shapes, capHeightMM, threadColor, targetCenter: center, rotationDegrees: line.rotationDegrees,
+        fontID: d.fontID, glyphs: run.glyphs, arcRadiusMM, totalWidthMM: run.totalWidthMM, condense });
       doc = r.document;
     }
     return doc;
@@ -462,9 +466,10 @@ export default function App() {
   });
   const onAddLettering = async (spec: LetteringSpec, threadColor: ThreadColor, replaceSelected: boolean) => {
     if (!document) return;
-    const shapes = await generateLetteringShapes(spec);
+    const run = await generateLetteringRun(spec);
     const center = { x: document.physicalWidthMM / 2, y: document.physicalHeightMM / 2 };
-    const r = await api.lettering({ document, shapes, capHeightMM: spec.fontSizeMM, threadColor, targetCenter: center, replaceIDs: replaceSelected ? [...selectedIDs] : undefined });
+    const r = await api.lettering({ document, shapes: run.shapes, capHeightMM: spec.fontSizeMM, threadColor, targetCenter: center, replaceIDs: replaceSelected ? [...selectedIDs] : undefined,
+      fontID: spec.fontID, glyphs: run.glyphs, arcRadiusMM: spec.arcRadiusMM, totalWidthMM: run.totalWidthMM });
     applyEdit(r); setTool("select");
   };
   const onGlobalSatin = (mm: number) => { setGlobalSatin(mm); if (!document) return; commit({ ...document, objects: document.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: mm } } : o) }); };

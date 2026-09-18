@@ -1456,6 +1456,63 @@ that size. Every face in the web lettering list is a bold cut (chosen
 for sewing at larger sizes); at the 4 mm minimum a regular cut would keep
 the counters open -- a font-asset follow-up, not an engine one.
 
+## Keyboard fonts: glyphs digitized once, sewn from stored columns (September 2026)
+
+Re-typed text used to go through the same path as a traced raster
+letter -- rasterise the glyph, thin it, rebuild strokes from the skeleton,
+guess the junctions, cast rails -- throwing away that it was a known
+letter from a known font. Commercial software does not digitize text on
+the fly: a keyboard font is a library of glyphs whose satin columns were
+defined once and reviewed, and sew time only scales them. Same here now.
+
+**The library.** `web/scripts/export-glyph-outlines.mjs` writes each of
+the twelve lettering faces' glyphs (168 characters: ASCII plus the common
+accented and typographic ones) as flattened polygons in cap-height
+units, from the very @fontsource files the browser draws, through
+opentype.js as the browser does. `DigitizeCLI --build-glyph-library`
+runs each glyph through the generator at 22 mm cap height (where it is
+reliable) with `SatinColumnGenerator.columnPlan`: the columns the
+generator would sew, in sew order, as *paired chords* -- the pairing is
+kept rather than re-derived from two rails, since on a diagonal or round
+a corner the generator's own pairing is the whole point -- with pull
+compensation taken back off. A glyph with a junction in its skeleton (A,
+K, R, 4) takes the branching path even when the single-column fit would
+succeed on it (that fit lays one zigzag across the whole letter); one
+without (S, C, N's Z-shaped path) is a single column; a ring stays a
+ring. A glyph's contours are split into pieces first (an i is a stem and
+a dot, a % three pieces, a B one piece with two holes), stray contours
+under half a square millimetre and stub columns with no width are
+dropped, and the pairs are thinned to a 0.03 mm tolerance.
+`--emit-glyph-data` embeds the twelve libraries as Swift source
+(`GlyphColumnData.generated.swift`, ~2 MB; no resource bundle to ship),
+`--glyph-sheet` renders a font at any size for review (with
+`GLYPH_OUTLINES` for the real shapes -- with a bounding box standing in,
+hops across a counter read as covered). Two glyphs in 2 016 could not be
+columned (Pacifico's %, Dancing Script's 7); the generic path covers
+them.
+
+**Sewing.** `SatinColumn` (two rails, `travelOut` for a dead-end arm
+sewn out and back) lives on `EmbroideryObject.satinColumns`; when
+present and the object is satin, `DigitizePipeline` sews exactly those --
+`SatinColumnGenerator.sewColumns`: the chords re-spaced along the
+column's midline at the document's density, pull compensation for that
+width, a hairline held at the thread's minimum, a centre-run underlay
+along each midline, pieces joined into runs where the hop is short or
+stays on the shape -- and never derives rails from the shape. The
+browser (`generateLetteringRun`) sends the font id and each glyph's
+baseline origin with the outlines; `/edit/lettering` places the library
+columns in the same frame (scale to cap height, the run's arc, the Text
+step's condensing, then the rotation and centring the outlines get) and
+the outlines serve for bounds, selection and sequencing. A font or glyph
+the library lacks falls back to the generic path, glyph by glyph.
+
+Judged on the review sheets at 4, 10 and 12 mm across serif, sans and
+script faces: every letter reads, the same way at every size. "FOUNDATION"
+at 4 mm on the Sigma Chi banner is ten satin letters. Still to do, per
+font, on the sheet: the few glyphs whose generated columns a digitizer
+would redraw (Roboto's r and y, the joins in the script faces) -- the
+sheet is what that review is for, and a hand-fixed glyph is a JSON edit.
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

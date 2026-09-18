@@ -115,7 +115,24 @@ function capHeightUnits(font: Font): number {
   return bb.y2 - bb.y1 > 0 ? bb.y2 - bb.y1 : font.unitsPerEm * 0.7;
 }
 
+/** Where each visible glyph sits on the straight baseline, in mm: what the
+ *  server needs to place that glyph's pre-digitized columns
+ *  (`GlyphColumnLibrary`) in the same frame as the outlines. One entry per
+ *  shape `generateLetteringRun` returns, in order. */
+export interface GlyphPlacement { character: string; originXMM: number }
+
+export interface LetteringRun {
+  shapes: VectorShape[];
+  glyphs: GlyphPlacement[];
+  /** The run's width on the straight baseline, before any arc. */
+  totalWidthMM: number;
+}
+
 export async function generateLetteringShapes(spec: LetteringSpec): Promise<VectorShape[]> {
+  return (await generateLetteringRun(spec)).shapes;
+}
+
+export async function generateLetteringRun(spec: LetteringSpec): Promise<LetteringRun> {
   if (!spec.text) throw new Error("Enter some text to generate lettering.");
   const font = await loadFont(spec.fontID);
   const capHeightPt = (capHeightUnits(font) / font.unitsPerEm) * REFERENCE_SIZE;
@@ -124,6 +141,7 @@ export async function generateLetteringShapes(spec: LetteringSpec): Promise<Vect
 
   const straight: Point2D[][] = [];
   const glyphSubPathCounts: number[] = [];
+  const placements: GlyphPlacement[] = [];
   let maxAdvanceX = 0;
   let x = 0;
   // One glyph per character, no substitution pass: ligatures would fuse
@@ -140,6 +158,7 @@ export async function generateLetteringShapes(spec: LetteringSpec): Promise<Vect
     if (subPaths.length > 0) {
       for (const sp of subPaths) straight.push(sp.map((p) => ({ x: (p.x + originX) * mmPerPoint, y: (p.y) * mmPerPoint })));
       glyphSubPathCounts.push(subPaths.length);
+      placements.push({ character: Array.from(spec.text)[i], originXMM: originX * mmPerPoint });
     }
     let advance = (glyph.advanceWidth ?? 0) * scale;
     if (i + 1 < glyphs.length) { try { advance += font.getKerningValue(glyph, glyphs[i + 1]) * scale; } catch { /* no usable kern table */ } }
@@ -157,7 +176,7 @@ export async function generateLetteringShapes(spec: LetteringSpec): Promise<Vect
     for (let k = 0; k < count; k++) subPaths.push({ points: remapped[cursor++], closed: true });
     shapes.push({ subPaths });
   }
-  return shapes;
+  return { shapes, glyphs: placements, totalWidthMM };
 }
 
 function remapToArc(point: Point2D, totalWidthMM: number, radiusMM: number): Point2D {

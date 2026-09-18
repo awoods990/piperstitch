@@ -124,7 +124,14 @@ export const api = {
   classify: (document: StitchDocument, objectIDs: string[]) => postJSON<EditResponse>("/edit/classify", { document, objectIDs }),
   outlines: (document: StitchDocument) => postJSON<EditResponse>("/edit/outlines", { document }),
   border: (document: StitchDocument, threadColor: ThreadColor, widthMM?: number) => postJSON<EditResponse>("/edit/border", { document, threadColor, widthMM }),
-  lettering: (body: { document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D; replaceIDs?: string[]; rotationDegrees?: number }) =>
+  lettering: (body: {
+    document: StitchDocument; shapes: VectorShape[]; capHeightMM: number; threadColor: ThreadColor; targetCenter: Point2D;
+    replaceIDs?: string[]; rotationDegrees?: number;
+    /** With these the server sews the font's pre-digitized columns (the same letter, the same way, at every size) instead of deriving satin from the outlines. */
+    fontID?: string; glyphs?: { character: string; originXMM: number }[]; arcRadiusMM?: number | null; totalWidthMM?: number;
+    /** The run was condensed in x by `k` about `centerXMM` after placement (a re-typed line fitted to the original's width). */
+    condense?: { k: number; centerXMM: number };
+  }) =>
     postJSON<EditResponse>("/edit/lettering", body),
 
   sendFeedback: (body: {
