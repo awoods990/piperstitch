@@ -136,7 +136,7 @@ func routes(_ app: Application) throws {
         return importResponse(shapes: result.shapes, fillColors: result.fillColors,
                               pixelWidth: result.pixelWidth, pixelHeight: result.pixelHeight,
                               hoopWidthMM: q.hoopWidthMM, hoopHeightMM: q.hoopHeightMM,
-                              backgroundColor: result.backgroundColor.flatMap { StitchRenderer.isPreviewGround($0) ? $0 : nil },
+                              backgroundColor: result.backgroundColor.flatMap { $0.isPreviewGround ? $0 : nil },
                               textLines: TextLineFinder.find(shapes: result.shapes, fillColors: result.fillColors, imageHeightPixels: result.pixelHeight))
     }
 

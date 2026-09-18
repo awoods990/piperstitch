@@ -5,6 +5,20 @@ public struct RGBColor: Codable, Hashable, Sendable {
     public var g: UInt8
     public var b: UInt8
 
+    /// Whether an imported artwork's background is worth previewing on:
+    /// anything but near-white. The default paper ground already stands in
+    /// for a white page, and a pale cream or grey card looks the same on
+    /// fabric; a navy, red or mid-grey ground changes what the customer
+    /// sees -- white and yellow thread most of all. Lives here rather than
+    /// on the renderer so the Linux server (no CoreGraphics) can ask too.
+    public var isPreviewGround: Bool {
+        let luminance = 0.299 * Double(r) + 0.587 * Double(g) + 0.114 * Double(b)
+        return luminance < RGBColor.previewGroundMaxLuminance
+    }
+
+    /// See `isPreviewGround`.
+    public static let previewGroundMaxLuminance = 225.0
+
     public init(r: UInt8, g: UInt8, b: UInt8) {
         self.r = r; self.g = g; self.b = b
     }

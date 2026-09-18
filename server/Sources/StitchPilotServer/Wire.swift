@@ -19,7 +19,7 @@ struct ImportResponse: Content {
     /// Width / height of the artwork, for aspect-locked size editing.
     var aspectRatio: Double
     /// The artwork's page or card colour, when the importer found one and
-    /// it is worth previewing on (`StitchRenderer.isPreviewGround`): the
+    /// it is worth previewing on (`RGBColor.isPreviewGround`): the
     /// editor draws the fabric that colour so white thread shows.
     var backgroundColor: RGBColor?
     /// Lines of text found by their geometry (`TextLineFinder`), pixel

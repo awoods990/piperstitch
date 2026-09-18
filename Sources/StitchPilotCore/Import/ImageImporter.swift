@@ -282,7 +282,7 @@ public enum ImageImporter {
         if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil {
             for (i, shape) in shapes.enumerated() {
                 let box = shape.boundingBox
-                print(String(format: "    traced %d: %@ %d subPaths, %.0fx%.0f px", i, fillColors[i].map { "(\($0.r),\($0.g),\($0.b))" } ?? "?", shape.subPaths.count, box.width, box.height))
+                print("    traced \(i): \(fillColors[i].map { "(\($0.r),\($0.g),\($0.b))" } ?? "?") \(shape.subPaths.count) subPaths, \(Int(box.width.rounded()))x\(Int(box.height.rounded())) px")
             }
         }
         mergeColorIslandsIntoLargestSameColorShape(&shapes, fillColors: &fillColors)
@@ -290,7 +290,7 @@ public enum ImageImporter {
         if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil {
             for (i, shape) in shapes.enumerated() {
                 let box = shape.boundingBox
-                print(String(format: "    merged %d: %@ %d subPaths, %.0fx%.0f px", i, fillColors[i].map { "(\($0.r),\($0.g),\($0.b))" } ?? "?", shape.subPaths.count, box.width, box.height))
+                print("    merged \(i): \(fillColors[i].map { "(\($0.r),\($0.g),\($0.b))" } ?? "?") \(shape.subPaths.count) subPaths, \(Int(box.width.rounded()))x\(Int(box.height.rounded())) px")
             }
         }
 
