@@ -2218,14 +2218,105 @@ public enum SatinColumnGenerator {
     /// near-zero-width samples specifically — the jitter wasn't confined
     /// to the very tip, just less consequential (relative to width)
     /// everywhere else along the same segment.
-    private static func smoothedPolyline(_ points: [Point2D], windowMM: Double = segmentSmoothingWindowMM) -> [Point2D] {
+    /// Every boundary vertex whose turn is a corner
+    /// (`SatinCorners.minimumTurnDegrees`...`maximumTurnDegrees`), with
+    /// the shorter of its two sides: a corner between two long faces is
+    /// a drawn corner, while the teeth of a serrated edge (feathers, fur)
+    /// turn just as sharply on sides a fraction of a millimetre long. A
+    /// closed polygon stored with its first point repeated at the end has
+    /// its corner there straddling two vertices with a zero-length side
+    /// between them; the repeat is dropped first.
+    private static func sharpVertices(_ polygons: [[Point2D]]) -> [(point: Point2D, sideMM: Double)] {
+        var out: [(point: Point2D, sideMM: Double)] = []
+        for rawPoly in polygons where rawPoly.count >= 3 {
+            var poly = rawPoly
+            if poly.count > 3, let f = poly.first, let l = poly.last, f.distance(to: l) < 1e-6 { poly.removeLast() }
+            let n = poly.count
+            for v in 0..<n {
+                let a = poly[(v + n - 1) % n], b = poly[v], c = poly[(v + 1) % n]
+                let d1 = b - a, d2 = c - b
+                guard d1.length > 1e-6, d2.length > 1e-6 else { continue }
+                let cosT = (d1.x * d2.x + d1.y * d2.y) / (d1.length * d2.length)
+                let turn = acos(max(-1, min(1, cosT))) * 180 / .pi
+                if turn >= SatinCorners.minimumTurnDegrees && turn <= SatinCorners.maximumTurnDegrees {
+                    out.append((b, min(d1.length, d2.length)))
+                }
+            }
+        }
+        return out
+    }
+
+    /// See the call in `computeSegmentRails`: the rails with corner
+    /// vertices inserted, and the indices of the insertions. The rails
+    /// are index-paired (the i-th point of each is one crossing), so an
+    /// insertion on one rail is matched on the other by the point the
+    /// same fraction along its step, and the pair stays a crossing.
+    ///
+    /// A vertex is inserted between two consecutive hits when it is near
+    /// both, lies between them along the rail (its projection inside the
+    /// step) and sits over the step no further out than a right angle
+    /// would put it -- the rail was cutting that corner. A vertex beside
+    /// the rail (an inner corner across the stroke, a neighbouring arm's
+    /// corner) never qualifies.
+    private static func insertBoundaryCorners(railA: [Point2D], railB: [Point2D], polygons: [[Point2D]], widthMM: Double) -> (railA: [Point2D], railB: [Point2D], pinned: Set<Int>) {
+        guard railA.count >= 2, railA.count == railB.count, widthMM > 0 else { return (railA, railB, []) }
+        let reach = max(widthMM, 1.0)
+        let minimumSide = max(1.0, widthMM * 0.4)
+        let corners = sharpVertices(polygons).filter { $0.sideMM >= minimumSide }.map(\.point)
+        guard !corners.isEmpty else { return (railA, railB, []) }
+        var used = Set<Int>()
+
+        // The corner cut by the step a-b, if any, with its fraction along the step.
+        func cutCorner(_ a: Point2D, _ b: Point2D) -> (index: Int, t: Double)? {
+            let ab = b - a
+            let abLen = ab.length
+            guard abLen > 1e-4 else { return nil }
+            var best: (Int, Double, Double)? = nil
+            for (k, c) in corners.enumerated() where !used.contains(k) {
+                let da = c.distance(to: a), db = c.distance(to: b)
+                guard da <= reach, db <= reach else { continue }
+                let t = ((c.x - a.x) * ab.x + (c.y - a.y) * ab.y) / (abLen * abLen)
+                guard t > 0.05, t < 0.95 else { continue }
+                let detour = da + db - abLen
+                guard detour > 0.15, detour <= reach else { continue }
+                let cross = abs((c.x - a.x) * ab.y - (c.y - a.y) * ab.x) / abLen
+                guard cross <= abLen * 0.6 else { continue }
+                if best == nil || detour > best!.1 { best = (k, detour, t) }
+            }
+            guard let (k, detour, t) = best else { return nil }
+            if ProcessInfo.processInfo.environment["DEBUG_CORNERS"] != nil {
+                print(String(format: "CORNER width %.2f step %.2f detour %.2f t %.2f at (%.1f, %.1f)", widthMM, abLen, detour, t, corners[k].x, corners[k].y))
+            }
+            return (k, t)
+        }
+
+        var outA: [Point2D] = [railA[0]], outB: [Point2D] = [railB[0]]
+        var pinned = Set<Int>()
+        for i in 1..<railA.count {
+            let a0 = railA[i - 1], a1 = railA[i], b0 = railB[i - 1], b1 = railB[i]
+            let hitA = cutCorner(a0, a1)
+            if let hitA = hitA { used.insert(hitA.index) }
+            let hitB = cutCorner(b0, b1)
+            if let hitB = hitB { used.insert(hitB.index) }
+            if hitA != nil || hitB != nil {
+                let t = hitA?.t ?? hitB!.t
+                pinned.insert(outA.count)
+                outA.append(hitA.map { corners[$0.index] } ?? Point2D(a0.x + (a1.x - a0.x) * t, a0.y + (a1.y - a0.y) * t))
+                outB.append(hitB.map { corners[$0.index] } ?? Point2D(b0.x + (b1.x - b0.x) * t, b0.y + (b1.y - b0.y) * t))
+            }
+            outA.append(a1); outB.append(b1)
+        }
+        return (outA, outB, pinned)
+    }
+
+    private static func smoothedPolyline(_ points: [Point2D], windowMM: Double = segmentSmoothingWindowMM, pinned: Set<Int> = []) -> [Point2D] {
         guard points.count > 2 else { return points }
         let n = points.count
         var cumulative = [Double](repeating: 0, count: n)
         for i in 1..<n { cumulative[i] = cumulative[i - 1] + points[i - 1].distance(to: points[i]) }
 
         var result = points
-        for i in 1..<(n - 1) {
+        for i in 1..<(n - 1) where !pinned.contains(i) {
             let lo = cumulative[i] - windowMM / 2
             let hi = cumulative[i] + windowMM / 2
             var sumX = 0.0, sumY = 0.0, count = 0.0
@@ -2435,7 +2526,17 @@ public enum SatinColumnGenerator {
         // widespread failures. Smoothing the rails themselves the same
         // way flattens exactly this without touching the (already sound)
         // centerline or width profile.
-        return (smoothedPolyline(railA, windowMM: railSmoothingWindowMM), smoothedPolyline(railB, windowMM: railSmoothingWindowMM))
+        // A square outer corner: the perpendicular rays hit the two faces
+        // either side of the vertex and never the vertex, so the rail
+        // turns gradually round it, the corner finder sees no corner, the
+        // mitre never happens and the crossings cut the corner off at 45
+        // degrees (the LIBBi "B"'s top-left). Where consecutive hits sit
+        // either side of a sharp boundary vertex within a stroke width,
+        // the vertex goes into the rail between them and the smoothing
+        // below is kept off it so it survives.
+        let cornered = insertBoundaryCorners(railA: railA, railB: railB, polygons: shapePolygons, widthMM: typicalWidth)
+        return (smoothedPolyline(cornered.railA, windowMM: railSmoothingWindowMM, pinned: cornered.pinned),
+                smoothedPolyline(cornered.railB, windowMM: railSmoothingWindowMM, pinned: cornered.pinned))
     }
 
     /// Reflects `point` across `center`, replacing the measured distance

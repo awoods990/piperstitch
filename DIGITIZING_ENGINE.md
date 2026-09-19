@@ -2395,3 +2395,43 @@ patch between them went). Results: LIBBi New Logo longest stitch 8.5 to
 the Tree's longest stitch 8.4 to 7.4 mm; every other corpus file within
 a few stitches, scores unchanged; the 14 glyph libraries rebuilt (B, R,
 P, K, E, F, H, T, b, p, k, h, y, 4, & checked on the sheet).
+
+## Square corners on a branching column (September 2026)
+
+The LIBBi "B"'s top-left and bottom-left corners are square in the
+artwork and came out clipped at 45 degrees, and the corner of one B was
+covered by a stray patch. A single-column shape has always got a mitre
+at a corner: `SatinCorners` looks for a rail vertex that turns 40-140
+degrees. A branching segment's rails are made differently -- a
+perpendicular ray from each skeleton sample to the boundary -- and at a
+square outer corner those rays hit the two faces either side of the
+vertex and never the vertex itself, so the rail rounded the corner
+gradually, the corner finder saw nothing, no mitre was made and the
+crossings between the last hit on one face and the first on the other
+cut across the corner.
+
+`insertBoundaryCorners` now puts the boundary vertex into the rail
+between the two hits that straddle it. A vertex qualifies when it turns
+40-140 degrees between two faces each at least a millimetre and 40 % of
+the stroke width long (the teeth of a serrated edge -- the Oholi
+feathers -- turn just as sharply on sides a fraction of a millimetre
+long, and inserting those turned the wing into diagonal zigzag), it is
+within a stroke width of both hits, its projection falls inside the
+step, it sits over the step no further out than a right angle would put
+it (a right-angle corner sits at half the step; an inner counter corner
+across the stroke or a neighbouring arm's corner sits further) and the
+detour through it is at least 0.15 mm. The rails are index-paired, so
+the matching rail gets a point the same fraction along its step and the
+pair stays one crossing; the inserted index is pinned out of the rail
+smoothing so the corner survives it. The corner finder then sees a real
+turn and mitres it. A traced outline closes with its first vertex
+repeated, which splits the corner across two vertices with a zero-length
+side between them; the repeat is dropped before the turns are measured.
+
+Results: both LIBBi logos' B's and the L have square, mitred corners
+and the stray corner patch is gone (the artwork's corner had been read
+as a spur node); LIBBi Logo thread 9189 to 9366 mm and LIBBi New Logo
+7195 to 7556 mm for the extra corner coverage; Oholi identical; every
+other corpus file within a few stitches; the 14 glyph libraries rebuilt.
+`DEBUG_CORNERS=1` prints every insertion with the stroke width, step,
+detour and position.
