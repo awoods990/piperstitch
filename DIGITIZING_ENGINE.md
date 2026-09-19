@@ -2334,14 +2334,28 @@ its assigned colour (flat logos 1-5, photographs and scans 8-10, shaded
 art in between), the share of pixels sitting between two colours (clean
 anti-aliasing 1-10 %, a photograph or soft scan a quarter or more), and
 the distinct-colour fraction. `CandidateAssessment.assess(importResult:)`
-calls an image **poor** when mean distance >= 7.5 AND ambiguous >= 25 %
-(a photograph: no flat colour, no edge to follow), or when the trace is
-150+ pieces with half of them under 1 % of the design (a scan's dust);
-**caution** when the short side is under 200 px and the edges are already
-soft. Calibrated on the corpus: the Lindbergh eagle sew-out photo, the
-HP scan, the embroidered PiperStitch mark and the Facebook banner are
-poor; the Horse Graphic (a shaded silhouette that lost its horse) is poor;
-the owl, the LIBBi logo and the 96 px Red Sox "B" pass. After the first
+calls an image **poor** when mean distance >= 6 AND ambiguous >= 25 %
+(a photograph or a heavily shaded rendering: no flat colour, no edge to
+follow), when it runs edge to edge with no page around it and is soft
+(>= 85 % taken as artwork, mean distance >= 4, ambiguous >= 12 % -- a
+headshot), or when the trace is 150+ pieces with half of them under 1 %
+of the design (a scan's dust); **caution** when the short side is under
+200 px and the edges are already soft.
+
+The pair is the finding. Six further colour statistics were tried and
+rejected on the corpus -- distinct-colour share, on-colour share,
+neighbour variation, boundary density, outline complexity, even
+Sobel-edge preservation -- because the studio's own reference files are
+heavily JPEG'd and shaded and overlap a photograph on every one of them
+taken alone (a Trucking logo measures "more photographic" than a
+landscape photo; the Moose keeps fewer edges than the eagle sew-out).
+Only the pair holds: every real photograph and every reference that
+digitized badly (Eagle sew-out, Horse, Sunshine, ATS, FSP, Ranger --
+gradients, gloss, soft focus) meets both; eighteen artwork files do not.
+That is six of the studio's twenty-four intake files, which is the honest
+rate: those are what customers send, and the studio's digitizers redraw
+them by hand. A synthetic gradient does not trip it (eight colours band
+it neatly) -- test the gate with real photographs. After the first
 digitize, `assess(report:)` calls a readiness score under 55 poor and
 carries the three costliest issues. The server returns the assessment on
 import and on digitize; the web app shows `CandidateNotice` -- the

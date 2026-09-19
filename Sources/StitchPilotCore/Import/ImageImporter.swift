@@ -183,6 +183,7 @@ public enum ImageImporter {
         statistics.distinctColorFraction = Double(nearestClusterCache.count) / Double(max(1, foregroundColors.count))
         statistics.meanColorDistance = distanceSum / Double(max(1, foregroundColors.count))
         statistics.ambiguousFraction = Double(ambiguousCount) / Double(max(1, foregroundColors.count))
+
         // A pixel confidently matching its own cluster is still ambiguous
         // if that whole *cluster* is itself a suspected background ramp
         // (`backgroundRampClusterIndices`) -- k-means can center a cluster

@@ -22,15 +22,25 @@ public struct CandidateAssessment: Codable, Sendable, Equatable {
 
     public init(verdict: Verdict, reasons: [Reason]) { self.verdict = verdict; self.reasons = reasons }
 
-    /// Continuous tone: the mean Delta-E from each pixel to its assigned
-    /// colour, at or above this, says the image is gradients, not flat
-    /// colour. Flat logos sit at 1-5; sew-out photographs and scans at
-    /// 8-10; shaded illustrations in between.
-    public static let photographMeanDistance = 7.5
-    /// ...together with this share of pixels sitting between two colours.
-    /// Anti-aliasing on a clean logo is 1-10 %; a photograph or a soft
-    /// scan is a quarter or more, and there is no edge to follow.
+    /// A photograph is told by a pair of measures, neither of which does
+    /// it alone (the studio's JPEG'd, shaded reference art overlaps a
+    /// photograph on every single colour statistic tried -- mean
+    /// distance, distinct colours, on-colour share, neighbour variation,
+    /// boundary density, even edge preservation). Together they hold on
+    /// the whole corpus: the share of pixels sitting between two colours
+    /// at a quarter or more (clean anti-aliasing is 1-10 %, the noisiest
+    /// artwork 23 %), with a mean Delta-E to the assigned colour of 6 or
+    /// more (flat logos 1-5). A landscape photo, a sew-out photo and the
+    /// two shaded pieces that digitized badly (Horse, Sunshine) meet
+    /// both; none of eighteen artwork files does.
+    public static let photographMeanDistance = 6.0
     public static let photographAmbiguousFraction = 0.25
+    /// Full-frame photograph: at least this share of the image taken as
+    /// artwork (no page or card found around it), with softer thresholds
+    /// on the two colour measures than a photograph on a page needs.
+    public static let fullFramePhotoForegroundShare = 0.85
+    public static let fullFramePhotoMeanDistance = 4.0
+    public static let fullFramePhotoAmbiguousFraction = 0.12
     /// Fragmentation: a trace of at least this many pieces, with at least
     /// `fragmentedTinyShare` of them under 1 % of the design's size, is the
     /// dust of a scan or a textured photograph, not artwork.
@@ -59,7 +69,19 @@ public struct CandidateAssessment: Codable, Sendable, Equatable {
         if st.meanColorDistance >= photographMeanDistance && st.ambiguousFraction >= photographAmbiguousFraction {
             verdict = .poor
             reasons.append(Reason(code: "photograph", message: String(format:
-                "It reads as a photograph or a scan rather than artwork: %.0f%% of its pixels sit between colours instead of on one, and the colours vary continuously. Embroidery is flat thread colours with a clean edge to follow, and this image has neither.",
+                "It reads as a photograph, a scan or a heavily shaded rendering rather than flat artwork: %.0f%% of its pixels sit between colours instead of on one, and the colours vary continuously (gradients, gloss, soft focus). Embroidery is flat thread colours with a clean edge to follow, and this image has neither.",
+                st.ambiguousFraction * 100)))
+        }
+        // A photograph that fills its frame -- a headshot, a snapshot --
+        // has no page or card around it, which artwork nearly always has,
+        // and its colours are soft and continuous even where a landscape's
+        // are not: taken as artwork edge to edge, with a fifth of its
+        // pixels between colours, it is a photograph.
+        let foregroundShare = Double(st.foregroundPixels) / Double(max(1, result.pixelWidth * result.pixelHeight))
+        if verdict != .poor, foregroundShare >= fullFramePhotoForegroundShare, st.meanColorDistance >= fullFramePhotoMeanDistance, st.ambiguousFraction >= fullFramePhotoAmbiguousFraction {
+            verdict = .poor
+            reasons.append(Reason(code: "photograph", message: String(format:
+                "It reads as a photograph: the picture runs edge to edge with no page or background around it, its colours vary continuously, and %.0f%% of its pixels sit between colours instead of on one. Embroidery is flat thread colours with a clean edge to follow, and this image has neither.",
                 st.ambiguousFraction * 100)))
         }
         if shapes.count >= fragmentedMinimumShapes, Double(tiny) / Double(shapes.count) >= fragmentedTinyShare {
