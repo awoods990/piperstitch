@@ -136,7 +136,7 @@ export default function App() {
     const load = handoff ? api.redeemHandoff(handoff).catch(() => api.me(true)) : api.me(subscribed !== null);
     load.then((m) => {
       setMe(m);
-      if (m.signedIn) pullPreferences();
+      if (m.signedIn) pullPreferences(m.account?.customer_id);
       if (subscribed === "1" && m.account?.status === "active") setNotice("You're subscribed — thank you! Everything's unlocked.");
     }).catch((e) => setError(`Couldn't reach the PiperStitch server: ${e.message}`));
   }, []);
@@ -150,22 +150,32 @@ export default function App() {
    *  they're newer than the last local save, so a hoop or thread added on
    *  another machine shows up here; a browser that has never synced pushes
    *  its own copy up instead. */
-  const pullPreferences = async () => {
+  const pullPreferences = async (customerId?: number) => {
     try {
       const { preferences, updatedAt } = await api.getPreferences();
-      const localStamp = Number(localStorage.getItem("piperstitch.preferences.savedAt") || 0);
+      // This browser's copy belongs to whichever account last saved it. A
+      // different account signing in here (a second shop on the same
+      // computer, or a new account created for testing) must not inherit
+      // it -- least of all its guided-setup record, which would silently
+      // skip the new account's own setup -- nor push it up as their own.
+      const owner = localStorage.getItem("piperstitch.preferences.owner");
+      const sameOwner = !customerId || !owner || owner === String(customerId);
+      const local = sameOwner ? loadPrefs() : withDefaults({});
+      const localStamp = sameOwner ? Number(localStorage.getItem("piperstitch.preferences.savedAt") || 0) : 0;
       if (preferences && updatedAt && (!localStamp || Date.parse(updatedAt) > localStamp)) {
-        const merged = withDefaults({ ...loadPrefs(), ...(preferences as Partial<Preferences>) });
+        const merged = withDefaults({ ...local, ...(preferences as Partial<Preferences>) });
         setPrefsState(merged); savePrefs(merged);
       } else {
-        api.savePreferences(loadPrefs() as unknown as Record<string, unknown>).catch(() => { /* best effort */ });
+        if (!sameOwner) { setPrefsState(local); savePrefs(local); }
+        api.savePreferences(local as unknown as Record<string, unknown>).catch(() => { /* best effort */ });
       }
+      if (customerId) { try { localStorage.setItem("piperstitch.preferences.owner", String(customerId)); } catch { /* fine */ } }
     } catch { /* offline or auth off: local preferences are fine */ }
     setPrefsPulled(true);
   };
   const refreshMe = async () => { try { setMe(await api.me(true)); } catch (e) { fail(e); } };
   const onSignedIn = (account: AccountState, mode: "trial" | "signin" = "signin") => {
-    setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences();
+    setMe({ authEnabled: true, signedIn: true, account }); setNotice(null); pullPreferences(account.customer_id);
     if (mode === "trial") setRerunOnboarding("link");
   };
   /** Account creation from inside guided setup: signed in and preferences
@@ -176,7 +186,7 @@ export default function App() {
       const m = await api.verifyCode(email, code);
       if (!m.account) throw new Error("Couldn't sign in.");
       setMe({ authEnabled: true, signedIn: true, account: m.account }); setNotice(null);
-      await pullPreferences();
+      await pullPreferences(m.account.customer_id);
     },
   };
   const onSignOut = async () => {
