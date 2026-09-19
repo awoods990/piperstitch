@@ -34,6 +34,24 @@ public struct ImageImportResult {
     /// white. Nil for transparent canvases and for images with no
     /// dominant ground.
     public var backgroundColor: RGBColor? = nil
+    /// How the image's colours behaved under quantisation -- what tells a
+    /// flat logo from a photograph or a soft scan (`CandidateAssessment`).
+    public var colorStatistics: ImageColorStatistics = ImageColorStatistics()
+}
+
+public struct ImageColorStatistics: Codable, Sendable, Equatable {
+    /// Pixels the importer took as artwork (not page or card).
+    public var foregroundPixels: Int = 0
+    /// Distinct RGB values among them, as a share of the pixels: a flat
+    /// logo repeats a few values; a photograph rarely repeats one.
+    public var distinctColorFraction: Double = 0
+    /// Mean Delta-E from each pixel to the colour it was assigned: near
+    /// zero for flat colour, large where the image is gradients.
+    public var meanColorDistance: Double = 0
+    /// Share of pixels sitting between two colours (anti-aliasing is a
+    /// thin fringe; a blurred or low-resolution image is mostly fringe).
+    public var ambiguousFraction: Double = 0
+    public init() {}
 }
 
 /// Imports raster artwork (PNG/JPEG/TIFF/BMP/WEBP/GIF) by finding
@@ -140,10 +158,13 @@ public enum ImageImporter {
 
         var labels = [Int](repeating: -1, count: width * height)
         var isAmbiguous = [Bool](repeating: false, count: width * height)
+        var statistics = ImageColorStatistics()
+        var distanceSum = 0.0, ambiguousCount = 0
         for i in 0..<(width * height) where foregroundMask[i] {
             let color = RGBColor(r: pixels[i * 4], g: pixels[i * 4 + 1], b: pixels[i * 4 + 2])
             let (index, bestDist, secondDist) = nearestClusters(color)
             labels[i] = index
+            distanceSum += bestDist
             // The same ambiguity test, but also considering the background
             // reference color (when one exists) as a candidate "second
             // nearest" -- a pixel on the anti-aliasing ramp between a
@@ -156,7 +177,12 @@ public enum ImageImporter {
             let distToBackground = backgroundColor.map { RGBColor.deltaE(color, $0) } ?? .infinity
             let effectiveSecondDist = min(secondDist, distToBackground)
             isAmbiguous[i] = effectiveSecondDist.isFinite && effectiveSecondDist > 0 && bestDist / effectiveSecondDist > ambiguousLabelRatio
+            if isAmbiguous[i] { ambiguousCount += 1 }
         }
+        statistics.foregroundPixels = foregroundColors.count
+        statistics.distinctColorFraction = Double(nearestClusterCache.count) / Double(max(1, foregroundColors.count))
+        statistics.meanColorDistance = distanceSum / Double(max(1, foregroundColors.count))
+        statistics.ambiguousFraction = Double(ambiguousCount) / Double(max(1, foregroundColors.count))
         // A pixel confidently matching its own cluster is still ambiguous
         // if that whole *cluster* is itself a suspected background ramp
         // (`backgroundRampClusterIndices`) -- k-means can center a cluster
@@ -295,7 +321,9 @@ public enum ImageImporter {
         }
 
         guard !shapes.isEmpty else { throw ImageImportError.noForegroundFound }
-        return ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height, backgroundColor: backgroundColor)
+        var result = ImageImportResult(shapes: shapes, fillColors: fillColors, pixelWidth: width, pixelHeight: height, backgroundColor: backgroundColor)
+        result.colorStatistics = statistics
+        return result
     }
 
     /// Companion to `ColorQuantizer.mergeAntiAliasingClusters`, which folds

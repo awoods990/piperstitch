@@ -570,3 +570,18 @@ a.choice { text-decoration: none; }
   .text-crop-host { max-width: 100%; }
   .text-retype { grid-template-columns: 1fr; }
 }
+
+/* Candidate notice: the exception, said plainly */
+.candidate-notice { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; background: var(--bg); }
+.candidate-card { max-width: 640px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px 32px; box-shadow: 0 8px 30px rgba(15,42,77,.06); }
+.candidate-eyebrow { margin: 0 0 6px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: #b3412c; font-weight: 600; }
+.candidate-card h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.25; }
+.candidate-lead { margin: 0 0 14px; color: var(--ink); line-height: 1.5; }
+.candidate-reasons { margin: 0 0 18px; padding: 14px 18px 14px 34px; background: #fdf3f0; border: 1px solid #f0cdc4; border-radius: 10px; line-height: 1.5; }
+.candidate-reasons li + li { margin-top: 8px; }
+.candidate-reasons li.candidate-sub { list-style: circle; margin-left: 14px; color: var(--label); }
+.candidate-fix h3 { margin: 0 0 6px; font-size: 14px; }
+.candidate-fix ul { margin: 0 0 18px; padding-left: 20px; line-height: 1.5; }
+.candidate-fix li + li { margin-top: 6px; }
+.candidate-actions { display: flex; gap: 16px; align-items: center; }
+.candidate-actions .link { background: none; border: none; color: var(--label); font: inherit; cursor: pointer; text-decoration: underline; }

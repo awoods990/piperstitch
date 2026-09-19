@@ -457,6 +457,18 @@ do {
         fillColors = result.fillColors
         artworkBackground = result.backgroundColor
         artworkPixelHeight = result.pixelHeight
+        let candidate = CandidateAssessment.assess(importResult: result)
+        if candidate.verdict != .good {
+            print("  candidate: \(candidate.verdict.rawValue)")
+            for reason in candidate.reasons { print("    - \(reason.message)") }
+        }
+        if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil || ProcessInfo.processInfo.environment["DEBUG_CANDIDATE"] != nil {
+            let st = result.colorStatistics
+            let box = result.shapes.reduce(BoundingBox.empty) { $0.union($1.boundingBox) }
+            let tiny = result.shapes.filter { let b = $0.boundingBox; return max(b.width, b.height) < max(box.width, box.height) * 0.01 }.count
+            print(String(format: "  candidate: %dx%d px, fg %d px, distinct %.3f, meanDE %.2f, ambiguous %.3f, shapes %d (tiny %d)",
+                         result.pixelWidth, result.pixelHeight, st.foregroundPixels, st.distinctColorFraction, st.meanColorDistance, st.ambiguousFraction, result.shapes.count, tiny))
+        }
     }
     guard !rawShapes.isEmpty else { fail("No usable shapes found in \(inputURL.lastPathComponent).") }
     checkpoint("Imported \(rawShapes.count) raw shapes")

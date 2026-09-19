@@ -103,6 +103,12 @@ export interface ImportedSource {
   pixelHeight: number;
 }
 
+/** Whether an image is a reasonable candidate for digitizing at all (engine `CandidateAssessment`). */
+export interface CandidateAssessment {
+  verdict: "good" | "caution" | "poor";
+  reasons: { code: string; message: string }[];
+}
+
 export interface ImportResponse {
   source: ImportedSource;
   recommendedWidthMM: number;
@@ -112,6 +118,7 @@ export interface ImportResponse {
   backgroundColor?: RGBColor | null;
   /** Lines of text found by their geometry, in artwork pixels; the Text step asks what they say. */
   textLines?: TextLine[];
+  candidate?: CandidateAssessment | null;
 }
 
 /** A run of letter-sized shapes the importer found in a line (see TextLineFinder). Pixel space. */
@@ -146,6 +153,7 @@ export interface DigitizeResponse {
   plan: { commands: WireCommand[] };
   colors: ThreadColor[];
   report: { score: number; isReadyToSew: boolean; issues: { severity: string; message: string; scorePenalty: number }[] };
+  candidate?: CandidateAssessment | null;
   stats: {
     stitchCount: number; colorChangeCount: number; trimCount: number;
     maxStitchLengthMM: number; totalThreadMM: number; bounds: BoundingBox;

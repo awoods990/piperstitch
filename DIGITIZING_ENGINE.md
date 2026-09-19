@@ -2321,3 +2321,30 @@ batch digitizing, correction-learning architecture.
   regression-testing approach in `TESTING.md` and matches spec §54's
   requirement that core stitch generation remain deterministic even as
   ML-assisted segmentation/classification is added later upstream of it.
+
+## Candidate assessment: saying no to a photograph (September 2026)
+
+PiperStitch digitizes the great majority of logos cleanly; a photograph of
+a sew-out, a scan, a screenshot of a shaded illustration are the
+exceptions, and every one of them used to go through the seven-minute
+setup and come out as purple blobs or three thousand specks. Now the
+importer keeps three numbers as it quantises
+(`ImageImportResult.colorStatistics`): the mean Delta-E from each pixel to
+its assigned colour (flat logos 1-5, photographs and scans 8-10, shaded
+art in between), the share of pixels sitting between two colours (clean
+anti-aliasing 1-10 %, a photograph or soft scan a quarter or more), and
+the distinct-colour fraction. `CandidateAssessment.assess(importResult:)`
+calls an image **poor** when mean distance >= 7.5 AND ambiguous >= 25 %
+(a photograph: no flat colour, no edge to follow), or when the trace is
+150+ pieces with half of them under 1 % of the design (a scan's dust);
+**caution** when the short side is under 200 px and the edges are already
+soft. Calibrated on the corpus: the Lindbergh eagle sew-out photo, the
+HP scan, the embroidered PiperStitch mark and the Facebook banner are
+poor; the Horse Graphic (a shaded silhouette that lost its horse) is poor;
+the owl, the LIBBi logo and the 96 px Red Sox "B" pass. After the first
+digitize, `assess(report:)` calls a readiness score under 55 poor and
+carries the three costliest issues. The server returns the assessment on
+import and on digitize; the web app shows `CandidateNotice` -- the
+reasons with their numbers, what works instead (the original design file,
+a larger export), and "Digitize it anyway" for the customer who wants to
+see -- instead of the setup steps, or once before the editor.

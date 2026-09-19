@@ -29,7 +29,8 @@ func routes(_ app: Application) throws {
         }
         return DigitizeResponse(plan: WirePlan(plan), colors: colors, report: WireReport(report),
                                 stats: WireStats(plan),
-                                elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
+                                elapsedMS: Int(Date().timeIntervalSince(started) * 1000),
+                                candidate: CandidateAssessment.assess(report: report))
     }
 
     // Server-to-server: PiperStitch Proofs exports the machine files for a
@@ -137,7 +138,8 @@ func routes(_ app: Application) throws {
                               pixelWidth: result.pixelWidth, pixelHeight: result.pixelHeight,
                               hoopWidthMM: q.hoopWidthMM, hoopHeightMM: q.hoopHeightMM,
                               backgroundColor: result.backgroundColor.flatMap { $0.isPreviewGround ? $0 : nil },
-                              textLines: TextLineFinder.find(shapes: result.shapes, fillColors: result.fillColors, imageHeightPixels: result.pixelHeight))
+                              textLines: TextLineFinder.find(shapes: result.shapes, fillColors: result.fillColors, imageHeightPixels: result.pixelHeight),
+                              candidate: CandidateAssessment.assess(importResult: result))
     }
 
     // SVG import: the file's text, as-is.
@@ -195,7 +197,8 @@ func routes(_ app: Application) throws {
             colors: colors,
             report: WireReport(report),
             stats: WireStats(plan),
-            elapsedMS: Int(Date().timeIntervalSince(started) * 1000)
+            elapsedMS: Int(Date().timeIntervalSince(started) * 1000),
+            candidate: CandidateAssessment.assess(report: report)
         )
     }
 
@@ -220,13 +223,14 @@ func routes(_ app: Application) throws {
 }
 
 private func importResponse(shapes: [VectorShape], fillColors: [RGBColor?], pixelWidth: Int, pixelHeight: Int,
-                            hoopWidthMM: Double?, hoopHeightMM: Double?, backgroundColor: RGBColor? = nil, textLines: [TextLine] = []) -> ImportResponse {
+                            hoopWidthMM: Double?, hoopHeightMM: Double?, backgroundColor: RGBColor? = nil, textLines: [TextLine] = [],
+                            candidate: CandidateAssessment? = nil) -> ImportResponse {
     var bounds = BoundingBox.empty
     for shape in shapes { bounds = bounds.union(shape.boundingBox) }
     let source = ImportedSource(shapes: shapes, fillColors: fillColors, bounds: bounds, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
     let size = DocumentBuilder.recommendedSize(for: source, hoopWidthMM: hoopWidthMM, hoopHeightMM: hoopHeightMM)
     let aspect = bounds.height > 0 ? bounds.width / bounds.height : 1
-    return ImportResponse(source: source, recommendedWidthMM: size.widthMM, recommendedHeightMM: size.heightMM, aspectRatio: aspect, backgroundColor: backgroundColor, textLines: textLines)
+    return ImportResponse(source: source, recommendedWidthMM: size.widthMM, recommendedHeightMM: size.heightMM, aspectRatio: aspect, backgroundColor: backgroundColor, textLines: textLines, candidate: candidate)
 }
 
 /// The same five machine formats `AppState.exportChoosingFormat` offers.

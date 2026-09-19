@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type EditResponse, type PendingMerge } from "./api";
 import { decodeImage, isSVGFile, rasterizeSVG, type DecodedImage } from "./decode";
-import type { AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings, ThreadWeight, VectorShape } from "./types";
+import type { CandidateAssessment, AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings, ThreadWeight, VectorShape } from "./types";
 import { THREAD_WEIGHTS } from "./types";
 import DropZone from "./components/DropZone";
 import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
@@ -20,6 +20,7 @@ import { loadPrefs, savePrefs, withDefaults, type Preferences } from "./prefs";
 import Onboarding from "./components/Onboarding";
 import { setDisplayUnits } from "./format";
 import { selectionBounds, transformObject } from "./geometry";
+import { CandidateNotice } from "./components/CandidateNotice";
 import { generateLetteringRun, type LetteringRun, type LetteringSpec } from "./lettering";
 import { minimumCapHeightMM, textLinePoint, textLineScale } from "./textLines";
 import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
@@ -37,7 +38,7 @@ interface Imported {
   maxColors: number;
 }
 
-type Phase = "start" | "setup" | "editor" | "onboarding";
+type Phase = "start" | "candidate" | "setup" | "editor" | "onboarding";
 type Sheet = "help" | "settings" | "settingsBusiness" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
@@ -53,6 +54,9 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("start");
+  const [resultNotice, setResultNotice] = useState<CandidateAssessment | null>(null);
+  const resultNoticeShownRef = useRef(false);
+  const setResultNoticeShown = (v: boolean) => { resultNoticeShownRef.current = v; };
   const [imported, setImported] = useState<Imported | null>(null);
   const [answers, setAnswers] = useState<SetupAnswers | null>(null);
   const [document, setDocument] = useState<StitchDocument | null>(null);
@@ -209,6 +213,9 @@ export default function App() {
       const result = await api.digitize(doc, hoop?.widthMM, hoop?.heightMM);
       if (gen !== generation.current) return;
       setDigitized(result); setError(null);
+      // The first digitize of a fresh import that scores badly: say so
+      // once, with the report's largest problems, before the editor.
+      if (result.candidate?.verdict === "poor" && !resultNoticeShownRef.current) { resultNoticeShownRef.current = true; setResultNotice(result.candidate); }
       setStatus(`${result.stats.stitchCount.toLocaleString()} stitches, ${result.stats.colorChangeCount} colour change${result.stats.colorChangeCount === 1 ? "" : "s"}.`);
     } catch (e) { if (gen === generation.current) fail(e); }
     finally { if (gen === generation.current) setStale(false); }
@@ -279,7 +286,9 @@ export default function App() {
       setAnswers({ placement: null, widthMM: imp.response.recommendedWidthMM, heightMM: imp.response.recommendedHeightMM, lockAspect: true,
         hoop: defaultHoop, hoopMode: defaultHoop ? "specific" : "none", fabric: prefs.defaultFabric, colorPreset: preset, threadWeight: "wt40" });
       setDocument(null); setDigitized(null); setSelectedIDs(new Set()); setUndoStack([]); setProjectId(null); setSavedAt(null);
-      setPhase("setup");
+      setResultNoticeShown(false);
+      // A poor candidate gets the reasons instead of the setup steps.
+      setPhase(imp.response.candidate?.verdict === "poor" ? "candidate" : "setup");
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
 
@@ -715,6 +724,16 @@ export default function App() {
           onCancel={leave} onSkip={leave} onDone={leave} />
       </>
     );
+  }
+
+  if (phase === "candidate" && imported && imported.response.candidate) {
+    return <><CandidateNotice assessment={imported.response.candidate} fileName={imported.fileName} afterDigitize={false}
+      onChooseAnother={onStartOver} onContinue={() => setPhase("setup")} />{sheets}</>;
+  }
+
+  if (phase === "editor" && resultNotice && imported) {
+    return <><CandidateNotice assessment={resultNotice} fileName={imported.fileName} afterDigitize
+      onChooseAnother={() => { setResultNotice(null); onStartOver(); }} onContinue={() => setResultNotice(null)} />{sheets}</>;
   }
 
   if (phase === "setup" && imported && answers) {

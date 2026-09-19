@@ -26,7 +26,13 @@ struct ImportResponse: Content {
     /// space, so the setup can ask what they say and whether to re-type,
     /// keep or leave them out.
     var textLines: [TextLine]
+    /// Whether this image is a reasonable candidate at all
+    /// (`CandidateAssessment`): the web app shows the reasons instead of
+    /// the setup steps when the verdict is poor.
+    var candidate: CandidateAssessment?
 }
+
+extension CandidateAssessment: Content {}
 
 struct BuildRequest: Content {
     var source: ImportedSource
@@ -138,6 +144,9 @@ struct DigitizeResponse: Content {
     var report: WireReport
     var stats: WireStats
     var elapsedMS: Int
+    /// From the report's score: poor when the result is not one to hand
+    /// over without a word (`CandidateAssessment.assess(report:)`).
+    var candidate: CandidateAssessment? = nil
 }
 
 struct ExportRequest: Content {
