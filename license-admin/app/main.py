@@ -852,8 +852,16 @@ async def stripe_webhook(request: Request):
     if db.stripe_event_already_processed(event["id"]):
         return {"received": True, "duplicate": True}
 
-    obj = event["data"]["object"]
     kind = event["type"]
+    # A thin (v2) event -- the dashboard's default flavour since 2025 --
+    # carries no object, only a pointer to fetch. This service subscribes
+    # to snapshot events; a thin one that arrives anyway is acknowledged
+    # and logged so Stripe does not retry it for three days.
+    if kind.startswith("v2.") or "object" not in (event.get("data") or {}):
+        log.warning("Webhook %s is a thin event (%s); this endpoint expects snapshot events -- check the endpoint's event selection", event["id"], kind)
+        db.record_stripe_event(event["id"], kind)
+        return {"received": True, "ignored": "thin event"}
+    obj = event["data"]["object"]
     try:
         if kind == "checkout.session.completed":
             _fulfill_checkout(obj, stripe_event_id=event["id"])
