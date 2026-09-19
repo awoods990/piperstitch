@@ -68,7 +68,11 @@ export interface EmbroideryObject {
   parameters: StitchGenerationParameters;
   stitchTypeIsManualOverride: boolean;
   isApplique: boolean;
+  /** Pre-digitized satin columns (a library glyph), in mm. Move and scale them with the shape -- see `transformObject`. */
+  satinColumns?: SatinColumn[] | null;
 }
+
+export interface SatinColumn { a: Point2D[]; b: Point2D[]; t?: boolean }
 
 export interface StitchDocument {
   schemaVersion: number;

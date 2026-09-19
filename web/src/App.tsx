@@ -19,7 +19,7 @@ import type { Tool } from "./components/StitchCanvas";
 import { loadPrefs, savePrefs, withDefaults, type Preferences } from "./prefs";
 import Onboarding from "./components/Onboarding";
 import { setDisplayUnits } from "./format";
-import { transformShape } from "./geometry";
+import { selectionBounds, transformObject } from "./geometry";
 import { generateLetteringRun, type LetteringRun, type LetteringSpec } from "./lettering";
 import { minimumCapHeightMM, textLinePoint, textLineScale } from "./textLines";
 import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
@@ -437,11 +437,11 @@ export default function App() {
   };
   const onTranslate = (dx: number, dy: number) => {
     if (!document || selectedIDs.size === 0) return;
-    commit({ ...document, objects: document.objects.map((o) => selectedIDs.has(o.id) ? { ...o, shape: transformShape(o.shape, (pt) => ({ x: pt.x + dx, y: pt.y + dy })) } : o) }, { status: "Moved." });
+    commit({ ...document, objects: document.objects.map((o) => selectedIDs.has(o.id) ? transformObject(o, (pt) => ({ x: pt.x + dx, y: pt.y + dy })) : o) }, { status: "Moved." });
   };
   const onScale = (scale: number, anchor: Point2D) => withBusy("Resizing…", async () => {
     if (!document || selectedIDs.size === 0) return;
-    const scaled = { ...document, objects: document.objects.map((o) => selectedIDs.has(o.id) ? { ...o, shape: transformShape(o.shape, (pt) => ({ x: anchor.x + (pt.x - anchor.x) * scale, y: anchor.y + (pt.y - anchor.y) * scale })) } : o) };
+    const scaled = { ...document, objects: document.objects.map((o) => selectedIDs.has(o.id) ? transformObject(o, (pt) => ({ x: anchor.x + (pt.x - anchor.x) * scale, y: anchor.y + (pt.y - anchor.y) * scale })) : o) };
     const r = await api.classify(scaled, [...selectedIDs]);
     commit(r.document, { status: "Resized." });
   });
@@ -467,7 +467,18 @@ export default function App() {
   const onAddLettering = async (spec: LetteringSpec, threadColor: ThreadColor, replaceSelected: boolean) => {
     if (!document) return;
     const run = await generateLetteringRun(spec);
-    const center = { x: document.physicalWidthMM / 2, y: document.physicalHeightMM / 2 };
+    // Clear of the artwork: centred, just below what is there (when it
+    // fits), where a tagline usually goes -- not on top of the design.
+    // Replacing a selection keeps its place.
+    let center = { x: document.physicalWidthMM / 2, y: document.physicalHeightMM / 2 };
+    if (replaceSelected && selectedIDs.size) {
+      const b = selectionBounds(document.objects, selectedIDs);
+      center = { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+    } else if (document.objects.length) {
+      const b = selectionBounds(document.objects, new Set(document.objects.map((o) => o.id)));
+      const below = b.maxY + spec.fontSizeMM * 0.5 + spec.fontSizeMM * 0.8;
+      if (below + spec.fontSizeMM * 0.6 <= document.physicalHeightMM) center = { x: (b.minX + b.maxX) / 2, y: below };
+    }
     const r = await api.lettering({ document, shapes: run.shapes, capHeightMM: spec.fontSizeMM, threadColor, targetCenter: center, replaceIDs: replaceSelected ? [...selectedIDs] : undefined,
       fontID: spec.fontID, glyphs: run.glyphs, arcRadiusMM: spec.arcRadiusMM, totalWidthMM: run.totalWidthMM });
     applyEdit(r); setTool("select");

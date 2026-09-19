@@ -48,6 +48,15 @@ export function transformShape(shape: VectorShape, fn: (p: Point2D) => Point2D):
   return { subPaths: shape.subPaths.map((sp) => ({ ...sp, points: sp.points.map(fn) })) };
 }
 
+/** The object moved or scaled as one: its outline and, when it sews from
+ *  stored satin columns (a library glyph), those too -- transforming the
+ *  outline alone left the stitches where they were. */
+export function transformObject(object: EmbroideryObject, fn: (p: Point2D) => Point2D): EmbroideryObject {
+  const out = { ...object, shape: transformShape(object.shape, fn) };
+  if (object.satinColumns) out.satinColumns = object.satinColumns.map((c) => ({ ...c, a: c.a.map(fn), b: c.b.map(fn) }));
+  return out;
+}
+
 export function selectionBounds(objects: EmbroideryObject[], ids: Set<string>): BoundingBox {
   let b = { ...EMPTY_BOX };
   for (const o of objects) if (ids.has(o.id)) b = unionBounds(b, shapeBounds(o.shape));

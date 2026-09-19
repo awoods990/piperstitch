@@ -88,6 +88,7 @@ func editRoutes(_ engine: RoutesBuilder) {
                     guard reduced != current.objects[i].shape else { continue }
                     changed = true
                     current.objects[i].shape = reduced
+                    current.objects[i].satinColumns = nil
                     if !current.objects[i].stitchTypeIsManualOverride {
                         current.objects[i].stitchType = StitchTypeClassifier.classify(shape: reduced, parameters: current.objects[i].parameters)
                     }
@@ -129,6 +130,7 @@ func editRoutes(_ engine: RoutesBuilder) {
                     return EditResponse(document: current, selectedIDs: [current.objects[index].id], status: "")
                 }
                 current.objects[index].shape = extended
+                current.objects[index].satinColumns = nil
                 current.objects[index].stitchType = StitchTypeClassifier.classify(shape: extended, parameters: current.objects[index].parameters)
                 return EditResponse(document: current, selectedIDs: [current.objects[index].id], status: "Extended \(current.objects[index].name).")
             }

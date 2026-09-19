@@ -1544,6 +1544,17 @@ column ignores `minSatinWidthMM` -- it is satin by definition, only a
 chord under the thread's own minimum is a run (the light cut's 0.9 mm
 chords were sewing as a line down the middle).
 
+**Moving, resizing and re-fitting library lettering.** The editor's
+drag-to-move and corner-scale, and the project resize, all transformed
+an object's outline only; a library glyph's stored columns stayed where
+they were, so the stitches "repeated" at the old place and size while
+the selection box moved (the first "Add lettering" report after the
+library shipped). `transformObject` (web) and `DocumentBuilder.resize`
+(server) now map the columns with the outline; an edit that reshapes an
+object (erase, paint) drops its columns, and the shape is the truth
+again. New lettering is placed centred just below the design rather
+than on top of it (replacing a selection keeps its place).
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

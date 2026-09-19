@@ -142,6 +142,14 @@ enum DocumentBuilder {
         let resized = current.objects.map { object -> EmbroideryObject in
             var resized = object
             resized.shape = object.shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: currentBounds)
+            // Stored columns (a library glyph) scale with the outline; the
+            // scale is uniform, so the same map serves.
+            if let columns = object.satinColumns {
+                let scale = min(widthMM / currentBounds.width, heightMM / max(1e-9, currentBounds.height))
+                let offsetX = -currentBounds.minX * scale + (widthMM - currentBounds.width * scale) / 2
+                let offsetY = -currentBounds.minY * scale + (heightMM - currentBounds.height * scale) / 2
+                resized.satinColumns = columns.map { $0.mapped { Point2D($0.x * scale + offsetX, $0.y * scale + offsetY) } }
+            }
             if !resized.stitchTypeIsManualOverride {
                 resized.stitchType = StitchTypeClassifier.classify(shape: resized.shape, parameters: resized.parameters)
             }
