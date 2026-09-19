@@ -2362,3 +2362,36 @@ import and on digitize; the web app shows `CandidateNotice` -- the
 reasons with their numbers, what works instead (the original design file,
 a larger export), and "Digitize it anyway" for the customer who wants to
 see -- instead of the setup steps, or once before the editor.
+
+## T-junctions: the through-stroke sews straight, the arm butts in (September 2026)
+
+The LIBBi "B" at a polo chest came out with its stem shredded either side
+of the waist and a fan of diagonals where the bar met it. The branching
+generator's junction handling -- trim every arm back to a radius, cover
+the crease with a chord patch -- was built for real creases (an H's
+crossbar, a V) and tuned against the Oholi H sew-out. At a T it did the
+wrong thing: it trimmed the stem 11 mm each way and patched across stem
+and bar together, and the bar's own last crossings, following the
+skeleton's bend into the node, fanned 30 degrees into the stem.
+
+A digitizer sews a T the other way round: the through-stroke straight
+and unbroken, the arm butted into it with a little overlap, no patch.
+`throughStrokes(in:)` finds, at each junction with three or more arms,
+the pair that is one stroke -- nearly collinear (opposed by >= 0.85) and
+alike in width (>= 0.6), or a cornered pair (opposed by >= 0.3) with the
+third arm coming in from inside the bend (a B's or R's two bowls at the
+waist). Such a node gets no patch; the through-stroke's segments keep
+every crossing; the butting arm is cut back to the through-stroke's
+half-width less 0.8 mm; and the arm's rails over its last 2.5 mm are
+cast perpendicular to its direction measured past that zone, so the
+crossings enter square. Only arms that butt are straightened -- a thread
+line curling into its loop is a real bend and is followed.
+
+A hop between pieces that stays on the shape used to be one stitch of
+any length; past 60 % of the maximum stitch length it is a travel run
+now (a tree's branch to its neighbour was one 11.7 mm stitch once the
+patch between them went). Results: LIBBi New Logo longest stitch 8.5 to
+6.7 mm and both B's are letters; the Oholi H's crossbar loses its knots;
+the Tree's longest stitch 8.4 to 7.4 mm; every other corpus file within
+a few stitches, scores unchanged; the 14 glyph libraries rebuilt (B, R,
+P, K, E, F, H, T, b, p, k, h, y, 4, & checked on the sheet).

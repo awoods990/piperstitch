@@ -561,7 +561,13 @@ do {
     print("Readiness: \(report.score)/100 (\(report.isReadyToSew ? "Ready to Sew" : "Review Recommended"))")
     if ProcessInfo.processInfo.environment["PROFILE"] != nil { printProfile(plan) }
     if ProcessInfo.processInfo.environment["DUMP_PLAN"] != nil {
-        for (i, c) in plan.commands.prefix(400).enumerated() { print("  \(i): \(c)") }
+        for (i, c) in plan.commands.enumerated() {
+            switch c {
+            case .stitch(let p): print(String(format: "  %d: stitch (%.2f,%.2f)", i, p.x, p.y))
+            case .jump(let p): print(String(format: "  %d: jump (%.2f,%.2f)", i, p.x, p.y))
+            default: print("  \(i): \(c)")
+            }
+        }
     }
     // DUMP_BREAKS=1: every non-stitch command with the gap it spans, plus
     // any stitch over 6 mm -- the things a sew-out shows as loose thread.
