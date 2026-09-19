@@ -315,8 +315,16 @@ if args.count >= 4, args[1] == "--glyph-sheet" {
                 for column in columns { for p in column.railA + column.railB { box = box.union(BoundingBox(minX: p.x, minY: p.y, maxX: p.x, maxY: p.y)) } }
                 shape = VectorShape(subPaths: [SubPath(points: [Point2D(box.minX, box.minY), Point2D(box.maxX, box.minY), Point2D(box.maxX, box.maxY), Point2D(box.minX, box.maxY)], closed: true)])
             }
-            objects.append(EmbroideryObject(name: key, shape: shape, stitchType: .satin, threadColor: .generic(RGBColor(hex: 0x1144AA)),
-                                            parameters: parameters, stitchTypeIsManualOverride: true, satinColumns: columns))
+            // GENERIC=1 sews the outlines through the generic lettering path
+            // instead, for comparison against the library.
+            if ProcessInfo.processInfo.environment["GENERIC"] != nil {
+                let runType = StitchTypeClassifier.classifyLetteringRun(shapes: [shape], parameters: parameters, capHeightMM: capMM)
+                objects.append(EmbroideryObject(name: key, shape: shape, stitchType: StitchTypeClassifier.classifyGlyphInRun(shape: shape, runStitchType: runType, parameters: parameters),
+                                                threadColor: .generic(RGBColor(hex: 0x1144AA)), parameters: parameters, stitchTypeIsManualOverride: true))
+            } else {
+                objects.append(EmbroideryObject(name: key, shape: shape, stitchType: .satin, threadColor: .generic(RGBColor(hex: 0x1144AA)),
+                                                parameters: parameters, stitchTypeIsManualOverride: true, satinColumns: columns))
+            }
             x += glyph.advance * scale + gap
         }
         widest = max(widest, x)

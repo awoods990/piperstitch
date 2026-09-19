@@ -269,6 +269,12 @@ public enum SatinColumnGenerator {
             return false
         }
         for edge in topology.edges where !edge.isClosedLoop && edge.startNodeID != edge.endNodeID {
+            // Two edges between the same pair of junctions are the two
+            // halves of the ring round the counter (a slotted bar, a wide
+            // O whose loop the thinning split), not arms leaving it.
+            let pair = Set([edge.startNodeID, edge.endNodeID])
+            let parallel = topology.edges.filter { !$0.isClosedLoop && Set([$0.startNodeID, $0.endNodeID]) == pair }.count
+            if parallel >= 2 { continue }
             // A real arm is a stroke: longer than it is wide by a margin.
             // A wide bar with a slot in it has skeleton "arms" into its
             // solid ends that are as wide as they are long -- still a ring.
@@ -1505,6 +1511,10 @@ public enum SatinColumnGenerator {
     /// anti-aliasing slivers were cleaned up: a 1px nudge to its hook put
     /// a fan in the first ~3mm of its stem, and the whole letter fell back
     /// to tatami over stitches the patch would have covered anyway.
+    /// See the twist check in `branchingPlan`: set by `columnPlanDroppingTwists`.
+    nonisolated(unsafe) private static var tolerateTwists = false
+    private static let tolerateTwistsLock = NSLock()
+
     private static func branchingPlan(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> BranchingPlan {
         guard !shape.subPaths.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("no outline was provided")
@@ -1662,6 +1672,24 @@ public enum SatinColumnGenerator {
             let isRing = segment.edge.startNodeID == segment.edge.endNodeID
             let checked = interiorRange(count: count).clamped(to: lo..<hi)
             if !isRing, isTwisted(segment.expandedA, segment.expandedB, within: checked) {
+                // Building a font library, a twist in one arm is not a
+                // reason to refuse the glyph: drop the twisted crossings
+                // (the patch or the neighbours cover the gap) and carry
+                // on. Live digitizing keeps the strict refusal, where the
+                // fill fallback is the safer result.
+                if tolerateTwists {
+                    var keptA: [Point2D] = [], keptB: [Point2D] = [], keptW: [Double] = [], keptM: [Bool] = []
+                    for i in lo..<hi {
+                        if let a = keptA.last, let b = keptB.last,
+                           segmentsIntersect(a, b, segment.expandedA[i], segment.expandedB[i]),
+                           let pt = intersectionPoint(a, b, segment.expandedA[i], segment.expandedB[i]),
+                           ![a, b, segment.expandedA[i], segment.expandedB[i]].contains(where: { $0.distance(to: pt) <= fanPivotToleranceMM }) { continue }
+                        keptA.append(segment.expandedA[i]); keptB.append(segment.expandedB[i]); keptW.append(segment.widths[i]); keptM.append(segment.mitre[i])
+                    }
+                    segments[index].expandedA = keptA; segments[index].expandedB = keptB; segments[index].widths = keptW; segments[index].mitre = keptM
+                    segments[index].kept = 0..<keptA.count
+                    continue
+                }
                 if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil {
                     for i in checked where i + 1 < count {
                         let a0 = segment.expandedA[i], b0 = segment.expandedB[i], a1 = segment.expandedA[i + 1], b1 = segment.expandedB[i + 1]
@@ -2678,9 +2706,21 @@ extension SatinColumnGenerator {
 
     /// `columnPlan`, falling back to the single-column or ring fit when
     /// the branching path cannot take a junctioned glyph.
+    private static func columnPlanDroppingTwists(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [SatinColumn] {
+        tolerateTwistsLock.lock(); defer { tolerateTwistsLock.unlock() }
+        tolerateTwists = true
+        defer { tolerateTwists = false }
+        return try columnPlan(for: shape, parameters: parameters)
+    }
+
     public static func columnPlanWithFallback(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> [SatinColumn] {
         do { return try columnPlan(for: shape, parameters: parameters) } catch {
             let density = parameters.effectiveSatinDensityMM
+            // A junctioned glyph whose branching plan twisted (a slab L,
+            // whose foot's serif fans into its stem): the topology is
+            // still right, so try again with the twisted crossings
+            // dropped rather than the whole plan refused.
+            if let columns = try? columnPlanDroppingTwists(for: shape, parameters: parameters), !columns.isEmpty { return columns }
             if shape.subPaths.count == 1, canRepresentAsSingleSatinColumn(shape: shape, parameters: parameters) {
                 let rails = try computeRails(for: shape)
                 let (a, b, count, _) = fineThenDecimatedRails(railA: rails.railA, railB: rails.railB, density: density, parameters: parameters, paired: false)
@@ -2726,8 +2766,14 @@ extension SatinColumnGenerator {
                 b[i] = pushOutward(bi, from: ai, by: pull / 2)
                 widths[i] = a[i].distance(to: b[i])
             }
+            // A stored column is satin by definition: the "may this be
+            // satin at all" floor (`minSatinWidthMM`) does not apply, or a
+            // light cut's 0.9 mm chords sew as a running line down the
+            // middle. Only a chord the thread cannot show is a run.
+            var satinParameters = parameters
+            satinParameters.minSatinWidthMM = min(parameters.minSatinWidthMM, hairline)
             let stitches = stitchesSplittingByWidth(expandedA: a, expandedB: b, widths: widths,
-                                                    mitre: Array(repeating: false, count: a.count), overWide: .splitSatin, parameters: parameters)
+                                                    mitre: Array(repeating: false, count: a.count), overWide: .splitSatin, parameters: satinParameters)
             if ProcessInfo.processInfo.environment["DEBUG_SEW"] != nil {
                 var box = BoundingBox.empty
                 for p in stitches { box = box.union(BoundingBox(minX: p.x, minY: p.y, maxX: p.x, maxY: p.y)) }

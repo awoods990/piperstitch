@@ -8,7 +8,7 @@ import { THREAD_WEIGHTS, type ThreadWeight } from "../types";
 import type { Catalog, CatalogFabric, CatalogSize, ColorPresetId, FabricType, TextDecision, TextLine } from "../types";
 import { approx, len, size, displayUnitLabel, toDisplay, fromDisplay } from "../format";
 import { hoopGroups, smallestHoopThatFits } from "../hoops";
-import { LETTERING_FONTS, THIN_STROKE_MIN_CAP_MM, ensureFontFaces, fontFaceFamily, suggestFont } from "../lettering";
+import { LETTERING_FONTS, SMALL_TEXT_CAP_MM, THIN_STROKE_MIN_CAP_MM, ensureFontFaces, fontFaceFamily, suggestFont } from "../lettering";
 import { cropLine, readLine } from "../ocr";
 import type { DecodedImage } from "../decode";
 import { minimumCapHeightMM, textLineScale } from "../textLines";
@@ -133,7 +133,7 @@ export default function SetupFlow(props: Props) {
   // until the user says otherwise; a straight line the size has since
   // made too small is left out unless the user chose to keep it.
   const dropsWhenTooSmall = (l: TextLine) => !l.curved || l.shapeIndices.length >= 8;
-  const defaultDecision = (l: TextLine): TextDecision => ({ action: "drop", text: "", fontID: suggestFont(l) });
+  const defaultDecision = (l: TextLine): TextDecision => ({ action: "drop", text: "", fontID: suggestFont(l, Math.max(capMM(l), minCap)) });
   const decisions: TextDecision[] = textLines.map((l, i) => {
     const chosen = a.textDecisions?.[i];
     const d = chosen ?? defaultDecision(l);
@@ -490,7 +490,7 @@ function TextLineRow({ line, decision, capMM, minCap, image, imageUnitsToPixels,
     return () => ro.disconnect();
   }, [image, line, decision.action]);
 
-  const suggested = suggestFont(line);
+  const suggested = suggestFont(line, sewnCap);
   const groups = ["Sans-serif", "Serif", "Script"].map((g) => ({
     group: g,
     fonts: LETTERING_FONTS.filter((f) => f.group === g).sort((x, y) => (x.id === suggested ? -1 : y.id === suggested ? 1 : 0)),
@@ -568,11 +568,13 @@ function TextLineRow({ line, decision, capMM, minCap, image, imageUnitsToPixels,
               <div className="font-tiles">
                 {g.fonts.map((f) => {
                   const thin = !!f.thinStrokes && sewnCap < THIN_STROKE_MIN_CAP_MM;
+                  const small = !!f.forSmallText;
+                  const note = f.id === suggested ? " · suggested" : thin ? " · too fine at this size" : small ? (sewnCap <= SMALL_TEXT_CAP_MM ? " · keeps small text open" : " · for small text") : "";
                   return (
                     <button key={f.id} type="button" className={"font-tile" + (decision.fontID === f.id ? " on" : "") + (thin ? " thin" : "")}
-                      onClick={() => onChange({ fontID: f.id })} title={f.displayName + (thin ? ` — thin strokes need ${len(THIN_STROKE_MIN_CAP_MM)} ${displayUnitLabel()} to hold` : "")}>
+                      onClick={() => onChange({ fontID: f.id })} title={f.displayName + (thin ? ` — thin strokes need ${len(THIN_STROKE_MIN_CAP_MM)} ${displayUnitLabel()} to hold` : small ? " — a lighter cut whose counters stay open at the minimum height" : "")}>
                       <span className="font-tile-sample" style={{ fontFamily: `"${fontFaceFamily(f.id)}", sans-serif` }}>{f.capsOnly ? sample.toUpperCase() : sample}</span>
-                      <span className="font-tile-name">{f.displayName}{f.id === suggested ? " · suggested" : ""}{thin ? " · too fine at this size" : ""}</span>
+                      <span className="font-tile-name">{f.displayName}{note}</span>
                     </button>
                   );
                 })}

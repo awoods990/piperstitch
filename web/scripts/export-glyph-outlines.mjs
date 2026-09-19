@@ -20,7 +20,9 @@ mkdirSync(outDir, { recursive: true });
 // Mirrors LETTERING_FONTS in src/lettering.ts (ids and files).
 const FONTS = {
   "roboto": "@fontsource/roboto/files/roboto-latin-700-normal.woff",
+  "roboto-medium": "@fontsource/roboto/files/roboto-latin-500-normal.woff",
   "open-sans": "@fontsource/open-sans/files/open-sans-latin-700-normal.woff",
+  "open-sans-semibold": "@fontsource/open-sans/files/open-sans-latin-600-normal.woff",
   "montserrat": "@fontsource/montserrat/files/montserrat-latin-700-normal.woff",
   "oswald": "@fontsource/oswald/files/oswald-latin-700-normal.woff",
   "playfair": "@fontsource/playfair-display/files/playfair-display-latin-700-normal.woff",

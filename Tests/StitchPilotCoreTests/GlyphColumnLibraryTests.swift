@@ -6,13 +6,11 @@ import Foundation
 /// sewn at any size from the stored chords.
 struct GlyphColumnLibraryTests {
     @Test func everyWebFontHasALibraryWithTheBasicSet() {
-        let ids = ["roboto", "open-sans", "montserrat", "oswald", "playfair", "merriweather", "alfa-slab", "anton", "bebas-neue", "lobster", "pacifico", "dancing-script"]
+        let ids = ["roboto", "roboto-medium", "open-sans", "open-sans-semibold", "montserrat", "oswald", "playfair", "merriweather", "alfa-slab", "anton", "bebas-neue", "lobster", "pacifico", "dancing-script"]
         for id in ids {
             guard let font = GlyphColumnLibrary.font(id) else { Issue.record("no library for \(id)"); continue }
-            // The generic path covers a glyph the generator could not
-            // column (Dancing Script's 7); more than one is a broken build.
             let missing = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".filter { font.glyphs[String($0)] == nil }
-            #expect(missing.count <= 1, "\(id) is missing \(missing)")
+            #expect(missing.isEmpty, "\(id) is missing \(missing)")
         }
     }
 

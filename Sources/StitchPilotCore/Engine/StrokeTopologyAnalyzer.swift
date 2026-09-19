@@ -96,11 +96,9 @@ public enum StrokeTopologyAnalyzer {
         public var minPruneLengthMM: Double = 0.15
         /// A spur is pruned only when its far end is thinner than this
         /// fraction of the junction's width -- see `prune`.
-        public var spurTipWidthFraction: Double = 0.5
-        /// Under this fraction of the prune threshold a spur goes whatever
-        /// its end width (a T's bumps, half a stroke wide and a quarter
-        /// long); between it and the threshold only a tapering one does.
-        public var spurAlwaysPruneFraction: Double = 0.65
+        public var spurTipWidthFraction: Double = 0.62
+        /// A spur ending at least this wide is a stroke, never noise.
+        public var realStrokeTipWidthMM: Double = 2.5
         /// A spur shorter than this multiple of its junction's width whose
         /// tip is thinner than `serifWingTipWidthFraction` of it is a
         /// serif's wing, absorbed into the stroke's end -- see `prune`.
@@ -751,9 +749,6 @@ public enum StrokeTopologyAnalyzer {
 
         var nodesByID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
         var edges = topology.edges
-        // Junctions demoted to ends once their spurs were pruned: a short
-        // edge ending on one is thinning residue whatever its width.
-        var demotedIDs = Set<Int>()
 
         var didPrune = true
         while didPrune {
@@ -779,9 +774,48 @@ public enum StrokeTopologyAnalyzer {
                 // real geometry: a 5 mm "A"'s apex, 2 mm above a 2.6 mm
                 // junction and 1.6 mm wide at the top, was pruned as noise
                 // and the letter sewn as a bare V.
-                let tapersToNothing = endpoint.widthMM <= parameters.spurTipWidthFraction * junction.widthMM || demotedIDs.contains(endpoint.id)
-                if length < threshold * parameters.spurAlwaysPruneFraction { return true }
-                if length < threshold, tapersToNothing { return true }
+                // (A stub left on a demoted junction is under the always-prune
+                // fraction; treating any edge on one as noise cascaded through
+                // a slab-serif H -- each pruned serif demoted a node, the stem
+                // half ending there went next -- until only the crossbar was
+                // left.)
+                // A spur that stays wide at its end is real geometry -- an
+                // A's apex (1.6 mm at the tip on a 2.6 mm junction), a slab
+                // serif (3.2 mm on 8) -- and pruning it takes a stroke's
+                // worth of cover with it: a slab-serif E lost both its arms
+                // to a stem-width 8 mm junction and sewed as a bar.
+                // Thinning's bumps at a T's corners are half a stroke wide
+                // and a quarter long; a slab serif is 0.4 of the stem at
+                // its end and half a stem long. The tip width separates
+                // them at every length: a spur that keeps more than
+                // `spurTipWidthFraction` of the junction's width at its end
+                // is real geometry and stays.
+                // Thinning's spurious branches end in a corner, at nothing;
+                // a spur whose end is still a sewable stroke wide (a slab
+                // serif's 3 mm on an 8 mm stem, an E's short middle arm)
+                // is real, however short against its junction.
+                if endpoint.widthMM >= parameters.realStrokeTipWidthMM { return false }
+                let tapersToNothing = endpoint.widthMM <= parameters.spurTipWidthFraction * junction.widthMM
+                // A spur that never leaves the junction's own footprint
+                // (shorter than half its width) is a stub whatever its end
+                // width -- the skeleton's arm into a corner of a rectangle
+                // -- unless it is one of a matched pair: two such arms off
+                // one junction, alike in length and width, are a slab
+                // serif's two halves (an E's arm end, an L's foot), and
+                // pruning them leaves the arm a bare stem.
+                if length < junction.widthMM * 0.5 {
+                    let siblings = edges.indices.filter { $0 != candidate && !edges[$0].isClosedLoop && (edges[$0].startNodeID == junction.id || edges[$0].endNodeID == junction.id) }
+                    let twin = siblings.contains { k in
+                        let other = edges[k]
+                        let otherEndID = other.startNodeID == junction.id ? other.endNodeID : other.startNodeID
+                        guard let otherEnd = nodesByID[otherEndID], !otherEnd.isJunction else { return false }
+                        let l = pathLength(other.polyline)
+                        return abs(l - length) <= max(length, l) * 0.35 && abs(otherEnd.widthMM - endpoint.widthMM) <= max(endpoint.widthMM, otherEnd.widthMM) * 0.35
+                    }
+                    if !twin { return true }
+                }
+                guard tapersToNothing else { return false }
+                if length < threshold { return true }
                 // A serif's wing: a spur not much longer than the stroke
                 // is wide that tapers to (nearly) nothing at its tip. As a
                 // branch it earns a junction and a radial patch at every
@@ -854,7 +888,6 @@ public enum StrokeTopologyAnalyzer {
                 var demoted = node
                 demoted.isJunction = false
                 nodesByID[nodeID] = demoted
-                demotedIDs.insert(nodeID)
                 didPrune = true
             }
             if didPrune { continue }
@@ -872,6 +905,14 @@ public enum StrokeTopologyAnalyzer {
                 guard let a = nodesByID[edge.startNodeID], let b = nodesByID[edge.endNodeID], a.isJunction, b.isJunction else { continue }
                 let width = max(a.widthMM, b.widthMM)
                 guard pathLength(edge.polyline) < width * parameters.junctionMergeDistanceFactor else { continue }
+                // ...and only where the two are joined more than once (the
+                // stem's stub AND the bowl round to the other join): one
+                // junction that thinning split. A lone short edge between
+                // two junctions is a real stroke -- a slab-serif H's
+                // crossbar is shorter than its stems are wide, and merging
+                // its ends made the H an I.
+                let connections = edges.filter { !$0.isClosedLoop && Set([$0.startNodeID, $0.endNodeID]) == Set([a.id, b.id]) }.count
+                guard connections >= 2 else { continue }
                 let keep = a.id, drop = b.id
                 let position = Point2D((a.position.x + b.position.x) / 2, (a.position.y + b.position.y) / 2)
                 nodesByID[keep] = Node(id: keep, position: position, isJunction: true, widthMM: width)

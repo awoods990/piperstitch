@@ -146,8 +146,11 @@ struct StrokeTopologyAnalyzerTests {
     /// `SatinColumnGenerator.canRepresentAsBranchingSatinColumn` treat an
     /// ordinary single connector as "genuinely branching."
     @Test func junctionPrunedDownToOneEdgeIsDemotedNotMislabeled() throws {
+        // A stem whose top flares into two short, tapering points -- the
+        // raster noise the pruning exists for. (A flat-topped T with two
+        // matched square-ended arms is a slab serif and is kept now.)
         let shortArmedTShape = VectorShape(subPaths: [SubPath(points: [
-            Point2D(0, 8), Point2D(0, 11), Point2D(6, 11), Point2D(6, 8),
+            Point2D(0.3, 8.6), Point2D(1.5, 9.2), Point2D(4.5, 9.2), Point2D(5.4, 8.7),
             Point2D(4.5, 8), Point2D(4.5, 0), Point2D(1.5, 0), Point2D(1.5, 8),
         ], closed: true)])
 

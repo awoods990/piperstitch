@@ -46,13 +46,20 @@ public enum PullCompensationCalculator {
         // mm reads as bold, so cap it at 0.30 mm on standard fabric
         // (scaled up with the fabric, never down).
         if stitchType == .satin, objectWidthMM > 0, objectWidthMM < narrowColumnWidthMM {
-            return min(estimate, narrowColumnCapMM * max(1, fabricType.compensationMultiplier))
+            // ...and on the finest columns -- a 4 mm letter's 0.5-0.65 mm
+            // strokes -- no more than a share of the width: 0.30 mm on a
+            // 0.5 mm stroke is a 60 % gain, and every small letter sewed
+            // fat. Digitizers run small lettering at 0.1-0.15 mm.
+            let proportional = max(narrowColumnFloorMM, objectWidthMM * narrowColumnShare)
+            return min(estimate, narrowColumnCapMM * max(1, fabricType.compensationMultiplier), proportional * max(1, fabricType.compensationMultiplier))
         }
         return estimate
     }
 
     private static let narrowColumnWidthMM = 3.0
     private static let narrowColumnCapMM = 0.30
+    private static let narrowColumnShare = 0.3
+    private static let narrowColumnFloorMM = 0.1
 
     /// Push compensation's counterpart to `estimate` above: fabric doesn't
     /// only pull together perpendicular to the stitching direction, it also

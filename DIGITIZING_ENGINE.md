@@ -1513,6 +1513,35 @@ font, on the sheet: the few glyphs whose generated columns a digitizer
 would redraw (Roboto's r and y, the joins in the script faces) -- the
 sheet is what that review is for, and a hand-fixed glyph is a JSON edit.
 
+**Review pass and the lighter cuts (the same evening).** Every face's
+full set rendered at 10 mm and read glyph by glyph. Three engine rules
+came out of it, all in the topology's pruning: a spur that ends at least
+2.5 mm wide is a stroke, never thinning noise (Alfa Slab's E, F, L and T
+had lost every serif and arm to a stem-width junction and sewed as
+bars); two junctions merge only when they are joined more than once
+(the stub-and-bowl of an "a"), since a lone short edge between two
+junctions is a real stroke (a slab H's crossbar is shorter than its
+stems are wide, and merging made the H an I); and a demoted junction's
+stub is no longer pruned for being demoted (that cascaded through the
+H). Ring eligibility ignores parallel edges between the same two
+junctions -- the two halves of the ring round a counter. Twists in one
+arm no longer refuse a whole glyph when building a library (the twisted
+crossings are dropped; live digitizing keeps the strict refusal). All
+2 352 glyphs across 14 faces are columned; the demotion test's fixture
+is now a stem with two tapering points rather than a slab-serif T.
+
+Roboto Medium and Open Sans Semibold join the list for small text: at
+the Text step's 4 mm minimum a bold cut's 0.65 mm strokes and 0.8 mm
+counters close under the thread. `suggestFont` takes the sewn cap
+height and suggests the lighter cut of a family at or under 5.5 mm
+(`SMALL_TEXT_CAP_MM`, `SMALL_TEXT_CUT`); the tiles say "keeps small text
+open". Two sew-time rules for fine columns: pull compensation on a
+column under 3 mm is capped at 30 % of its width (0.30 mm on a 0.5 mm
+stroke was a 60 % gain, and every small letter sewed fat), and a stored
+column ignores `minSatinWidthMM` -- it is satin by definition, only a
+chord under the thread's own minimum is a run (the light cut's 0.9 mm
+chords were sewing as a line down the middle).
+
 ## Sequencing — containment tolerance (the cap "B" vanished at 101.6 mm)
 
 The same cap-logo "B" that drove the seven fixes above came out fine from

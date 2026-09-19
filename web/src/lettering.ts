@@ -10,7 +10,9 @@ import { parse as parseFont, type Font } from "opentype.js";
 import type { Point2D, VectorShape } from "./types";
 
 import roboto from "@fontsource/roboto/files/roboto-latin-700-normal.woff?url";
+import robotoMedium from "@fontsource/roboto/files/roboto-latin-500-normal.woff?url";
 import openSans from "@fontsource/open-sans/files/open-sans-latin-700-normal.woff?url";
+import openSansSemibold from "@fontsource/open-sans/files/open-sans-latin-600-normal.woff?url";
 import montserrat from "@fontsource/montserrat/files/montserrat-latin-700-normal.woff?url";
 import oswald from "@fontsource/oswald/files/oswald-latin-700-normal.woff?url";
 import playfair from "@fontsource/playfair-display/files/playfair-display-latin-700-normal.woff?url";
@@ -30,12 +32,16 @@ export interface LetteringFont {
   thinStrokes?: boolean;
   /** Capitals only -- the face has no distinct lowercase to speak of. */
   capsOnly?: boolean;
+  /** A lighter cut kept for text at the minimum height, where a bold cut's counters close. */
+  forSmallText?: boolean;
 }
 
 /** Bold weights where the family has one -- embroidery wants stroke width. */
 export const LETTERING_FONTS: LetteringFont[] = [
   { id: "roboto", displayName: "Roboto Bold", group: "Sans-serif", url: roboto, width: "normal" },
+  { id: "roboto-medium", displayName: "Roboto Medium", group: "Sans-serif", url: robotoMedium, width: "normal", forSmallText: true },
   { id: "open-sans", displayName: "Open Sans Bold", group: "Sans-serif", url: openSans, width: "normal" },
+  { id: "open-sans-semibold", displayName: "Open Sans Semibold", group: "Sans-serif", url: openSansSemibold, width: "normal", forSmallText: true },
   { id: "montserrat", displayName: "Montserrat Bold", group: "Sans-serif", url: montserrat, width: "wide" },
   { id: "oswald", displayName: "Oswald Bold", group: "Sans-serif", url: oswald, width: "condensed" },
   { id: "anton", displayName: "Anton", group: "Sans-serif", url: anton, width: "condensed" },
@@ -51,17 +57,29 @@ export const LETTERING_FONTS: LetteringFont[] = [
 /** Cap height below which a thin-stroked face sews as a wobbling run rather than satin. */
 export const THIN_STROKE_MIN_CAP_MM = 5;
 
+/** Cap height at or under which a lighter cut keeps the counters open: a
+ *  bold face at 4 mm has 0.65 mm strokes and 0.8 mm counters, and the
+ *  thread closes them. */
+export const SMALL_TEXT_CAP_MM = 5.5;
+
+/** The lighter cut of a face for text at the minimum, when there is one. */
+export const SMALL_TEXT_CUT: Record<string, string> = { "roboto": "roboto-medium", "open-sans": "open-sans-semibold" };
+
 /** The face to start from for a traced line: its weight, case and letter
  *  width say which group of faces will look right; the user sees the crop
  *  beside every candidate and makes the final call. */
-export function suggestFont(line: { inkFraction: number; mixedCase?: boolean; letterAspect?: number }): string {
+export function suggestFont(line: { inkFraction: number; mixedCase?: boolean; letterAspect?: number }, sewnCapHeightMM?: number): string {
   const bold = line.inkFraction >= 0.42;
   const aspect = line.letterAspect ?? 0.7;
   const caps = line.mixedCase === false;
-  if (caps && aspect < 0.6) return bold ? "anton" : "bebas-neue";
-  if (aspect < 0.6) return "oswald";
-  if (caps && bold && aspect > 0.85) return "montserrat";
-  return bold ? "roboto" : "open-sans";
+  let id: string;
+  if (caps && aspect < 0.6) id = bold ? "anton" : "bebas-neue";
+  else if (aspect < 0.6) id = "oswald";
+  else if (caps && bold && aspect > 0.85) id = "montserrat";
+  else id = bold ? "roboto" : "open-sans";
+  // At the minimum height the lighter cut, where the family has one.
+  if (sewnCapHeightMM !== undefined && sewnCapHeightMM <= SMALL_TEXT_CAP_MM && SMALL_TEXT_CUT[id]) id = SMALL_TEXT_CUT[id];
+  return id;
 }
 
 /** The CSS font-family under which `ensureFontFaces` registers each font,
