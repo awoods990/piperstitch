@@ -60,6 +60,34 @@ STRIPE_PRICE_MONTHLY = os.environ.get("STRIPE_PRICE_MONTHLY", "")
 # the app -- three free proofs, then its own monthly subscription.
 STRIPE_PRICE_PROOFS_MONTHLY = os.environ.get("STRIPE_PRICE_PROOFS_MONTHLY", "")
 
+
+def stripe_mode() -> str:
+    """'live', 'test' or '' from the secret key."""
+    if STRIPE_SECRET_KEY.startswith("sk_live_") or STRIPE_SECRET_KEY.startswith("rk_live_"):
+        return "live"
+    if STRIPE_SECRET_KEY.startswith("sk_test_") or STRIPE_SECRET_KEY.startswith("rk_test_"):
+        return "test"
+    return ""
+
+
+def stripe_mode_problems() -> list[str]:
+    """Live keys with test-mode objects (or the reverse) is the classic
+    go-live failure -- Checkout answers "No such price" to the first real
+    customer. Key modes are visible in the key prefixes; a price id is not
+    marked, so this checks the pieces that are and leaves the price check
+    to the Stripe API (`stripe_client.check_prices`)."""
+    problems = []
+    mode = stripe_mode()
+    if not mode and STRIPE_SECRET_KEY:
+        problems.append("STRIPE_SECRET_KEY is neither a live nor a test key")
+    if STRIPE_PUBLISHABLE_KEY and mode:
+        pub_mode = "live" if STRIPE_PUBLISHABLE_KEY.startswith("pk_live_") else "test" if STRIPE_PUBLISHABLE_KEY.startswith("pk_test_") else ""
+        if pub_mode and pub_mode != mode:
+            problems.append(f"STRIPE_PUBLISHABLE_KEY is a {pub_mode} key but STRIPE_SECRET_KEY is {mode}")
+    if STRIPE_SECRET_KEY and not STRIPE_WEBHOOK_SECRET:
+        problems.append("STRIPE_WEBHOOK_SECRET is empty -- subscriptions will never reach the database")
+    return problems
+
 # --- outgoing email (plain SMTP) ---------------------------------------
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = _int("SMTP_PORT", 587)

@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 import httpx
 import stripe
@@ -1800,6 +1800,35 @@ _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 def _version_tuple(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
+
+
+@app.get("/admin/go-live", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def go_live_page(request: Request, message: str = "", error: str = ""):
+    counts = db.customer_data_counts()
+    problems = config.stripe_mode_problems()
+    if config.STRIPE_SECRET_KEY:
+        problems += stripe_client.check_prices()
+    return templates.TemplateResponse(request, "go_live.html", {
+        "counts": counts,
+        "total": sum(counts.values()),
+        "stripe_mode": config.stripe_mode() or "not configured",
+        "problems": problems,
+        "price_monthly": config.STRIPE_PRICE_MONTHLY,
+        "price_proofs": config.STRIPE_PRICE_PROOFS_MONTHLY,
+        "message": message or None,
+        "error": error or None,
+        "active_nav": "go_live",
+    })
+
+
+@app.post("/admin/go-live/reset", dependencies=[Depends(auth.require_admin)])
+def go_live_reset(confirm: str = Form("")):
+    if confirm.strip() != "RESET":
+        return RedirectResponse("/admin/go-live?error=" + quote("Type RESET in the box to confirm."), status_code=303)
+    removed = db.reset_customer_data()
+    total = sum(removed.values())
+    log.warning("Customer data reset by admin: %s rows removed", total)
+    return RedirectResponse("/admin/go-live?message=" + quote(f"Removed {total} rows of test customer data. The database is clean."), status_code=303)
 
 
 @app.get("/admin/updates", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])

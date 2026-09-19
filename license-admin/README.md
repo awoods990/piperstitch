@@ -100,6 +100,42 @@ and put the printed `whsec_…` in `.env`.
 `invoice.paid`, `invoice.payment_failed`. Copy the signing secret into
 `.env` and restart.
 
+### Going live with Stripe
+
+Stripe's test and live modes share nothing. The dashboard's "copy to
+live mode" carries products, prices, coupons and promotion codes across
+but gives every one a **new id**, and it does not copy webhook endpoints.
+In order:
+
+1. **Prices.** Live dashboard → Product catalog → each product → copy its
+   live `price_…` id into `STRIPE_PRICE_MONTHLY` and
+   `STRIPE_PRICE_PROOFS_MONTHLY` on the license-admin service (Railway →
+   service → Variables). Test-mode ids fail with "No such price".
+2. **Keys.** `STRIPE_SECRET_KEY` = `sk_live_…`, `STRIPE_PUBLISHABLE_KEY` =
+   `pk_live_…` (Developers → API keys, live mode toggled on).
+3. **Webhook.** Live dashboard → Developers → Webhooks → Add endpoint →
+   `https://admin.piperstitch.com/webhooks/stripe`, the six events listed
+   above → reveal the signing secret → `STRIPE_WEBHOOK_SECRET`.
+4. **Promotion codes.** Any promotion created here during testing stores
+   test-mode coupon/promotion-code ids. Recreate them on the Promotions
+   page after the key swap (it creates the live objects), or delete them.
+5. **Per-mode settings** worth a glance: Settings → Billing → Customer
+   portal (the app sends people there to manage and cancel), Stripe Tax
+   registration (the prices carry `tax_code`), branding and statement
+   descriptor, payouts.
+6. Redeploy, then open **Admin → Go live**: it checks the key modes agree,
+   the webhook secret is set, and both prices exist in the configured
+   mode -- live against Stripe on every load.
+7. **Clean start.** The same page removes every customer and everything
+   they did (subscriptions, sessions, saved projects, sign-in links, email
+   log, Proofs usage) and keeps configuration: templates and sequences,
+   promoters and promotions, expenses, published updates, the admin login.
+   Type `RESET`. Stripe's sandbox customers are left where they are.
+   Proofs has its own database: from a shell on that service,
+   `python scripts/reset_all_data.py --yes-really`.
+8. Subscribe once with a real card, cancel from the portal, and confirm
+   the webhook's deliveries are green in the live dashboard.
+
 ### Email deliverability
 
 The intended split: **Postmark sends** every transactional email as

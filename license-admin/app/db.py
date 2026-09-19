@@ -597,6 +597,45 @@ def delete_customer(customer_id: int) -> None:
         conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
 
 
+# Tables that hold customers and what they did, as against the shop's own
+# configuration (email templates and sequences, promoters and promotions,
+# expenses, published updates), which a fresh start keeps.
+CUSTOMER_DATA_TABLES = [
+    "web_handoffs", "proofs_uses", "subscription_events", "payments", "checkout_sessions", "devices",
+    "activation_codes", "account_links", "web_sessions", "projects", "web_preferences", "feedback_submissions",
+    "promo_redemptions", "sent_files", "sequence_deliveries", "email_log", "stripe_events", "subscriptions", "customers",
+]
+
+
+def customer_data_counts() -> dict[str, int]:
+    with connection() as conn:
+        return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in CUSTOMER_DATA_TABLES}
+
+
+def reset_customer_data() -> dict[str, int]:
+    """Empties every customer table -- the clean start before going live,
+    after testing against Stripe's sandbox. Configuration stays. Returns
+    what was removed. Stripe is not touched: the test-mode customers and
+    subscriptions live in the sandbox and are simply left behind."""
+    counts = customer_data_counts()
+    with connection() as conn:
+        for table in CUSTOMER_DATA_TABLES:
+            conn.execute(f"DELETE FROM {table}")
+        # Promotions keep their definitions but forget test-mode redemptions
+        # counted on them, if the table tracks a tally.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(promotions)").fetchall()}
+        for col in ("redemption_count", "times_redeemed", "uses"):
+            if col in cols:
+                conn.execute(f"UPDATE promotions SET {col} = 0")
+        try:
+            conn.execute("DELETE FROM sqlite_sequence WHERE name IN (%s)" % ",".join("?" * len(CUSTOMER_DATA_TABLES)), CUSTOMER_DATA_TABLES)
+        except sqlite3.OperationalError:
+            pass  # no AUTOINCREMENT tables
+    with connection() as conn:
+        conn.execute("VACUUM")
+    return counts
+
+
 def record_terms_consent(customer_id: int, version: str) -> None:
     """Stamps acceptance of a Terms version at the moment it happened. The
     admin's customer page shows the pair; a later version overwrites it."""

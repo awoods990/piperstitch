@@ -164,3 +164,23 @@ def charge_fee_cents(invoice: dict) -> Optional[int]:
         return int(bt["fee"]) if bt and bt.get("fee") is not None else None
     except stripe.error.StripeError:
         return None
+
+
+def check_prices() -> list[str]:
+    """Each configured price fetched from Stripe with the configured key:
+    a price created in the other mode comes back "No such price". Returns
+    one line per problem, empty when all is well."""
+    problems = []
+    for name, price_id in (("STRIPE_PRICE_MONTHLY", config.STRIPE_PRICE_MONTHLY), ("STRIPE_PRICE_PROOFS_MONTHLY", config.STRIPE_PRICE_PROOFS_MONTHLY)):
+        if not price_id:
+            problems.append(f"{name} is not set")
+            continue
+        try:
+            price = stripe.Price.retrieve(price_id)
+            if not price.get("active", True):
+                problems.append(f"{name} ({price_id}) is archived in Stripe")
+            if price.get("livemode") is not None and config.stripe_mode() and price["livemode"] != (config.stripe_mode() == "live"):
+                problems.append(f"{name} ({price_id}) belongs to the other Stripe mode")
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{name} ({price_id}): {getattr(e, 'user_message', None) or e}")
+    return problems

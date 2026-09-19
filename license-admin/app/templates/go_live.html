@@ -1,0 +1,45 @@
+{% extends "admin_base.html" %}
+{% block title %}Go live — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <h2>Stripe</h2>
+    <p>This service is talking to Stripe in <strong>{{ stripe_mode }}</strong> mode.</p>
+    <table class="compact">
+      <tr><td class="muted">Core monthly price</td><td><code>{{ price_monthly or "not set" }}</code></td></tr>
+      <tr><td class="muted">Proofs monthly price</td><td><code>{{ price_proofs or "not set" }}</code></td></tr>
+    </table>
+    {% if problems %}
+    <div class="error" style="margin-top:12px">
+      <strong>Not ready:</strong>
+      <ul style="margin:6px 0 0 18px">{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+    </div>
+    {% else %}
+    <p class="success" style="margin-top:12px">Keys, webhook secret and both prices check out for {{ stripe_mode }} mode.</p>
+    {% endif %}
+    <p class="muted" style="margin-top:10px">Checked live against Stripe each time this page loads. After changing variables on Railway, redeploy and reload.</p>
+  </div>
+
+  <div class="card" style="border-color:#e0533a">
+    <h2>Clean start</h2>
+    <p>Removes every customer and everything they did &mdash; <strong>{{ total }}</strong> rows across
+      {{ counts|length }} tables &mdash; so the shop opens with an empty ledger. Keeps your configuration:
+      email templates and sequences, promoters and promotion codes, expenses, published updates, the admin login.</p>
+    <details style="margin:8px 0">
+      <summary class="muted">What goes</summary>
+      <table class="compact" style="margin-top:6px">
+        {% for table, n in counts.items() %}<tr><td class="muted"><code>{{ table }}</code></td><td>{{ n }}</td></tr>{% endfor %}
+      </table>
+    </details>
+    <p class="muted">Stripe is not touched: test-mode customers and subscriptions stay in the sandbox, where they are harmless.
+      Proofs has its own database with its own clean-start page.</p>
+    <form method="post" action="/admin/go-live/reset" onsubmit="return confirm('Remove all {{ total }} rows of customer data? This cannot be undone.');" style="display:flex; gap:10px; align-items:center; margin-top:10px">
+      <input name="confirm" placeholder="Type RESET" autocomplete="off" style="width:140px">
+      <button type="submit" class="danger" {% if total == 0 %}disabled{% endif %}>Remove all customer data</button>
+    </form>
+  </div>
+</main>
+{% endblock %}
