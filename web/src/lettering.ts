@@ -62,7 +62,7 @@ export const THIN_STROKE_MIN_CAP_MM = 5;
  *  thread closes them. */
 export const SMALL_TEXT_CAP_MM = 5.5;
 
-/** The lighter cut of a face for text at the minimum, when there is one. */
+/** The lighter cut of a face, when the family has one. */
 export const SMALL_TEXT_CUT: Record<string, string> = { "roboto": "roboto-medium", "open-sans": "open-sans-semibold" };
 
 /** The face to start from for a traced line: its weight, case and letter
@@ -77,8 +77,10 @@ export function suggestFont(line: { inkFraction: number; mixedCase?: boolean; le
   else if (aspect < 0.6) id = "oswald";
   else if (caps && bold && aspect > 0.85) id = "montserrat";
   else id = bold ? "roboto" : "open-sans";
-  // At the minimum height the lighter cut, where the family has one.
-  if (sewnCapHeightMM !== undefined && sewnCapHeightMM <= SMALL_TEXT_CAP_MM && SMALL_TEXT_CUT[id]) id = SMALL_TEXT_CUT[id];
+  // Small text is a lighter sans whatever the original looked like: at
+  // the minimum height a condensed or bold face closes its counters, and
+  // legibility beats matching the artwork's style.
+  if (sewnCapHeightMM !== undefined && sewnCapHeightMM <= SMALL_TEXT_CAP_MM) return bold ? "roboto-medium" : "open-sans-semibold";
   return id;
 }
 

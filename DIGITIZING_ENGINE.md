@@ -1533,9 +1533,11 @@ is now a stem with two tapering points rather than a slab-serif T.
 Roboto Medium and Open Sans Semibold join the list for small text: at
 the Text step's 4 mm minimum a bold cut's 0.65 mm strokes and 0.8 mm
 counters close under the thread. `suggestFont` takes the sewn cap
-height and suggests the lighter cut of a family at or under 5.5 mm
-(`SMALL_TEXT_CAP_MM`, `SMALL_TEXT_CUT`); the tiles say "keeps small text
-open". Two sew-time rules for fine columns: pull compensation on a
+height and, at or under 5.5 mm (`SMALL_TEXT_CAP_MM`), suggests a lighter
+sans whatever the original looked like -- Roboto Medium for a bold
+line, Open Sans Semibold for a regular one -- since at that size
+legibility beats matching the artwork's style; the tiles say "keeps
+small text open". Two sew-time rules for fine columns: pull compensation on a
 column under 3 mm is capped at 30 % of its width (0.30 mm on a 0.5 mm
 stroke was a 60 % gain, and every small letter sewed fat), and a stored
 column ignores `minSatinWidthMM` -- it is satin by definition, only a
