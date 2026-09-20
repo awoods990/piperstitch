@@ -212,7 +212,7 @@ public enum ImageImporter {
             // neighbours, so the vote alone fills every hole solid. Colour
             // decides those; the vote still handles the genuinely
             // in-between pixels along the edges.
-            let realClusters = clusters.indices.filter { !backgroundRampIndices.contains($0) }
+            let realClustersBefore = clusters.indices.filter { !backgroundRampIndices.contains($0) }
             // A ramp cluster that is itself a shade of a real colour -- much
             // nearer that colour than the background -- IS that colour:
             // its pixels join the nearest real cluster outright. Left
@@ -221,15 +221,42 @@ public enum ImageImporter {
             // are the white page) dissolved into the background, and the
             // ATS sample lost both its lines of text at import.
             var shadeOf: [Int: Int] = [:]
+            // A ramp cluster that is decisively nearer the page than any
+            // real colour would dissolve into the page below, pixel by
+            // pixel. When it is a body of pale colour with an interior of
+            // its own it is a design colour after all, and is kept whole:
+            // the cream breast of the PiperStitch sandpiper (16 % of the
+            // design's pixels) sits on the white-to-navy line in colour,
+            // so the colour rule flagged it, and vanished. A blend is only
+            // ever a line or two of pixels along a border; nearly all of
+            // it is within 2 px of something else, and a real region is
+            // not. A mid-tone between two design colours (the shading of
+            // the Oholi bird's blues) is not decisively the page's and
+            // is still resolved by its neighbours, as before.
+            var bodies = Set<Int>()
+            var bodyPixels = [Bool](repeating: false, count: width * height)
             if let backgroundColor {
                 for c in backgroundRampIndices {
-                    guard let nearest = realClusters.min(by: { RGBColor.deltaE(clusters[c].rgb, clusters[$0].rgb) < RGBColor.deltaE(clusters[c].rgb, clusters[$1].rgb) }) else { continue }
+                    guard let nearest = realClustersBefore.min(by: { RGBColor.deltaE(clusters[c].rgb, clusters[$0].rgb) < RGBColor.deltaE(clusters[c].rgb, clusters[$1].rgb) }) else { continue }
                     let toReal = RGBColor.deltaE(clusters[c].rgb, clusters[nearest].rgb)
                     let toBackground = RGBColor.deltaE(clusters[c].rgb, backgroundColor)
-                    if toReal < shadeOfRealRatio * toBackground { shadeOf[c] = nearest }
+                    if toReal < shadeOfRealRatio * toBackground { shadeOf[c] = nearest; continue }
+                    guard toBackground < decisiveBackgroundRatio * toReal else { continue }
+                    let kept = bodyComponents(of: c, labels: labels, foregroundMask: foregroundMask, width: width, height: height)
+                    if ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil {
+                        print("    ramp cluster \(c): \(kept.components) body component(s), \(kept.pixels.count) px kept of \(clusters[c].pixelCount)")
+                    }
+                    guard !kept.pixels.isEmpty else { continue }
+                    bodies.insert(c)
+                    for i in kept.pixels { bodyPixels[i] = true }
                 }
             }
-            for i in 0..<(width * height) where labels[i] >= 0 && backgroundRampIndices.contains(labels[i]) {
+            // The body's own colour stays out of the resolution of the
+            // other ramp pixels: measured against it, a pale tagline's
+            // blend pixels (Oholi) stopped being decisively the page's and
+            // came back as blue fragments voted in from their neighbours.
+            let realClusters = realClustersBefore
+            for i in 0..<(width * height) where labels[i] >= 0 && backgroundRampIndices.contains(labels[i]) && !bodyPixels[i] {
                 if let real = shadeOf[labels[i]] {
                     labels[i] = real
                     continue
@@ -428,7 +455,9 @@ public enum ImageImporter {
         for (c, candidate) in clusters.enumerated() {
             let lab = candidate.rgb.lab
             let larger = clusters.enumerated().filter { $0.offset != c && candidate.pixelCount < $0.element.pixelCount }
-            if let backgroundColor, larger.contains(where: { liesBetween(lab, backgroundColor.lab, $0.element.rgb.lab) }) {
+            let debug = ProcessInfo.processInfo.environment["DEBUG_IMPORT"] != nil
+            if let backgroundColor, let between = larger.first(where: { liesBetween(lab, backgroundColor.lab, $0.element.rgb.lab) }) {
+                if debug { print("    ramp rule A: cluster \(c) lies between background and cluster \(between.offset)") }
                 suspects.insert(c)
                 continue
             }
@@ -444,6 +473,7 @@ public enum ImageImporter {
                 }
                 let isSpatialFringe = endpoints.contains { endpoint in
                     let fractions = fringeFractions(c, endpoint: endpoint.offset)
+                    if debug { print(String(format: "    ramp rule B: cluster %d vs endpoint %d fringe %.2f endpoint %.2f", c, endpoint.offset, fractions.any, fractions.endpoint)) }
                     return fractions.any >= spatialRampFringeFraction && fractions.endpoint >= spatialRampEndpointFraction
                 }
                 if isSpatialFringe {
@@ -454,6 +484,7 @@ public enum ImageImporter {
             for i in larger.indices {
                 for j in larger.indices where j > i {
                     if liesBetween(lab, larger[i].element.rgb.lab, larger[j].element.rgb.lab) {
+                        if debug { print("    ramp rule C: cluster \(c) lies between clusters \(larger[i].offset) and \(larger[j].offset)") }
                         suspects.insert(c)
                         break
                     }
@@ -472,6 +503,60 @@ public enum ImageImporter {
     /// ...and the share that must sit within 2 px of the design colour the
     /// cluster supposedly blends from.
     private static let spatialRampEndpointFraction = 0.5
+
+    /// See the body-of-colour exemption in `importShapes`: a connected
+    /// piece of a ramp cluster with at least this many pixels more than
+    /// 2 px from any other label is a region of colour, not a fringe.
+    private static let rampBodyMinimumInteriorPixels = 300
+
+    /// The pixels of cluster `c` that belong to a body component (see
+    /// `rampBodyMinimumInteriorPixels`), and how many such components
+    /// there are. A component is 4-connected within the cluster's own
+    /// label; a pixel is interior when no pixel of another label
+    /// (background included) lies within a Chebyshev distance of 2.
+    private static func bodyComponents(of c: Int, labels: [Int], foregroundMask: [Bool], width: Int, height: Int) -> (components: Int, pixels: [Int]) {
+        var interior = [Bool](repeating: false, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width where labels[y * width + x] == c {
+                var touchesOther = false
+                search: for dy in -2...2 {
+                    let ny = y + dy
+                    guard ny >= 0, ny < height else { touchesOther = true; break }
+                    for dx in -2...2 {
+                        let nx = x + dx
+                        guard nx >= 0, nx < width else { touchesOther = true; break search }
+                        let j = ny * width + nx
+                        if !foregroundMask[j] || labels[j] != c { touchesOther = true; break search }
+                    }
+                }
+                interior[y * width + x] = !touchesOther
+            }
+        }
+        var visited = [Bool](repeating: false, count: width * height)
+        var kept: [Int] = []
+        var components = 0
+        for start in 0..<(width * height) where labels[start] == c && !visited[start] {
+            var stack = [start]
+            visited[start] = true
+            var member: [Int] = []
+            var interiorCount = 0
+            while let i = stack.popLast() {
+                member.append(i)
+                if interior[i] { interiorCount += 1 }
+                let x = i % width, y = i / width
+                for (nx, ny) in [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)] {
+                    guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                    let j = ny * width + nx
+                    if !visited[j], labels[j] == c { visited[j] = true; stack.append(j) }
+                }
+            }
+            if interiorCount >= rampBodyMinimumInteriorPixels {
+                components += 1
+                kept.append(contentsOf: member)
+            }
+        }
+        return (components, kept)
+    }
 
     /// A ramp-cluster pixel whose Delta-E to the background is under this
     /// fraction of its Delta-E to the nearest real design colour resolves
