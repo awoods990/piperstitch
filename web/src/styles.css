@@ -57,6 +57,8 @@ button, input, select { font: inherit; color: inherit; }
 .start-brand { text-align: center; max-width: 520px; }
 .start-brand img { border-radius: 14px; }
 .start-brand h1 { font-size: 30px; margin: 10px 0 8px; letter-spacing: -0.01em; }
+.start-brand .start-logo { margin: 0 0 4px; line-height: 0; }
+.start-brand .start-logo img { width: min(360px, 82vw); height: auto; border-radius: 0; }
 .start-brand p { color: var(--muted); margin: 0; font-size: 15px; }
 .dropzone {
   width: min(640px, 100%); min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
@@ -350,6 +352,7 @@ button, input, select { font: inherit; color: inherit; }
   /* --- start screen --- */
   .start { padding: max(56px, env(safe-area-inset-top) + 48px) 16px max(24px, env(safe-area-inset-bottom)); gap: 20px; }
   .start-brand h1 { font-size: 26px; }
+  .start-brand .start-logo img { width: min(300px, 82vw); }
   .start-brand p { font-size: 14px; }
   .dropzone { min-height: 160px; padding: 16px; text-align: center; }
   .drop-title { font-size: 17px; }

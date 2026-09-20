@@ -34,8 +34,7 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
   return (
     <div className="start">
       <div className="start-brand">
-        <img src="/icon.png" alt="" width={64} height={64} />
-        <h1>PiperStitch</h1>
+        <h1 className="start-logo"><img src="/logo.png" alt="PiperStitch" width={900} height={450} /></h1>
         <p>Turn any image into embroidery. Drop in a logo, answer five quick questions, and download a file your machine can sew.</p>
       </div>
       <div
