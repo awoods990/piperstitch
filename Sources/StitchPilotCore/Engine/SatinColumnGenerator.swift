@@ -1266,7 +1266,8 @@ public enum SatinColumnGenerator {
     /// for why a self-loop specifically needs the radial technique
     /// rather than the tangent-walk one every other segment uses.
     private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters,
-                                     buttsAtStart: Bool = false, buttsAtEnd: Bool = false) throws -> (railA: [Point2D], railB: [Point2D]) {
+                                     buttsAtStart: Bool = false, buttsAtEnd: Bool = false,
+                                     mouthReachStart: Double = 0, mouthReachEnd: Double = 0) throws -> (railA: [Point2D], railB: [Point2D]) {
         // A hairline is widened to what the thread can show, not to the
         // classification floor (`minSatinWidthMM` says whether a stroke may
         // be satin at all; 1.0 mm on a 0.65 mm letter stroke is a blot).
@@ -1289,8 +1290,14 @@ public enum SatinColumnGenerator {
             }
             return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth)
         }
+        // A through-stroke's own skeleton bends into the node too (the
+        // serif at the top of the Red Sox "B", where the stem butts up),
+        // and a rail cast straight across the mouth follows that bend
+        // into a twist; both halves at a mouth are cast from the
+        // direction past it.
         return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth,
-                                       straightenStart: buttsAtStart, straightenEnd: buttsAtEnd)
+                                       straightenStart: buttsAtStart || mouthReachStart > 0, straightenEnd: buttsAtEnd || mouthReachEnd > 0,
+                                       mouthReachStart: mouthReachStart, mouthReachEnd: mouthReachEnd)
     }
 
     /// Generates satin stitches for a branching shape by decomposing it
@@ -1569,10 +1576,37 @@ public enum SatinColumnGenerator {
             let key = edgeKey(edge)
             func buttsInto(_ nodeID: Int) -> Bool {
                 guard edge.startNodeID != edge.endNodeID, let through = throughByNodeID[nodeID] else { return false }
-                return !through.contains(key)
+                return !through.keys.contains(key)
+            }
+            // How far from the node this edge's rails run through the
+            // junction's mouth (see `computeSegmentRails`): for a
+            // through-stroke, the widest butting arm's half width and a
+            // little more for its corners; for the butting arm, out to
+            // the through-stroke's edge plus its own half width, where
+            // the through-stroke's edge stops being the nearest boundary.
+            let ownWidths = edge.widthsMM.sorted()
+            let ownWidth = ownWidths.isEmpty ? 0 : ownWidths[ownWidths.count / 2]
+            func mouthReach(_ nodeID: Int) -> Double {
+                guard edge.startNodeID != edge.endNodeID, let through = throughByNodeID[nodeID],
+                      let node = topology.nodes.first(where: { $0.id == nodeID }) else { return 0 }
+                if through.keys.contains(key) {
+                    // The arm's width away from the junction (its lower
+                    // quartile): every arm's samples are inflated at the
+                    // node itself, and a skeleton spur off a ring reads
+                    // 2.5 mm there while it is a 0.2 mm hairline.
+                    let armWidth = topology.edges.filter {
+                        ($0.startNodeID == nodeID || $0.endNodeID == nodeID) && $0.startNodeID != $0.endNodeID && !through.keys.contains(edgeKey($0))
+                    }.map { edge -> Double in
+                        let sorted = edge.widthsMM.sorted()
+                        return sorted.isEmpty ? 0 : sorted[sorted.count / 4]
+                    }.max() ?? 0
+                    return armWidth < 1.0 ? 0 : armWidth * 0.75 + 0.3
+                }
+                return node.widthMM / 2 + ownWidth / 2 + 0.3
             }
             let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons, parameters: parameters,
-                                                  buttsAtStart: buttsInto(edge.startNodeID), buttsAtEnd: buttsInto(edge.endNodeID))
+                                                  buttsAtStart: buttsInto(edge.startNodeID), buttsAtEnd: buttsInto(edge.endNodeID),
+                                                  mouthReachStart: mouthReach(edge.startNodeID), mouthReachEnd: mouthReach(edge.endNodeID))
             guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters),
                   !crossings.expandedA.isEmpty else {
                 // A stub of skeleton too short to carry a single crossing
@@ -1634,8 +1668,8 @@ public enum SatinColumnGenerator {
         // A T (see `throughStrokes`): no patch; the butting arm is cut back
         // to the through-stroke's edge instead.
         var throughByNode: [Int: Set<Int>] = [:]
-        for (nodeID, keys) in throughByNodeID {
-            throughByNode[nodeID] = Set(segments.indices.filter { keys.contains(edgeKey(segments[$0].edge)) })
+        for (nodeID, through) in throughByNodeID {
+            throughByNode[nodeID] = Set(segments.indices.filter { through.keys.contains(edgeKey(segments[$0].edge)) })
         }
         if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil, !throughByNode.isEmpty {
             print("  branching: through-stroke nodes " + throughByNode.keys.sorted().map(String.init).joined(separator: " "))
@@ -1679,9 +1713,15 @@ public enum SatinColumnGenerator {
             if segment.edge.startNodeID != segment.edge.endNodeID {
                 // At a T, the butting arm is cut back to the through-stroke's
                 // edge less an overlap; the through-stroke is left alone.
+                // Where the through pair meets at a bend (a B's bowls at the
+                // waist) the arm runs into the inside of that bend, whose
+                // satin only reaches the node itself: the arm keeps every
+                // crossing to the node, or a bare wedge is left between
+                // its end and the bowls.
                 for (nodeID, atStart) in [(segment.edge.startNodeID, true), (segment.edge.endNodeID, false)] {
                     guard let through = throughByNode[nodeID], let node = nodesByID[nodeID], !through.contains(index) else { continue }
-                    let reach = max(0, node.widthMM / 2 - throughButtOverlapMM)
+                    let cornered = throughByNodeID[nodeID]?.cornered ?? false
+                    let reach = cornered ? 0 : max(0, node.widthMM / 2 - throughButtOverlapMM)
                     if atStart {
                         while lo < hi - 1, node.position.distance(to: midpoint(segment.expandedA[lo], segment.expandedB[lo])) <= reach { lo += 1 }
                     } else {
@@ -1706,6 +1746,11 @@ public enum SatinColumnGenerator {
                 }
             }
             segments[index].kept = lo..<hi
+            if ProcessInfo.processInfo.environment["DEBUG_BRANCHING"] != nil, hi > lo {
+                let a0 = segment.expandedA[lo], b0 = segment.expandedB[lo], a1 = segment.expandedA[hi - 1], b1 = segment.expandedB[hi - 1]
+                print(String(format: "    segment %d->%d kept %d..<%d of %d: first (%.2f,%.2f)-(%.2f,%.2f) last (%.2f,%.2f)-(%.2f,%.2f)",
+                             segment.edge.startNodeID, segment.edge.endNodeID, lo, hi, count, a0.x, a0.y, b0.x, b0.y, a1.x, a1.y, b1.x, b1.y))
+            }
 
             // A self-loop's ring rails (`railsForEdge` routes exactly these
             // to `computeSegmentRingRails`) can't twist by construction --
@@ -1853,9 +1898,15 @@ public enum SatinColumnGenerator {
         junctionArms(nodeID: nodeID, edges: segments.map(\.edge))
     }
 
-    /// An edge's identity across the plan (edges are value types).
+    /// An edge's identity across the plan (edges are value types), the
+    /// same whichever way round the walk sews it: `orderedLegs` flips an
+    /// edge to continue from where the last leg ended, and a key that
+    /// read the direction made the flipped half of a B's stem a butting
+    /// arm at its own waist -- cut back 2 mm short of the node and a bare
+    /// band left across the stem.
     private static func edgeKey(_ edge: StrokeTopologyAnalyzer.Edge) -> String {
-        "\(edge.startNodeID)-\(edge.endNodeID)-\(edge.polyline.count)-\(edge.polyline.first.map { "\($0.x),\($0.y)" } ?? "")"
+        let ends = [edge.polyline.first, edge.polyline.last].map { $0.map { "\($0.x),\($0.y)" } ?? "" }.sorted()
+        return "\(min(edge.startNodeID, edge.endNodeID))-\(max(edge.startNodeID, edge.endNodeID))-\(edge.polyline.count)-\(ends[0])|\(ends[1])"
     }
 
     /// The through-strokes at each junction of the topology: a pair of
@@ -1866,8 +1917,15 @@ public enum SatinColumnGenerator {
     /// little overlap; the crease patch is for real creases (an H's
     /// crossbar, a V). On the LIBBi "B" the patch trimmed the stem 11 mm
     /// each way and chorded across stem and bar together.
-    private static func throughStrokes(in topology: StrokeTopologyAnalyzer.Topology) -> [Int: Set<String>] {
-        var result: [Int: Set<String>] = [:]
+    private struct ThroughStroke {
+        var keys: Set<String>
+        /// The pair meets at a bend (two bowls at a waist) rather than
+        /// running straight through.
+        var cornered: Bool
+    }
+
+    private static func throughStrokes(in topology: StrokeTopologyAnalyzer.Topology) -> [Int: ThroughStroke] {
+        var result: [Int: ThroughStroke] = [:]
         for node in topology.nodes where node.isJunction && node.widthMM > 0 {
             let arms = junctionArms(nodeID: node.id, edges: topology.edges)
             guard arms.count >= 3 else { continue }
@@ -1889,7 +1947,7 @@ public enum SatinColumnGenerator {
                     if best == nil || -dot > best!.2 { best = (arms[i].key, arms[j].key, -dot) }
                 }
             }
-            if let best { result[node.id] = [best.0, best.1] }
+            if let best { result[node.id] = ThroughStroke(keys: [best.0, best.1], cornered: best.2 < throughStrokeCollinearity) }
         }
         return result
     }
@@ -2357,7 +2415,8 @@ public enum SatinColumnGenerator {
     /// as having escaped into an unrelated connected branch rather than
     /// trusted as this segment's own boundary.
     private static func computeSegmentRails(polyline rawPolyline: [Point2D], widthsMM: [Double], shapePolygons: [[Point2D]], minimumWidthMM: Double = 0,
-                                            straightenStart: Bool = false, straightenEnd: Bool = false) throws -> (railA: [Point2D], railB: [Point2D]) {
+                                            straightenStart: Bool = false, straightenEnd: Bool = false,
+                                            mouthReachStart: Double = 0, mouthReachEnd: Double = 0) throws -> (railA: [Point2D], railB: [Point2D]) {
         guard rawPolyline.count >= 2, rawPolyline.count == widthsMM.count else {
             throw SatinGenerationError.shapeNotSuitable("a branch segment needs at least two centerline points")
         }
@@ -2394,6 +2453,79 @@ public enum SatinColumnGenerator {
             return d.length > 1e-9 ? d : nil
         }
         let startDirection = straightenStart ? directionPast(atStart: true) : nil, endDirection = straightenEnd ? directionPast(atStart: false) : nil
+        // The straightened direction holds over the reach, then blends
+        // back into the skeleton's own tangent over as far again (or the
+        // mouth, if wider): a hard switch put a step in the perpendicular
+        // right where a rail cast straight across a mouth depends on it,
+        // and the crossings there twisted (the Red Sox "B"'s top serif).
+        func straightenedTangent(_ natural: Point2D, at i: Int) -> Point2D {
+            func blend(_ d: Point2D, distance: Double, reach: Double) -> Point2D {
+                if distance < junctionArmTangentReachMM { return d }
+                let end = max(reach, junctionArmTangentReachMM * 2)
+                guard distance < end, natural.length > 1e-9, d.length > 1e-9 else { return natural }
+                let t = (distance - junctionArmTangentReachMM) / (end - junctionArmTangentReachMM)
+                let mixed = d * ((1 - t) / d.length) + natural * (t / natural.length)
+                return mixed.length > 1e-9 ? mixed : natural
+            }
+            if let d = startDirection { return blend(d, distance: fromStart[i], reach: mouthReachStart) }
+            if let d = endDirection { return blend(d, distance: total - fromStart[i], reach: mouthReachEnd) }
+            return natural
+        }
+        // At a T (the caller says which ends), the mouth of the arm opens
+        // in one side of the through-stroke and the through-stroke's edge
+        // opens in one side of the arm. `nearestBoundaryPoint` finds the
+        // NEAREST boundary on a side, and across a mouth that is the
+        // other stroke's edge, met obliquely: the stem's rail on the bar
+        // side of a "B"'s waist wandered a millimetre or two into the
+        // stem and the crossings there came out short, tilted and
+        // unevenly spaced, leaving a bare wedge at the joint. Within the
+        // mouth's reach from the node (the caller sizes it from the arm
+        // that opens there: a hairline spur off a ring is no mouth at
+        // all) a side's hit counts only when it lies on the perpendicular
+        // and about half a stroke width out; otherwise the rail continues
+        // straight across the mouth at the segment's own half width,
+        // which is where a digitizer's stem edge runs and what the arm's
+        // overlap covers.
+        // The decision is made once per side and per mouth: a side whose
+        // hits are all plausible through the zone keeps them (the outer
+        // edge of a bowl running into the waist), a side with any
+        // implausible hit is cast straight for the whole zone. Deciding
+        // sample by sample let a rail alternate between a hit a
+        // millimetre off the perpendicular and the straight point on it,
+        // and the crossings twisted.
+        func inMouth(_ i: Int) -> (start: Bool, end: Bool) {
+            ((mouthReachStart > 0 && fromStart[i] <= mouthReachStart), (mouthReachEnd > 0 && total - fromStart[i] <= mouthReachEnd))
+        }
+        func plausibleMouthHit(_ hit: Point2D?, at i: Int, perp: Point2D) -> Bool {
+            guard let hit = hit, typicalWidth > 0 else { return false }
+            let dx = hit.x - polyline[i].x, dy = hit.y - polyline[i].y
+            let along = abs(dx * perp.x + dy * perp.y)
+            let lateral = abs(dx * perp.y - dy * perp.x)
+            return lateral <= max(0.3, typicalWidth * 0.15) && along >= typicalWidth * 0.3 && along <= typicalWidth * 0.7
+        }
+        // Which sides to cast straight in each mouth: (A at start, B at start, A at end, B at end).
+        var straightSides = (aStart: false, bStart: false, aEnd: false, bEnd: false)
+        if mouthReachStart > 0 || mouthReachEnd > 0 {
+            for i in 0..<polyline.count {
+                let zone = inMouth(i)
+                guard zone.start || zone.end else { continue }
+                var tangent: Point2D
+                if i == 0 { tangent = polyline[1] - polyline[0] }
+                else if i == polyline.count - 1 { tangent = polyline[i] - polyline[i - 1] }
+                else { tangent = polyline[i + 1] - polyline[i - 1] }
+                tangent = straightenedTangent(tangent, at: i)
+                guard tangent.length > 1e-9 else { continue }
+                let perp = Point2D(-tangent.y / tangent.length, tangent.x / tangent.length)
+                let boundedWidth = typicalWidth >= 2.0 ? min(widthsMM[i], typicalWidth * 1.2) : widthsMM[i]
+                let maxDistance = max(boundedWidth, 0.3) * segmentRailWidthToleranceFactor
+                let rawA = nearestBoundaryPoint(from: polyline[i], perp: perp, side: 1, polygons: shapePolygons)
+                let rawB = nearestBoundaryPoint(from: polyline[i], perp: perp, side: -1, polygons: shapePolygons)
+                let okA = plausibleMouthHit(rawA.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }, at: i, perp: perp)
+                let okB = plausibleMouthHit(rawB.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }, at: i, perp: perp)
+                if zone.start { straightSides.aStart = straightSides.aStart || !okA; straightSides.bStart = straightSides.bStart || !okB }
+                if zone.end { straightSides.aEnd = straightSides.aEnd || !okA; straightSides.bEnd = straightSides.bEnd || !okB }
+            }
+        }
         for i in 0..<polyline.count {
             var tangent: Point2D
             if i == 0 {
@@ -2403,8 +2535,7 @@ public enum SatinColumnGenerator {
             } else {
                 tangent = polyline[i + 1] - polyline[i - 1]
             }
-            if fromStart[i] < junctionArmTangentReachMM, let d = startDirection { tangent = d }
-            else if total - fromStart[i] < junctionArmTangentReachMM, let d = endDirection { tangent = d }
+            tangent = straightenedTangent(tangent, at: i)
             let tangentLength = tangent.length
             guard tangentLength > 1e-9 else { continue }
             let perp = Point2D(-tangent.y / tangentLength, tangent.x / tangentLength)
@@ -2454,8 +2585,18 @@ public enum SatinColumnGenerator {
             let maxDistance = max(boundedWidth, 0.3) * segmentRailWidthToleranceFactor
             let rawA = nearestBoundaryPoint(from: polyline[i], perp: perp, side: 1, polygons: shapePolygons)
             let rawB = nearestBoundaryPoint(from: polyline[i], perp: perp, side: -1, polygons: shapePolygons)
-            let validA = rawA.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }
-            let validB = rawB.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }
+            var validA = rawA.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }
+            var validB = rawB.flatMap { polyline[i].distance(to: $0) <= maxDistance ? $0 : nil }
+            do {
+                let zone = inMouth(i)
+                let half = typicalWidth / 2
+                if (zone.start && straightSides.aStart) || (zone.end && straightSides.aEnd) {
+                    validA = Point2D(polyline[i].x + perp.x * half, polyline[i].y + perp.y * half)
+                }
+                if (zone.start && straightSides.bStart) || (zone.end && straightSides.bEnd) {
+                    validB = Point2D(polyline[i].x - perp.x * half, polyline[i].y - perp.y * half)
+                }
+            }
 
             switch (validA, validB) {
             case let (a?, b?):

@@ -2435,3 +2435,70 @@ as a spur node); LIBBi Logo thread 9189 to 9366 mm and LIBBi New Logo
 other corpus file within a few stitches; the 14 glyph libraries rebuilt.
 `DEBUG_CORNERS=1` prints every insertion with the stroke width, step,
 detour and position.
+
+## T-junctions, second pass: the joint is covered (September 2026)
+
+With the corners square, the LIBBi "B"'s joints still showed bare
+wedges: a band across the stem at the waist with only underlay in it,
+and a gap between the bar's end and the bowls. Three separate causes,
+all in the branching generator.
+
+**The flipped half.** `orderedLegs` flips an edge to continue from
+where the last leg ended, and an edge's key (`edgeKey`) read its
+direction, so the stem's lower half, walked upward, no longer matched
+the through-stroke's key at its own waist and was treated as a butting
+arm: cut back 2 mm short of the node and its rails straightened. The
+key is now the same whichever way round the edge is sewn.
+
+**Rails across a mouth.** A segment's rails are the nearest boundary
+on each side of the skeleton, and across the mouth of an arm that is
+the other stroke's edge met obliquely -- the stem's rail on the bar
+side wandered a millimetre or two into the stem, the crossings there
+came out short, tilted and unevenly spaced, and a wedge went bare. On a
+stroke that passes through a T the caller now names the mouth's reach
+from the node (the butting arm's lower-quartile width, three quarters
+of it plus 0.3 mm -- a hairline spur off a ring is no mouth); on the
+butting arm the reach runs to the through-stroke's edge plus the arm's
+own half width, where that edge stops being the nearest boundary.
+Within the reach a side's hit counts only when it lies on the
+perpendicular and about half a stroke width out; a side with any
+implausible hit is cast straight for the whole zone at the segment's
+own half width (decided once per side -- deciding sample by sample let
+a rail alternate between a hit a millimetre off the perpendicular and
+the straight point, and twisted). The arm's straightened direction now
+blends back into the skeleton's tangent over the mouth rather than
+switching at 2.5 mm; the switch put a step in the perpendicular that
+the straight rails inherited, and both halves at a mouth are cast from
+the direction past it, the through-stroke's included -- a through
+half's own skeleton bends into the node too (the Red Sox "B"'s top
+serif twisted on both counts).
+
+**A cornered through pair.** Where the through pair meets at a bend
+(the bowls at the waist) the arm runs into the inside of that bend,
+whose satin only reaches the node itself; the arm keeps every crossing
+to the node instead of being cut back.
+
+Results: all four LIBBi B's have continuous stems, square full-width
+bars and covered joints; the Oholi H's crossbar ends square; every
+other corpus file within a few stitches; the 14 glyph libraries
+rebuilt. `DEBUG_BRANCHING=1` now also prints each segment's kept
+crossing range with its first and last crossing.
+
+## Import: a pale body of colour is not a fringe (September 2026)
+
+The PiperStitch logo's sandpiper lost its cream breast and belly at
+import -- 16 % of the design's pixels, the largest light region in it.
+The colour sat on the white-to-navy line, so the anti-aliasing-ramp
+rule flagged the cluster, and its pixels were nearer the page than any
+design colour, so pixel by pixel they were resolved to background. A
+blend between two colours is only ever a line or two of pixels along
+their border; a region has an interior. A flagged cluster that is
+decisively the page's colour (not a shade of a design colour, which
+still joins that colour) now keeps every connected piece of itself
+with at least 300 pixels more than 2 px from any other label; the rest
+of its pixels go through the ramp resolution as before, and the body's
+colour is kept out of that resolution for the other ramp clusters
+(measured against it, the Oholi tagline's pale blend pixels stopped
+being decisively the page's and came back as fragments). The Oholi
+bird gains its pale underside, which the artwork has; nothing else in
+the corpus changes. `DEBUG_IMPORT=1` prints each body decision.
