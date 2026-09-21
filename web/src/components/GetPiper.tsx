@@ -7,7 +7,7 @@ import { bob, place, POSE, settle, easeOut } from "../piperRig";
 import { downloadShortcut, installState, isInstalled, isMac, onInstallChange, promptInstall, type InstallState } from "../install";
 
 /** Piper at rest: breathing, blinking, and every few seconds a small hop
- *  and a wave with the far wing -- enough life to read as "him", not a
+ *  and a wave with the far wing -- enough life to read as Piper, not a
  *  picture, without being busy. */
 export function PiperIdle({ size = 120 }: { size?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);

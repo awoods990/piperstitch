@@ -1,7 +1,7 @@
 // Piper, drawn live -- a TypeScript port of the character rig
 // (PiperStitch General Files/Piper Character Rig/piper-rig.html), the same
 // geometry, palette and poses as the promo films and the marketing site's
-// helper (website/piper.js). Used wherever the app shows him moving.
+// helper (website/piper.js). Used wherever the app shows it moving.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface PiperPose { wing?: number; wing2?: number | null; span?: number; head?: number; eye?: string; brow?: number; beak?: number; tail?: number; hop?: number; blink?: number; smile?: number; sx?: number; sy?: number; tilt?: number; flip?: boolean; }
 /* ── the rig (ported from piper-rig.html) ─────────────────────────── */
@@ -72,7 +72,7 @@ export function drawPiper(x: any, o: PiperPose) {
   if (p.smile > .02) line(x, [[hx + 2, hy + 16], [hx + 14, hy + 20 + p.smile * 3]], C.rustD, 2.6);
   x.restore();
 }
-/* Piper with his feet at (fx, fy), h tall, with squash, tilt and facing. */
+/* Piper with its feet at (fx, fy), h tall, with squash, tilt and facing. */
 export function place(x: any, fx: number, fy: number, h: number, o: PiperPose) {
   let s = h / BH;
   x.save(); x.translate(fx, fy - h * (FOOT - .5));      // the bird's centre; feet are h*(FOOT-.5) below it

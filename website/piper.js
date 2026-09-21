@@ -1,18 +1,18 @@
 /* Piper, the busy helper. The PiperStitch sandpiper turns up around the
    marketing pages -- looks at a heading, points at a button, cheers at the
-   end -- and leaves. He is drawn from the character rig (PiperStitch General
+   end -- and leaves. It is drawn from the character rig (PiperStitch General
    Files/Piper Character Rig/piper-rig.html: the same geometry, palette and
    poses as the promo films), so this is ~10 KB of JavaScript, crisp at any
    size, no video and no sprite sheet.
 
    House rules, all enforced here:
-   - He reacts to what the visitor does (a section scrolling into view, a
+   - It reacts to what the visitor does (a section scrolling into view, a
      hover on the trial button, reaching the end of the page); never a timer.
    - Each moment plays once per session; at most four appearances per page
-     view; never two at once; never over text -- he sits in the margin next
+     view; never two at once; never over text -- it sits in the margin next
      to the thing he is reacting to. Phones get only the finale.
-   - No sound, no words. Reduced-motion turns him off entirely.
-   - localStorage "piperOff" = "1" turns him off for anyone who asks. */
+   - No sound, no words. Reduced-motion turns it off entirely.
+   - localStorage "piperOff" = "1" turns it off for anyone who asks. */
 (function () {
   "use strict";
   var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches, off = false;
@@ -86,7 +86,7 @@
     if (p.smile > .02) line(x, [[hx + 2, hy + 16], [hx + 14, hy + 20 + p.smile * 3]], C.rustD, 2.6);
     x.restore();
   }
-  /* Piper with his feet at (fx, fy), h tall, with squash, tilt and facing. */
+  /* Piper with its feet at (fx, fy), h tall, with squash, tilt and facing. */
   function place(x, fx, fy, h, o) {
     var s = h / BH;
     x.save(); x.translate(fx, fy - h * (FOOT - .5));      // the bird's centre; feet are h*(FOOT-.5) below it
@@ -168,7 +168,7 @@
   }
   var mobile = function () { return innerWidth < 640; };
 
-  /* Where he stands. `side`: "right" of the anchor (in the margin), "above"
+  /* Where it stands. `side`: "right" of the anchor (in the margin), "above"
      (on the band, centred), or "band" (bottom edge of a full-width band). */
   function spotFor(anchor, side, h) {
     var r = anchor.getBoundingClientRect(), sy = scrollY, sx = scrollX;
@@ -235,7 +235,7 @@
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
-    // He leaves early if the visitor scrolls him out of view.
+    // It leaves early if the visitor scrolls it out of view.
     var onScroll = function () { var r = cv.getBoundingClientRect(); if (r.bottom < -40 || r.top > innerHeight + 40) { done(); removeEventListener("scroll", onScroll); } };
     addEventListener("scroll", onScroll, { passive: true });
     return { leave: function () { hold = Math.min(hold, Math.max(900, performance.now() - start)); } };
@@ -252,7 +252,7 @@
   var moments = [];
   function when(el, key, spec) { if (!el) return; spec.anchor = el; spec.key = key; moments.push(spec); }
 
-  // A heading he reacts to as it scrolls in: proofs -> curious, results ->
+  // A heading it reacts to as the heading scrolls in: proofs -> curious, results ->
   // proud, pricing -> think, steps/formats -> point. Desktop only.
   if (!mobile()) {
     when(headingWith(["send a proof", "doesn't stall", "doesn’t stall", "go ahead"]), "proof", { pose: "curious", side: "right", enter: "walk", hold: 5200 });
@@ -260,12 +260,12 @@
     when(headingWith(["a month", "no surprises", "three proofs on us"]), "price", { pose: "think", side: "right", enter: "walk", hold: 4800 });
     when(headingWith(["six steps", "speaks your machine", "three steps", "every embroidery design"]), "steps", { pose: "point", side: "right", enter: "walk", hold: 4200 });
   }
-  // The finale: the closing call-to-action band on every page. He drops
+  // The finale: the closing call-to-action band on every page. It drops
   // onto the band and does the leap-and-360 with confetti, once.
   var band = firstMatch([".cta-band .cta-row", ".cta-band h2", "main > section:last-of-type h2"]);
   when(band, "finale", { pose: "cheer", side: mobile() ? "above" : "band", enter: "drop", hold: 3400, h: mobile() ? 84 : 132 });
 
-  // A heading has to stay in view for a moment before he reacts -- scrolling
+  // A heading has to stay in view for a moment before it reacts -- scrolling
   // straight past it is not "reading it", and smooth scrolling keeps the
   // page moving for a while after a jump.
   var pending = {};
