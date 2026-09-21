@@ -10,6 +10,7 @@
 // can be skipped, and Settings can change any of it or run this again.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import GetPiper from "./GetPiper";
 import { api } from "../api";
 import type { AccountState, Catalog, ColorPresetId, FabricType, ThreadColor } from "../types";
 import type { Preferences, Units } from "../prefs";
@@ -463,6 +464,7 @@ export default function Onboarding(props: Props) {
                 <p className="setup-sub">PiperStitch{products.includes("proofs") ? " and Proofs are" : " is"} set up for {draft.business.name || "your business"}. Drop in your first logo and it'll be stitch-ready in under a minute.</p>
                 <p className="hint">Everything you chose lives under <b>Settings</b>; the guide is under <b>Help</b>.</p>
               </div>
+              <GetPiper compact />
             </div>
           )}
           {error && <div className="error-text">{error}</div>}

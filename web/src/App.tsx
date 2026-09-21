@@ -18,6 +18,8 @@ import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, OpenProject
 import type { Tool } from "./components/StitchCanvas";
 import { loadPrefs, savePrefs, withDefaults, type Preferences } from "./prefs";
 import Onboarding from "./components/Onboarding";
+import GetPiper from "./components/GetPiper";
+import { setUpInstall } from "./install";
 import { setDisplayUnits } from "./format";
 import { selectionBounds, transformObject } from "./geometry";
 import { CandidateNotice } from "./components/CandidateNotice";
@@ -39,7 +41,7 @@ interface Imported {
 }
 
 type Phase = "start" | "candidate" | "setup" | "editor" | "onboarding";
-type Sheet = "help" | "settings" | "settingsBusiness" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | null;
+type Sheet = "help" | "settings" | "settingsBusiness" | "lettering" | "mergeColors" | "threadLibrary" | "feedback" | "send" | "open" | "getPiper" | null;
 interface Snapshot { document: StitchDocument; selectedIDs: string[] }
 interface PendingPaint { targetID: string; targetName: string; points: Point2D[]; radiusMM: number }
 
@@ -117,6 +119,13 @@ export default function App() {
     // (?project=, ?return=) stay for their own handlers.
     // ?setup=1 opens guided setup directly (a link from the welcome email
     // or the marketing site, and how support tells someone to re-run it).
+    setUpInstall();
+    // ?install=1: the marketing site's "Get Piper" button lands here.
+    if (params.get("install") !== null) {
+      params.delete("install");
+      window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
+      setSheet("getPiper");
+    }
     if (params.get("setup") !== null) {
       params.delete("setup");
       window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params}` : ""));
@@ -682,6 +691,7 @@ export default function App() {
   const sheets = (
     <>
       {sheet === "help" && <HelpSheet onClose={() => setSheet(null)} showProofs={!!me.account?.proofs} />}
+      {sheet === "getPiper" && <Modal title="Get Piper" onClose={() => setSheet(null)}><GetPiper /></Modal>}
       {(sheet === "settings" || sheet === "settingsBusiness") && <SettingsSheet catalog={catalog} prefs={prefs} account={me.account ?? null} onPrefs={setPrefs} onClose={() => setSheet(null)} onSignOut={onSignOut} onRefreshAccount={refreshMe} onAccount={(a) => setMe({ ...me, account: a })} initialTab={sheet === "settingsBusiness" ? "business" : undefined}
         onRunSetup={me.authEnabled && phase === "start" ? () => { setSheet(null); setRerunOnboarding("settings"); } : undefined} />}
       {sheet === "send" && document && <SendSheet designName={document.name} onClose={() => setSheet(null)} onSend={async (format, toEmail, message) => { await api.sendFile(document, format, toEmail, message); setStatus(`Sent ${document.name}.${format} to ${toEmail}.`); }} />}
@@ -767,7 +777,7 @@ export default function App() {
     <>
       {error && <div className="error-bar floating">{error}</div>}
       {notice && <div className="notice-bar floating" onClick={() => setNotice(null)}>{notice}</div>}
-      <div className="start-account">{accountMenu}<button className="btn ghost" onClick={() => setSheet("settings")}>⚙ Settings</button><button className="btn ghost" onClick={() => setSheet("help")}>? Help</button></div>
+      <div className="start-account">{accountMenu}<button className="btn ghost" onClick={() => setSheet("settings")}>⚙ Settings</button><button className="btn ghost" onClick={() => setSheet("help")}>? Help</button><button className="btn ghost" onClick={() => setSheet("getPiper")} title="Put PiperStitch on your Dock, taskbar or home screen">Get Piper</button></div>
       <DropZone onFile={onFile} busy={busy} projects={me.authEnabled ? projects : null} onOpenProject={onOpenProject} onDeleteProject={onDeleteProject}
         showTips={!!prefs.onboarding?.skippedAt && !prefs.startTipsDismissed} onDismissTips={() => setPrefs({ ...prefs, startTipsDismissed: true })} onOpenHelp={() => setSheet("help")} />
       {sheets}

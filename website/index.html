@@ -22,7 +22,7 @@
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/piperstitch-mark-32.png">
 <link rel="apple-touch-icon" href="assets/piperstitch-icon-180.png">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
 
@@ -395,6 +395,27 @@
 </section>
 
 
+<section class="bg-white" id="get-piper">
+  <div class="wrap get-piper">
+    <canvas class="get-piper-bird" id="getPiperBird" aria-hidden="true"></canvas>
+    <div class="get-piper-text">
+      <p class="eyebrow">Get Piper</p>
+      <h2>Piper on your Dock. PiperStitch one click away.</h2>
+      <p class="lede">PiperStitch installs like an app: an icon in your Dock, taskbar or home screen that opens it in its own window &mdash; no browser tabs to hunt through, always the latest version, nothing to update.</p>
+      <ol class="get-piper-steps">
+        <li><b>Chrome, Edge or Android:</b> open PiperStitch and click <b>Install</b> when it offers (or the install icon at the end of the address bar).</li>
+        <li><b>Safari on a Mac:</b> open PiperStitch, then <b>File &rarr; Add to Dock&hellip;</b></li>
+        <li><b>iPhone or iPad:</b> open PiperStitch in Safari, tap <b>Share</b>, then <b>Add to Home Screen</b>.</li>
+      </ol>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://app.piperstitch.com/?install=1">Get Piper</a>
+        <button class="btn btn-secondary" type="button" id="getPiperShortcut">Download a desktop shortcut</button>
+      </div>
+      <p class="get-piper-note">The shortcut is a tiny file you can keep on your desktop; double-click it to open PiperStitch. It uses a generic icon &mdash; the install route above gives you Piper himself.</p>
+    </div>
+  </div>
+</section>
+
 </main>
 <footer class="site-footer">
   <div class="wrap">
@@ -407,6 +428,7 @@
         <h4>Product</h4>
         <ul>
           <li><a href="how-it-works.html">How It Works</a></li>
+        <li><a href="index.html#get-piper">Get Piper</a></li>
           <li><a href="proofs.html">Proofs</a></li>
           <li><a href="formats.html">Formats &amp; Machines</a></li>
           <li><a href="technology.html">Under the Hood</a></li>
@@ -439,6 +461,6 @@
   </div>
 </footer>
 <script src="site.js"></script>
-<script src="piper.js?v=1" defer></script>
+<script src="piper.js?v=2" defer></script>
 </body>
 </html>

@@ -1060,3 +1060,12 @@ section { padding: 92px 0; }
 .setup-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-2); }
 .setup-actions .ghost { color: var(--muted); font-size: .92rem; }
 .setup-actions .go { padding: 9px 18px; border-radius: 999px; background: var(--blue-500); color: #fff; font-weight: 650; font-size: .92rem; }
+
+/* ---- Get Piper (index) ---- */
+.get-piper { display: grid; grid-template-columns: 300px 1fr; gap: 28px 40px; align-items: center; padding-top: 64px; padding-bottom: 64px; }
+.get-piper-bird { width: 300px; height: 260px; justify-self: center; }
+.get-piper h2 { margin-top: 6px; }
+.get-piper-steps { margin: 18px 0 22px; padding-left: 20px; color: var(--ink-2); line-height: 1.55; }
+.get-piper-steps li { margin: 6px 0; }
+.get-piper-note { font-size: .92rem; color: var(--muted); margin: 14px 0 0; max-width: 60ch; }
+@media (max-width: 760px) { .get-piper { grid-template-columns: 1fr; text-align: center; } .get-piper-steps { text-align: left; } .get-piper-bird { width: 220px; height: 190px; } }

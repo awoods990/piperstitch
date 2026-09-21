@@ -15,8 +15,8 @@
    - localStorage "piperOff" = "1" turns him off for anyone who asks. */
 (function () {
   "use strict";
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  try { if (localStorage.getItem("piperOff") === "1") return; } catch (e) { /* fine */ }
+  var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches, off = false;
+  try { off = localStorage.getItem("piperOff") === "1"; } catch (e) { /* fine */ }
 
   /* ── the rig (ported from piper-rig.html) ─────────────────────────── */
   var C = { rust: "#AA6334", rustD: "#7E4424", rustL: "#C98954", cream: "#F8F2E7", navy: "#112949",
@@ -114,6 +114,49 @@
       x.fillStyle = c.col; x.fillRect(-c.len / 2, -c.len * .18, c.len, c.len * .36); x.restore();
     });
   }
+
+  /* ── Get Piper: Piper at rest in the section that explains the install ── */
+  var getBird = document.getElementById("getPiperBird");
+  if (getBird) {
+    var gb = getBird.getContext("2d"), gdpr = Math.min(devicePixelRatio || 1, 2);
+    var GW = getBird.clientWidth || 300, GH = getBird.clientHeight || 260, gh = GH * .62;
+    getBird.width = GW * gdpr; getBird.height = GH * gdpr; gb.scale(gdpr, gdpr);
+    var gframe = 0, waveAt = 150;
+    var drawIdle = function () {
+      gb.clearRect(0, 0, GW, GH);
+      var b = bob(gframe), pose = { hop: b.hop, head: b.head, blink: b.blink }, fy = GH * .92, w = gframe - waveAt;
+      if (w >= 0 && w < 70) {            // now and then: a hop and a wave
+        if (w < 8) { var e = easeOut(w / 8); pose.sx = 1 + .2 * e; pose.sy = 1 - .18 * e; }
+        else if (w < 36) { var q = (w - 8) / 28; fy -= Math.sin(q * Math.PI) * gh * .32; pose.wing = 60 + 40 * Math.sin(q * Math.PI * 3); pose.wing2 = 120; pose.eye = "happy"; pose.beak = .4; pose.tail = 18; pose.hop = 1; }
+        else if (w < 50) { var sl = settle((w - 36) / 14); pose.sx = 1 + sl; pose.sy = 1 - sl; pose.eye = "happy"; }
+        if (w === 69) waveAt = gframe + 200 + Math.floor(Math.random() * 200);
+      }
+      place(gb, GW * .5, fy, gh, pose);
+    };
+    drawIdle();
+    if (!reduced) {
+      var idleOn = false, idleRaf = 0;
+      var loop = function () { gframe++; drawIdle(); idleRaf = requestAnimationFrame(loop); };
+      new IntersectionObserver(function (en) {      // only animate while it's on screen
+        var vis = en[0].isIntersecting;
+        if (vis && !idleOn) { idleOn = true; idleRaf = requestAnimationFrame(loop); }
+        if (!vis && idleOn) { idleOn = false; cancelAnimationFrame(idleRaf); }
+      }).observe(getBird);
+    }
+  }
+  var shortcutBtn = document.getElementById("getPiperShortcut");
+  if (shortcutBtn) shortcutBtn.addEventListener("click", function () {
+    var url = "https://app.piperstitch.com/?source=shortcut", win = /Win/.test(navigator.platform);
+    var name = win ? "PiperStitch.url" : "PiperStitch.webloc";
+    var body = win ? "[InternetShortcut]\r\nURL=" + url + "\r\n"
+      : '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>URL</key><string>' + url + "</string></dict></plist>\n";
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([body], { type: win ? "application/internet-shortcut" : "application/xml" }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+  });
+
+  if (reduced || off) return;   // the helper below only runs for people who want motion
 
   /* ── one appearance: a canvas next to an anchor, a small timeline ─── */
   var active = null, shown = 0, MAX_PER_PAGE = 4;

@@ -590,3 +590,15 @@ a.choice { text-decoration: none; }
 .candidate-fix li + li { margin-top: 6px; }
 .candidate-actions { display: flex; gap: 16px; align-items: center; }
 .candidate-actions .link { background: none; border: none; color: var(--label); font: inherit; cursor: pointer; text-decoration: underline; }
+
+/* Get Piper: install / shortcut card */
+.get-piper { display: flex; gap: 16px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); text-align: left; }
+.get-piper.compact { margin-top: 6px; }
+.get-piper .piper-idle { flex: none; }
+.get-piper-text { flex: 1; min-width: 0; }
+.get-piper-text b { display: block; color: var(--navy800, var(--ink)); margin-bottom: 2px; }
+.get-piper-text .hint { margin: 0 0 8px; }
+.get-piper-text .hint.ok { color: var(--readyText, #1b7a3d); margin-top: 8px; }
+.get-piper-steps { margin: 0 0 10px; padding-left: 18px; font-size: 13.5px; color: var(--ink2); }
+.get-piper-steps li { margin: 2px 0; }
+@media (max-width: 600px) { .get-piper { flex-direction: column; align-items: flex-start; } }
