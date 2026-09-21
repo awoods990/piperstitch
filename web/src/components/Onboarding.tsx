@@ -61,6 +61,21 @@ const TITLES: Record<StepId, string> = {
 
 /** Forty pieces of CSS confetti, positions and timing fixed so the screen
  *  renders the same every time; the animation itself runs once. */
+/** The finish: Piper lands, spins and lets off fireworks -- the closing
+ *  shot of the PiperStitch introduction video, cut out with its
+ *  background keyed to transparent (`public/setup-finale.webp`, 40
+ *  frames, plays once). Falls back to the last frame as a still when
+ *  the browser can't animate WebP or the person prefers reduced motion. */
+function FinalePiper() {
+  const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  // A new element each mount so the once-only animation starts from
+  // frame 0 every time the finish screen appears.
+  const [nonce] = useState(() => Date.now());
+  return (
+    <img src={reduced ? "/setup-finale.png" : `/setup-finale.webp?t=${nonce}`} alt="" width={240} height={240} className="done-finale" draggable={false} />
+  );
+}
+
 const CONFETTI = Array.from({ length: 40 }, (_, i) => {
   const r = (n: number) => ((Math.sin(i * 12.9898 + n * 78.233) * 43758.5453) % 1 + 1) % 1;
   const colors = ["#1a6fd1", "#c0722a", "#2f6b41", "#e0b13b", "#a3312a", "#3b8ee6"];
@@ -443,7 +458,7 @@ export default function Onboarding(props: Props) {
                 {CONFETTI.map((c, i) => <span key={i} className="confetti" style={{ left: c.left, animationDelay: c.delay, animationDuration: c.duration, background: c.color, width: c.size, height: c.size * 0.6, transform: `rotate(${c.rotate})` }} />)}
               </div>
               <div className="done-hero tall">
-                <img src="/icon.png" alt="" width={110} height={110} className="done-piper" />
+                <FinalePiper />
                 <h2 className="done-title">Congratulations{account?.name ? `, ${account.name.split(" ")[0]}` : ""} — you're ready to digitize!</h2>
                 <p className="setup-sub">PiperStitch{products.includes("proofs") ? " and Proofs are" : " is"} set up for {draft.business.name || "your business"}. Drop in your first logo and it'll be stitch-ready in under a minute.</p>
                 <p className="hint">Everything you chose lives under <b>Settings</b>; the guide is under <b>Help</b>.</p>
