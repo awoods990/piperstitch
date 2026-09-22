@@ -1330,6 +1330,18 @@ def create_promoter(*, name: str, email: str = "", organization: str = "", defau
         return cur.lastrowid
 
 
+def update_partner_fields(promoter_id: int, **fields) -> None:
+    """The Partner Program's own columns on a promoter (status, tier,
+    bounty window, payout and tax details), whichever are given."""
+    allowed = {"status", "tier", "bounty_window_start", "bounty_window_end", "bounty_reinstated_at", "payout_method", "payout_email",
+               "tax_form_type", "tax_form_received_at", "platforms", "application", "portal_token_hash", "applied_at", "approved_at"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    with connection() as conn:
+        conn.execute("UPDATE promoters SET " + ", ".join(f"{k} = ?" for k in sets) + ", updated_at = ? WHERE id = ?", (*sets.values(), _now(), promoter_id))
+
+
 def update_promoter(promoter_id: int, *, name: str, email: str, organization: str, default_share_pct: float, notes: str, active: bool) -> None:
     with connection() as conn:
         conn.execute(

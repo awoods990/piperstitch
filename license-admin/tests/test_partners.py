@@ -322,3 +322,20 @@ def test_payable_waits_60_days_and_the_same_invoice_event_pays_once(isolated_db,
     def bad(payload, sig): raise stripe_lib.error.SignatureVerificationError("bad", sig)
     main_mod.stripe_client.construct_webhook_event = bad
     assert client.post("/webhooks/stripe", content=b"{}", headers={"stripe-signature": "x"}).status_code == 400
+
+
+def test_admin_can_set_partner_details_and_approval_opens_the_window(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        pid = db.create_promoter(name="New Partner", email="np@example.com", default_share_pct=30)
+        r = client.post(f"/admin/promoters/{pid}/partner", data={"status": "active", "tier": "founding", "payout_method": "paypal", "payout_email": "pay@example.com", "tax_form_type": "w9", "tax_form_received_at": "2026-09-01"}, follow_redirects=False)
+        assert r.status_code == 303, r.text
+        p = db.get_promoter(pid)
+        assert p["status"] == "active" and p["tier"] == "founding" and p["approved_at"] and p["bounty_window_start"] and p["payout_email"] == "pay@example.com"
+        start = datetime.fromisoformat(p["bounty_window_start"]).date(); end = datetime.fromisoformat(p["bounty_window_end"]).date()
+        assert (end - start).days == 120
+        # 'established' can't be stored as a tier.
+        r = client.post(f"/admin/promoters/{pid}/partner", data={"status": "active", "tier": "established"}, follow_redirects=False)
+        assert "earned" in r.headers["location"]

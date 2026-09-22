@@ -1581,6 +1581,39 @@ def admin_update_promoter(promoter_id: int, name: str = Form(...), email: str = 
     return _promoter_redirect(promoter_id, message="Promoter updated.")
 
 
+@app.post("/admin/promoters/{promoter_id}/partner", dependencies=[Depends(auth.require_admin)])
+def admin_update_partner(promoter_id: int, status: str = Form("active"), tier: str = Form(""), bounty_window_start: str = Form(""), bounty_window_end: str = Form(""),
+                         payout_method: str = Form("paypal"), payout_email: str = Form(""), tax_form_type: str = Form(""), tax_form_received_at: str = Form("")):
+    """The Partner Program fields (spec §4, §8): lifecycle, tier, bounty
+    window, payout and tax details. Tier only ever holds founding or
+    standard -- 'Established' is derived from bounty_reinstated_at."""
+    p = db.get_promoter(promoter_id)
+    if p is None:
+        return _promotions_redirect(error="That promoter doesn't exist.")
+    if status not in ("applied", "approved", "active", "suspended", "closed"):
+        return _promoter_redirect(promoter_id, error="Status must be applied, approved, active, suspended or closed.")
+    if tier not in ("", "founding", "standard"):
+        return _promoter_redirect(promoter_id, error="Tier is founding or standard (Established is earned, not set).")
+    for label, value in (("Bounty window start", bounty_window_start), ("Bounty window end", bounty_window_end), ("Tax form received", tax_form_received_at)):
+        if value.strip():
+            try:
+                datetime.fromisoformat(value.strip())
+            except ValueError:
+                return _promoter_redirect(promoter_id, error=f"{label} must look like 2026-12-31.")
+    fields = dict(status=status, tier=tier, bounty_window_start=bounty_window_start.strip() or None, bounty_window_end=bounty_window_end.strip() or None,
+                  payout_method=payout_method.strip() or "paypal", payout_email=payout_email.strip().lower(),
+                  tax_form_type=tax_form_type.strip(), tax_form_received_at=tax_form_received_at.strip() or None)
+    if status in ("approved", "active") and not p["approved_at"]:
+        fields["approved_at"] = db.now_iso()
+        # Per-partner bounty window: 120 days from approval unless set by hand (§4.1).
+        if not fields["bounty_window_start"]:
+            start = datetime.now(timezone.utc).date()
+            fields["bounty_window_start"] = start.isoformat()
+            fields["bounty_window_end"] = (start + timedelta(days=120)).isoformat()
+    db.update_partner_fields(promoter_id, **fields)
+    return _promoter_redirect(promoter_id, message="Partner details updated.")
+
+
 @app.post("/admin/promoters/{promoter_id}/payments", dependencies=[Depends(auth.require_admin)])
 def admin_record_promoter_payment(promoter_id: int, amount: str = Form(...), paid_at: str = Form(""), note: str = Form("")):
     if db.get_promoter(promoter_id) is None:

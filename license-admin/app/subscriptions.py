@@ -204,7 +204,7 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
                 promotions.on_subscription_ended(customer_id, at=_aware(ended_at) or _utcnow(), stripe_event_id=stripe_event_id or "")
             else:
                 promotions.recheck_reinstatement((db.redemption_for_customer(customer_id) or {"promoter_id": None})["promoter_id"])
-                _try_sequences(emails.place_in_proofs_sequence, customer_id)
+            _try_sequences(emails.place_in_proofs_sequence, customer_id)
         now_cancelling = bool(sub.get("cancel_at_period_end"))
         if now_cancelling != bool(previous["cancel_at_period_end"]):
             if now_cancelling:
