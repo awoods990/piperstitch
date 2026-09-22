@@ -1491,9 +1491,14 @@ def admin_emails(request: Request, message: str = "", error: str = ""):
     sequences = []
     for seq in db.list_sequences():
         sequences.append({"row": seq, "steps": db.list_sequence_steps(seq["id"])})
+    all_templates = db.list_email_templates()
+    by_key = {t["key"]: t for t in all_templates}
+    outreach_keys = [s["key"] for s in partners.OUTREACH_STEPS]
     return templates.TemplateResponse(request, "emails.html", {
         "active_nav": "emails",
-        "system_templates": db.list_email_templates(),
+        "customer_templates": [t for t in all_templates if not t["key"].startswith("partner_")],
+        "partner_templates": [t for t in all_templates if t["key"].startswith("partner_") and t["key"] not in outreach_keys],
+        "outreach_series": [dict(step, template=by_key[step["key"]]) for step in partners.OUTREACH_STEPS if step["key"] in by_key],
         "sequences": sequences,
         "stats": {s["key"]: s for s in db.sequence_stats()},
         "message": message or None, "error": error or None,

@@ -3,6 +3,7 @@ partner code delivers at trial start, and the rules around who may be
 attributed. Stripe is mocked; time is driven through the cookie's own
 timestamp."""
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -592,6 +593,28 @@ def test_content_log_and_alerts(isolated_db, test_keypair, fake_smtp, admin_pass
 # ------------------------------------------- the program details gate ---
 
 
+def test_a_recruits_link_opens_the_details_and_the_form_with_nothing_to_fill_in(isolated_db, test_keypair, fake_smtp):
+    """What we email a recruit must land them inside, not at the gate."""
+    from app import partners
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    body = _body(fake_smtp.sent[-1])
+    program_link = body.split("/partners/program?k=")[1].split()[0]
+    with TestClient(app) as guest:
+        r = guest.get(f"/partners/program?k={program_link}", follow_redirects=True)
+        assert "30% of every invoice" in r.text and "Show me the details" not in r.text
+        # The straight-to-the-form link works the same way, and knows them.
+        apply_link = partners.apply_url(prospect_id).split("?k=")[1]
+    with TestClient(app) as guest:
+        r = guest.get(f"/partners/apply?k={apply_link}")
+        assert "Show me the details" not in r.text and 'value="dev@example.com"' in r.text and 'value="Dev Patel"' in r.text
+    # An old-style token (pipes) still opens, so links already sent keep working.
+    legacy = f"{prospect_id}|{datetime.now(timezone.utc).date().isoformat()}"
+    legacy = f"{legacy}|{partners._program_sign(legacy)}"
+    with TestClient(app) as guest:
+        assert "30% of every invoice" in guest.get(f"/partners/program?k={legacy}", follow_redirects=True).text
+
+
 def test_program_details_are_gated_by_registration_and_by_a_link_we_send(isolated_db, test_keypair, fake_smtp):
     from app import partners
     with TestClient(app) as client:
@@ -926,8 +949,12 @@ def test_recruitment_runs_itself_from_a_pasted_list_and_tracks_everything(isolat
     assert partners.outreach_check(now=datetime.now(timezone.utc) + timedelta(days=4)) == 2
     assert db.get_partner_prospect_by_email("kathleen@example.com")["outreach_step"] == 2
 
-    # Their link opens the gated details, and that counts as tracking.
-    link = _body(first).split("/partners/program?k=")[1].split()[0].rstrip(".")
+    # The link has to survive an email client: no characters that a mail
+    # client would truncate the auto-link at, and it opens the details
+    # with nothing to fill in again.
+    link = _body(first).split("/partners/program?k=")[1].split()[0]
+    assert "|" not in link and "%7C" not in link and " " not in link
+    assert re.match(r"^[A-Za-z0-9._~-]+$", link), link
     with TestClient(app) as guest:
         assert "30% of every invoice" in guest.get(f"/partners/program?k={link}", follow_redirects=True).text
     kath = db.get_partner_prospect_by_email("kathleen@example.com")
@@ -956,3 +983,32 @@ def test_recruitment_runs_itself_from_a_pasted_list_and_tracks_everything(isolat
         assert "asked+not+to+be+contacted" in r.headers["location"]
         page = client.get("/admin/partners").text
         assert "Recruit partners" in page and "Dev Patel" in page and "said no" in page
+
+
+def test_the_partner_emails_are_editable_on_the_emails_page(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        page = client.get("/admin/emails").text
+        # Three groups: the customers' emails, the recruitment series in order, and the rest of the partner ones.
+        assert "Customer emails" in page and "Partner recruitment series" in page and "Partner emails" in page
+        for step in partners.OUTREACH_STEPS:
+            assert f"/admin/emails/system/{step['key']}" in page
+        assert "sent at once" in page and "+16 days" in page
+        for key in ("partner_welcome", "partner_applied", "partner_kit_item", "partner_paid", "partner_code_ready"):
+            assert f"/admin/emails/system/{key}" in page
+        assert page.index("Partner recruitment series") < page.index("Partner emails")
+        # ...and they edit like any other, keeping the edit through a reseed.
+        r = client.get("/admin/emails/system/partner_outreach_1")
+        assert r.status_code == 200 and "{opt_out_url}" in r.text
+        client.post("/admin/emails/system/partner_outreach_1", data={
+            "subject": "A word about PiperStitch, {first_name}", "body": "Hi {first_name},\n\nThe details: {url}\nNo thanks: {opt_out_url}",
+            "cta_label": "See the details", "cta_url": "{url}", "preheader": "A word about PiperStitch."})
+        assert db.get_email_template("partner_outreach_1")["edited"] == 1
+        client.get("/admin/emails")                                     # reseeds; must not stamp on the edit
+        assert db.get_email_template("partner_outreach_1")["subject"] == "A word about PiperStitch, {first_name}"
+        assert "edited" in client.get("/admin/emails").text
+    # The edited version is what goes out.
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    assert fake_smtp.sent[-1]["Subject"] == "A word about PiperStitch, Dev"

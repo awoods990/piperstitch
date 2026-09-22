@@ -119,7 +119,7 @@ Briefly: PiperStitch digitizes embroidery in a browser — artwork in, machine-r
 
 The Partner Program pays a recurring share of everything the people you refer pay, for two years — and the people who come through you get a longer free trial and a bigger proof allowance than anyone else. The first fifty partners are on a better rate, and I'd like to keep a seat for you.
 
-Here are the full details, including the rate and how we pay:
+Here are the full details, including the rate and how we pay. The link is yours — it opens the page directly, with nothing to fill in:
 
 {url}
 
@@ -150,11 +150,11 @@ The part partners tell me they didn't expect: it keeps paying. One recommendatio
 
 The other part: your audience gets more than the public offer, so recommending us costs them nothing and gains them something. Nobody has to be talked into anything.
 
-There's a calculator on the details page — put your own numbers in rather than take mine:
+There's a calculator on the details page — put your own numbers in rather than take mine. Your link opens it straight away:
 
 {url}
 
-Founding seats are limited to fifty and they're going. If you'd rather just get started, the application takes two minutes: {apply_url}""",
+Founding seats are limited to fifty and they're going. If you'd rather just get started, the application takes two minutes and already knows who you are: {apply_url}""",
          cta_label="Work out what it's worth", cta_url="{url}", preheader="It keeps paying — that's the part people don't expect.",
          placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
     dict(key="partner_outreach_4", name="Recruit 4: the last note", description="Final recruitment email. Nothing further is sent after this one.",

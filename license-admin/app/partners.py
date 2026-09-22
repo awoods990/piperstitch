@@ -19,6 +19,7 @@ import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from . import config, db, email_sender, promotions
 
@@ -162,8 +163,12 @@ def _secret() -> bytes:
 
 
 def program_token(prospect_id: int, *, at: Optional[datetime] = None) -> str:
-    payload = f"{int(prospect_id)}|{(at or _now()).date().isoformat()}"
-    return f"{payload}|{_program_sign(payload)}"
+    """Dots, not pipes: this token travels in a URL inside an email, and a
+    `|` is not legal in one -- mail clients and scanners truncate the
+    auto-linked text at it, and the recipient lands on a broken link and
+    meets the registration gate we sent them past."""
+    payload = f"{int(prospect_id)}.{(at or _now()).date().isoformat()}"
+    return f"{payload}.{_program_sign(payload)}"
 
 
 def resolve_program_token(token: str) -> Optional[int]:
@@ -171,11 +176,12 @@ def resolve_program_token(token: str) -> Optional[int]:
     it is under PROGRAM_TOKEN_DAYS old."""
     if not token:
         return None
+    separator = "." if "." in token.split("|")[0] else "|"      # "|" is the older shape; both still open
     try:
-        pid, issued, sig = token.split("|", 2)
+        pid, issued, sig = token.split(separator, 2)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, _program_sign(f"{pid}|{issued}")):
+    if not hmac.compare_digest(sig, _program_sign(f"{pid}{separator}{issued}")):
         return None
     try:
         when = date.fromisoformat(issued)
@@ -188,7 +194,14 @@ def resolve_program_token(token: str) -> Optional[int]:
 
 
 def program_url(prospect_id: int) -> str:
-    return f"{config.PUBLIC_BASE_URL}/partners/program?k={program_token(prospect_id)}"
+    """Straight into the full program details -- no registration, nothing
+    to fill in again. The token is escaped so the link survives the trip
+    through an email client."""
+    return f"{config.PUBLIC_BASE_URL}/partners/program?k={quote(program_token(prospect_id), safe='')}"
+
+
+def apply_url(prospect_id: int) -> str:
+    return f"{config.PUBLIC_BASE_URL}/partners/apply?k={quote(program_token(prospect_id), safe='')}"
 
 
 def register_prospect(*, name: str, email: str, organization: str = "", platforms: str = "", source: str = "self", note: str = "") -> int:
@@ -332,7 +345,7 @@ RECRUIT_LINE = re.compile(r"^\s*(?P<name>[^,<]+?)\s*(?:[,<]\s*)(?P<email>[^>,\s]
 
 
 def opt_out_url(prospect_id: int) -> str:
-    return f"{config.PUBLIC_BASE_URL}/partners/no-thanks?k={program_token(prospect_id)}"
+    return f"{config.PUBLIC_BASE_URL}/partners/no-thanks?k={quote(program_token(prospect_id), safe='')}"
 
 
 def parse_recruits(text: str) -> tuple[list[dict], list[str]]:
@@ -398,7 +411,7 @@ def send_outreach_step(prospect, step: int) -> bool:
     try:
         subject = email_sender.send_partner_outreach_email(
             to_email=prospect["email"], partner_name=prospect["name"], key=spec["key"], url=url,
-            apply_url=f"{config.PUBLIC_BASE_URL}/partners/apply?k={program_token(prospect['id'])}", opt_out_url=opt_out_url(prospect["id"]))
+            apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]))
     except email_sender.EmailSendError as e:
         db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
         return False

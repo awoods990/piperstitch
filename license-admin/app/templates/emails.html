@@ -5,18 +5,49 @@
   {% if message %}<div class="success">{{ message }}</div>{% endif %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  <div class="card">
-    <div class="toolbar">
-      <h2 style="margin:0">System emails</h2>
-      <form method="post" action="/admin/emails/run-now"><button class="small secondary" type="submit" title="The scheduler runs every 5 minutes on its own; this runs it right now.">Run scheduler now</button></form>
-    </div>
-    <p class="muted small" style="margin-top:0">Every email PiperStitch sends automatically. Click one to edit its subject, body and button, preview it, or send yourself a test. Placeholders like <span class="mono">{first_name}</span> are filled in per customer.</p>
+  {% macro template_rows(rows) %}
     <table>
       <tr><th>Email</th><th>Subject</th><th>When it's sent</th><th></th></tr>
-      {% for t in system_templates %}
+      {% for t in rows %}
       <tr><td><a href="/admin/emails/system/{{ t.key }}"><strong>{{ t.name }}</strong></a>{% if t.edited %} <span class="pill active" title="Edited from the default">edited</span>{% endif %}</td><td class="muted">{{ t.subject }}</td><td class="muted small">{{ t.description }}</td><td><a class="button secondary small" href="/admin/emails/system/{{ t.key }}">Edit</a></td></tr>
       {% endfor %}
     </table>
+  {% endmacro %}
+
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">Customer emails</h2>
+      <form method="post" action="/admin/emails/run-now"><button class="small secondary" type="submit" title="The scheduler runs every 5 minutes on its own; this runs it right now.">Run scheduler now</button></form>
+    </div>
+    <p class="muted small" style="margin-top:0">Every email PiperStitch sends automatically. Click one to edit its subject, body and button, preview it, or send yourself a test. Placeholders like <span class="mono">{first_name}</span> are filled in per customer.</p>
+    {{ template_rows(customer_templates) }}
+  </div>
+
+  <div class="card" id="recruitment">
+    <div class="toolbar">
+      <div><h2 style="margin:0">Partner recruitment series</h2>
+        <div class="muted small">Cold outreach, in order. Started from <a href="/admin/partners#recruit">Partners &rarr; Recruit</a>; the first goes at once and the scheduler sends the rest.</div></div>
+      <a class="button secondary small" href="/admin/partners#recruit">Start an approach</a>
+    </div>
+    <table>
+      <tr><th style="width:70px">Day</th><th>Email</th><th>Subject</th><th>What it does</th><th></th></tr>
+      {% for step in outreach_series %}{% set t = step.template %}
+      <tr><td class="muted">{{ 'sent at once' if step.delay_days == 0 else '+' ~ step.delay_days ~ ' days' }}</td>
+        <td><a href="/admin/emails/system/{{ t.key }}"><strong>{{ t.name }}</strong></a>{% if t.edited %} <span class="pill active" title="Edited from the default">edited</span>{% endif %}</td>
+        <td class="muted">{{ t.subject }}</td><td class="muted small">{{ t.description }}</td>
+        <td><a class="button secondary small" href="/admin/emails/system/{{ t.key }}">Edit</a></td></tr>
+      {% endfor %}
+    </table>
+    <p class="muted small" style="margin:10px 0 0">The sequence stops the moment someone applies or clicks &ldquo;no thanks&rdquo;. Every one of these carries that person&rsquo;s own link into the program details (<span class="mono">{url}</span>), a straight-to-the-form link (<span class="mono">{apply_url}</span>) and the opt-out (<span class="mono">{opt_out_url}</span>) &mdash; keep all three when you edit, and keep the subject honest: this is cold mail and the rules bite.</p>
+  </div>
+
+  <div class="card" id="partner-emails">
+    <div class="toolbar">
+      <div><h2 style="margin:0">Partner emails</h2>
+        <div class="muted small">Everything else the Partner Program sends, from the application through to a payout.</div></div>
+      <a class="button secondary small" href="/admin/partners">Partners</a>
+    </div>
+    {{ template_rows(partner_templates) }}
   </div>
 
   {% for s in sequences %}
