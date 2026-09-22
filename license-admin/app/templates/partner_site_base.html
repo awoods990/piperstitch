@@ -19,8 +19,12 @@
       <img src="{{ config.WEBSITE_BASE_URL }}/assets/piperstitch-mark-180.png" alt="" width="34" height="34">
       <span class="brand-word">Piper<span class="blue">Stitch</span><span class="brand-sub">EMBROIDERY DIGITIZING</span></span>
     </a>
-    <nav class="site-nav">
+    <button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="siteNav">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="site-nav" id="siteNav">
       <a href="{{ config.WEBSITE_BASE_URL }}/how-it-works.html">How It Works</a><a href="{{ config.WEBSITE_BASE_URL }}/proofs.html">Proofs</a><a href="{{ config.WEBSITE_BASE_URL }}/pricing.html">Pricing</a>
+      {% block nav_program %}<a href="/partners/program"{% if active_page == 'program' %} aria-current="page"{% endif %}>The program</a>{% endblock %}
       <a class="btn btn-secondary nav-login" href="/partners/portal">Partner sign-in</a>
     </nav>
   </div>
@@ -36,5 +40,18 @@
     </div>
   </div>
 </footer>
+<script>
+  // The site's menu button, for the narrow widths where the nav collapses.
+  (function () {
+    var toggle = document.getElementById("navToggle"), nav = document.getElementById("siteNav");
+    if (!toggle || !nav) return;
+    toggle.addEventListener("click", function () {
+      toggle.setAttribute("aria-expanded", nav.classList.toggle("open") ? "true" : "false");
+    });
+    nav.addEventListener("click", function (e) {
+      if (e.target.tagName === "A") { nav.classList.remove("open"); toggle.setAttribute("aria-expanded", "false"); }
+    });
+  })();
+</script>
 </body>
 </html>
