@@ -376,7 +376,10 @@ def test_application_lands_in_the_queue_and_approval_creates_the_code_window_and
         # Admin: the queue shows it; approval sets tier, rate, window and the first code, and sends the welcome.
         client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
         r = client.get("/admin/partners")
-        assert "Kathleen Reyes" in r.text and "40k embroidery channel" in r.text and "Approve" in r.text
+        assert "Kathleen Reyes" in r.text and "40k embroidery channel" in r.text and f"/admin/partners/{p['id']}/review" in r.text
+        # Approving happens on the review page, after reading what they sent.
+        review = client.get(f"/admin/partners/{p['id']}/review").text
+        assert "40k embroidery channel" in review and "Approve &amp; send the welcome" in review
         r = client.post(f"/admin/partners/{p['id']}/approve", data={"tier": "founding", "share_pct": "", "code": "kathleen", "window_days": "120"}, follow_redirects=False)
         assert r.status_code == 303 and "approved" in r.headers["location"]
         p = db.get_promoter(p["id"])
@@ -664,3 +667,141 @@ def test_verify_email_mode_withholds_the_page_until_the_link_is_clicked(isolated
         assert "Show me the details" in client.get("/partners/program").text
         link = _body(fake_smtp.sent[-1]).split("/partners/program?k=")[1].split()[0]
         assert "30% of every invoice" in client.get(f"/partners/program?k={link}", follow_redirects=True).text
+
+
+# ------------------------------- handles, codes, kit, feedback, welcome ---
+
+
+def test_an_application_carries_social_handles_and_the_review_page_shows_them(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    with TestClient(app) as client:
+        client.post("/partners/register", data={"name": "Kathleen Reyes", "email": "kathleen@example.com"})
+        # Saying you post publicly without giving handles is caught.
+        r = client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com", "application": "A 40k-subscriber channel about machine embroidery.",
+                                                 "has_social": "1", "handles": "  ", "agree": "1"})
+        assert r.status_code == 400 and "handles or links" in r.text
+        client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com", "platforms": "YouTube, a Facebook group",
+                                             "application": "A 40k-subscriber channel about machine embroidery.",
+                                             "has_social": "1", "handles": "youtube.com/@kathleenstitches\nfacebook.com/groups/hoopers", "agree": "1"})
+        p = db.get_promoter_by_email("kathleen@example.com")
+        assert "youtube.com/@kathleenstitches" in p["handles"] and "facebook.com/groups/hoopers" in p["handles"]
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        review = client.get(f"/admin/partners/{p['id']}/review").text
+        assert 'href="https://youtube.com/@kathleenstitches"' in review and "facebook.com/groups/hoopers" in review
+        assert "40k-subscriber channel" in review and "what they post is the decision" in review.lower()
+        # Someone who doesn't post publicly simply has none.
+        client2 = TestClient(app)
+        client2.post("/partners/register", data={"name": "Quiet Sam", "email": "sam@example.com"})
+        client2.post("/partners/apply", data={"name": "Quiet Sam", "email": "sam@example.com", "application": "I teach two classes a week at the local shop.", "agree": "1"})
+        assert db.get_promoter_by_email("sam@example.com")["handles"] == ""
+
+
+def test_a_partner_can_ask_for_a_code_and_the_admin_approves_it_on_their_terms(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    pid, first_code = partner()
+    db.update_partner_fields(pid, tier="founding")
+    with TestClient(app) as client:
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        client.get(f"/partners/portal/open?token={token}")
+        # The house rules: our own name is out, and so is a code someone already holds.
+        r = client.post("/partners/portal/codes", data={"code": "piperstitch-deal", "reason": "YouTube"}, follow_redirects=False)
+        assert "too+close+to+our+own+name" in r.headers["location"]
+        r = client.post("/partners/portal/codes", data={"code": "KATHLEEN", "reason": "YouTube"}, follow_redirects=False)
+        assert "already+taken" in r.headers["location"]
+        r = client.post("/partners/portal/codes", data={"code": "kathleen-yt", "reason": "My YouTube channel"}, follow_redirects=False)
+        assert "KATHLEEN-YT" in r.headers["location"]
+        req = db.list_code_requests(promoter_id=pid)[0]
+        assert req["requested_code"] == "KATHLEEN-YT" and req["status"] == "pending" and req["reason"] == "My YouTube channel"
+        assert "with us" in client.get("/partners/portal").text
+
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        assert "KATHLEEN-YT" in client.get("/admin/partners").text
+        fake_smtp.sent.clear()
+        r = client.post(f"/admin/partners/codes/{req['id']}", data={"decision": "approve", "code": "KATHLEEN-YT"}, follow_redirects=False)
+        assert r.status_code == 303 and "live" in r.headers["location"]
+    # The new code carries their rate and the same audience offer as their first.
+    new = db.get_promotion_by_code("KATHLEEN-YT")
+    old = db.get_promotion_by_code("KATHLEEN")
+    assert new["promoter_id"] == pid and new["share_pct"] == old["share_pct"] and new["percent_off"] == 0
+    assert new["trial_days"] == old["trial_days"] and new["proofs_extra"] == old["proofs_extra"] and new["commission_months"] == 24
+    assert db.list_code_requests(promoter_id=pid)[0]["status"] == "approved"
+    assert "KATHLEEN-YT" in fake_smtp.sent[-1]["Subject"] and "/r/KATHLEEN-YT" in _body(fake_smtp.sent[-1])
+
+    # Declining needs a reason, and the partner is told it.
+    with TestClient(app) as client:
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        client.get(f"/partners/portal/open?token={token}")
+        client.post("/partners/portal/codes", data={"code": "SEWFREE", "reason": "Instagram"})
+        req = db.list_code_requests(promoter_id=pid, status="pending")[0]
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post(f"/admin/partners/codes/{req['id']}", data={"decision": "decline", "note": ""}, follow_redirects=False)
+        assert "Say+why" in r.headers["location"] and db.get_code_request(req["id"])["status"] == "pending"
+        client.post(f"/admin/partners/codes/{req['id']}", data={"decision": "decline", "note": "It reads like a giveaway"})
+    assert db.get_code_request(req["id"])["status"] == "declined"
+    assert db.get_promotion_by_code("SEWFREE") is None
+    assert "It reads like a giveaway" in _body(fake_smtp.sent[-1])
+
+
+def test_partners_can_send_product_feedback_and_the_admin_sees_it(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    pid, _ = partner()
+    with TestClient(app) as client:
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        page = client.get(f"/partners/portal/open?token={token}", follow_redirects=True).text
+        assert "Tell us what to fix" in page and "changed this product more than any survey" in page
+        r = client.post("/partners/portal/feedback", data={"topic": "Caps", "message": "too short"}, follow_redirects=False)
+        assert "little+more" in r.headers["location"]
+        fake_smtp.sent.clear()
+        client.post("/partners/portal/feedback", data={"topic": "Caps", "message": "Three people this week asked why the cap centre line moves when they change hoops."})
+        row = db.list_partner_feedback(promoter_id=pid)[0]
+        assert row["topic"] == "Caps" and "centre line moves" in row["message"] and row["reviewed_at"] is None
+        assert db.count_unreviewed_partner_feedback() == 1
+        assert "Partner feedback from Kathleen" in fake_smtp.sent[-1]["Subject"]
+        assert "centre line moves" in client.get("/partners/portal").text
+
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        page = client.get("/admin/partners").text
+        assert "centre line moves" in page and "unread note" in page
+        client.post(f"/admin/partner-feedback/{row['id']}/reviewed")
+        assert db.count_unreviewed_partner_feedback() == 0
+        assert "unread note" not in client.get("/admin/partners").text
+
+
+def test_the_kit_shows_the_videos_the_admin_publishes(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    pid, _ = partner()
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        assert client.post("/admin/partners/resources", data={"title": "Bad link", "url": "ftp://nope", "kind": "video"},
+                           follow_redirects=False).headers["location"].count("should+start+with") == 1
+        client.post("/admin/partners/resources", data={"title": "Digitizing a cap logo", "url": "https://youtu.be/abc123", "kind": "video",
+                                                       "description": "Two minutes, start to finished file", "sort_order": "1"})
+        client.post("/admin/partners/resources", data={"title": "Old cut", "url": "https://youtu.be/old", "kind": "video", "sort_order": "2"})
+        resources = db.list_partner_resources()
+        assert [r["title"] for r in resources] == ["Digitizing a cap logo", "Old cut"]
+        client.post(f"/admin/partners/resources/{resources[1]['id']}", data={"title": "Old cut", "url": "https://youtu.be/old", "kind": "video", "sort_order": "2", "active": ""})
+    with TestClient(app) as portal:
+        portal.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        page = portal.get(f"/partners/portal/open?token={token}", follow_redirects=True).text
+        assert "Videos and downloads" in page and "Digitizing a cap logo" in page and "youtu.be/abc123" in page
+        assert "Old cut" not in page                      # unticked, so not shown to partners
+
+
+def test_the_welcome_email_reads_as_joining_the_team_and_explains_the_ftc(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    pid = partners.apply(name="Kathleen Reyes", email="kathleen@example.com", organization="", platforms="YouTube", application="A 40k-subscriber embroidery channel.")
+    assert "everything you need in it" in _body(fake_smtp.sent[-1]) or "partner package has everything" in _body(fake_smtp.sent[-1])
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        client.post(f"/admin/partners/{pid}/approve", data={"tier": "founding", "code": "KATHLEEN", "window_days": "120"})
+    welcome = fake_smtp.sent[-1]
+    body = _body(welcome)
+    assert welcome["Subject"] == "Welcome to the PiperStitch team, Kathleen"
+    assert "You're in" not in body and "Welcome to the PiperStitch team" in body
+    assert "Federal Trade Commission (FTC)" in body
+    assert "What does NOT count" in body and '"affiliate link" on its own' in body
+    assert "feedback box in your portal" in body
+    html = welcome.get_body(preferencelist=("html",)).get_content()
+    assert "piper-congratulations.png" in html          # Piper's confetti, as the congratulations

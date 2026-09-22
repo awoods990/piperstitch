@@ -208,7 +208,7 @@ def prospect_context(prospect) -> dict:
 # ------------------------------------------------------------ application --
 
 
-def apply(*, name: str, email: str, organization: str, platforms: str, application: str) -> int:
+def apply(*, name: str, email: str, organization: str, platforms: str, application: str, handles: str = "") -> int:
     name = (name or "").strip(); email = (email or "").strip().lower()
     if len(name) < 2:
         raise PartnerError("name", "Please tell us your name.")
@@ -222,7 +222,7 @@ def apply(*, name: str, email: str, organization: str, platforms: str, applicati
             raise PartnerError("duplicate", "We already have an application from this address — we'll be in touch soon.")
         if existing["status"] in ("approved", "active"):
             raise PartnerError("duplicate", "You're already a partner. Sign in to the portal instead.")
-    pid = db.create_partner_application(name=name, email=email, organization=organization or "", platforms=platforms or "", application=application)
+    pid = db.create_partner_application(name=name, email=email, organization=organization or "", platforms=platforms or "", application=application, handles=handles or "")
     db.mark_prospect_applied(email)
     try:
         email_sender.send_partner_applied_email(to_email=email, partner_name=name)
@@ -287,6 +287,87 @@ def decline(promoter_id: int, *, note: str = "") -> None:
         email_sender.send_partner_declined_email(to_email=p["email"], partner_name=p["name"])
     except email_sender.EmailSendError:
         pass
+
+
+# --------------------------------------------- code requests (portal §7) --
+
+RESERVED_CODES = {"PIPERSTITCH", "PIPER", "STITCH", "ADMIN", "SUPPORT", "PROOFS", "FREE", "TRIAL", "OFFICIAL", "SALE", "DISCOUNT", "COUPON"}
+
+
+def check_requested_code(promoter, code: str) -> str:
+    """The house rules for a partner's own code: the same shape every
+    code has, theirs to recognise, not ours to be confused with, and not
+    already taken. Returns the normalised code or raises."""
+    code = promotions.normalize_code(code)
+    if not promotions.CODE_RE.match(code):
+        raise PartnerError("code", "Codes are 3-30 letters, numbers or dashes, starting with a letter or number.")
+    if code in RESERVED_CODES or code.startswith("PIPERSTITCH"):
+        raise PartnerError("code", "That one's too close to our own name — try your name, your channel, or a word your audience knows you by.")
+    if db.get_promotion_by_code(code) is not None:
+        raise PartnerError("code", f"{code} is already taken. Try adding your channel to it, like {code}-YT.")
+    if len(db.list_code_requests(promoter_id=promoter["id"], status="pending")) >= 3:
+        raise PartnerError("pending", "You've three requests waiting already — we'll get to those first.")
+    return code
+
+
+def request_code(promoter, *, code: str, reason: str) -> int:
+    """A partner asking for another code from the portal. It is a request,
+    not a code: we approve the ones that fit (§7)."""
+    code = check_requested_code(promoter, code)
+    request_id = db.create_code_request(promoter_id=promoter["id"], requested_code=code, reason=reason)
+    return request_id
+
+
+def approve_code_request(request_id: int, *, code: str = "", note: str = "") -> int:
+    """Creates the code on the partner's own terms -- their rate, and the
+    same audience offer their first code carries -- and tells them."""
+    req = db.get_code_request(request_id)
+    if req is None or req["status"] != "pending":
+        raise PartnerError("missing", "That request has already been dealt with.")
+    promoter = db.get_promoter(req["promoter_id"])
+    code = promotions.normalize_code(code or req["requested_code"])
+    existing = db.partner_code_stats(promoter["id"])
+    share = float(existing[0]["share_pct"]) if existing else float(promoter["default_share_pct"] or (FOUNDING_SHARE if promoter["tier"] == "founding" else STANDARD_SHARE))
+    promotion_id = promotions.create_promotion(
+        code=code, kind="promoter", promoter_id=promoter["id"], percent_off=0, duration_months=None, share_pct=share,
+        trial_days=OFFER_TRIAL_DAYS, proofs_extra=max(0, OFFER_PROOFS - config.PROOFS_FREE_PROOFS), commission_months=COMMISSION_MONTHS,
+        notes=f"Requested from the portal: {req['reason']}".strip(),
+    )
+    db.decide_code_request(request_id, status="approved", note=note, promotion_id=promotion_id)
+    try:
+        email_sender.send_partner_code_ready_email(to_email=promoter["email"], partner_name=promoter["name"], code=code, link=link_url(code), reason=req["reason"])
+    except email_sender.EmailSendError:
+        pass
+    return promotion_id
+
+
+def decline_code_request(request_id: int, *, note: str) -> None:
+    req = db.get_code_request(request_id)
+    if req is None or req["status"] != "pending":
+        raise PartnerError("missing", "That request has already been dealt with.")
+    db.decide_code_request(request_id, status="declined", note=note)
+    promoter = db.get_promoter(req["promoter_id"])
+    try:
+        email_sender.send_partner_code_declined_email(to_email=promoter["email"], partner_name=promoter["name"], code=req["requested_code"], note=note)
+    except email_sender.EmailSendError:
+        pass
+
+
+def submit_feedback(promoter, *, topic: str, message: str) -> int:
+    """Partners use PiperStitch daily and talk to the people who haven't
+    bought yet -- what they notice is worth more than a survey."""
+    if len((message or "").strip()) < 10:
+        raise PartnerError("message", "Tell us a little more — a sentence or two is plenty.")
+    feedback_id = db.add_partner_feedback(promoter_id=promoter["id"], topic=topic, message=message)
+    try:
+        email_sender.send_plain_email(
+            to_email=config.REPLY_TO_EMAIL,
+            subject=f"Partner feedback from {promoter['name']}" + (f": {topic.strip()}" if topic.strip() else ""),
+            body=f"{promoter['name']} ({promoter['email']}) sent this from the partner portal:\n\n{message.strip()}\n\n{config.PUBLIC_BASE_URL}/admin/promoters/{promoter['id']}",
+            reply_to=promoter["email"] or "")
+    except email_sender.EmailSendError:
+        pass
+    return feedback_id
 
 
 # ------------------------------------------------------------ the numbers --
@@ -363,6 +444,8 @@ def dashboard(promoter) -> dict:
         "statements": db.partner_statement_periods(promoter["id"]), "payments": db.list_promoter_payments(promoter["id"]),
         "tax_form_missing": not promoter["tax_form_received_at"],
         "disclosure_approved": DISCLOSURE_APPROVED, "disclosure_inadequate": DISCLOSURE_INADEQUATE, "claims_approved": CLAIMS_APPROVED, "claims_forbidden": CLAIMS_FORBIDDEN,
+        "resources": db.list_partner_resources(active_only=True), "code_requests": db.list_code_requests(promoter_id=promoter["id"]),
+        "feedback": db.list_partner_feedback(promoter_id=promoter["id"], limit=10),
         "captions": [c.replace("{link}", codes[0]["link"] if codes else link_url("YOURCODE")) for c in CAPTION_DRAFTS],
     }
 

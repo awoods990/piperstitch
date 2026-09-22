@@ -11,13 +11,17 @@
   </div>
   <p class="muted small" style="margin-top:-6px">Portal: <a href="/partners/portal" target="_blank" rel="noopener">{{ config.PUBLIC_BASE_URL }}/partners/portal</a> &middot; Apply: <a href="/partners/apply" target="_blank" rel="noopener">/partners/apply</a> &middot; {{ payable_total|money }} payable now, {{ owed_total|money }} owed in all.</p>
 
-  {% if alerts.events or alerts.webhooks or alerts.spikes or alerts.unchecked_content %}
+  {% if alerts.events or alerts.webhooks or alerts.spikes or alerts.unchecked_content or code_requests|selectattr('status', 'equalto', 'pending')|list or partner_feedback|rejectattr('reviewed_at')|list %}
   <div class="card" style="border-color:#f0cabe; background:#fdf6f4">
     <h2>Needs a look</h2>
     {% for a in alerts.spikes %}<p style="margin:4px 0"><span class="pill past_due">spike</span> <a href="/admin/promoters/{{ a.id }}">{{ a.name }}</a>: {{ a.recent }} signups in {{ a.days }} days against a weekly average of {{ a.weekly_avg }} — check them before the bounties mature.</p>{% endfor %}
     {% for e in alerts.events %}<p style="margin:4px 0"><span class="pill {{ 'ended' if e.kind == 'promo_self_referral' else 'past_due' }}">{{ 'self-referral' if e.kind == 'promo_self_referral' else 'inactive promoter' }}</span> <span class="muted small">{{ e.created_at|short_date }}</span> {% if e.customer_id %}<a href="/admin/customers/{{ e.customer_id }}">{{ e.customer_email }}</a>{% endif %} — {{ e.detail }}</p>{% endfor %}
     {% for w in alerts.webhooks %}<p style="margin:4px 0"><span class="pill incomplete">webhook</span> <span class="muted small">{{ w.processed_at|short_date }}</span> <span class="mono">{{ w.id }}</span> {{ w.type }} — {{ w.result }}</p>{% endfor %}
     {% if alerts.unchecked_content %}<p style="margin:4px 0"><span class="pill trialing">content</span> {{ alerts.unchecked_content }} logged post{{ '' if alerts.unchecked_content == 1 else 's' }} not yet checked for the disclosure.</p>{% endif %}
+    {% set pending_codes = code_requests|selectattr('status', 'equalto', 'pending')|list %}
+    {% if pending_codes %}<p style="margin:4px 0"><span class="pill trialing">codes</span> {{ pending_codes|length }} code request{{ '' if pending_codes|length == 1 else 's' }} waiting — <a href="#codes">decide them</a>.</p>{% endif %}
+    {% set unread = partner_feedback|rejectattr('reviewed_at')|list %}
+    {% if unread %}<p style="margin:4px 0"><span class="pill trialing">feedback</span> {{ unread|length }} unread note{{ '' if unread|length == 1 else 's' }} from partners — <a href="#feedback">read them</a>.</p>{% endif %}
   </div>
   {% endif %}
 
@@ -54,31 +58,20 @@
   {% set queue = rows|selectattr('status', 'equalto', 'applied')|list %}
   {% if queue and not status %}
   <div class="card">
-    <h2>Applications</h2>
-    {% for p in queue %}
-    <div style="padding:12px 0; border-bottom:1px solid var(--border)">
-      <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap">
-        <div><strong>{{ p.name }}</strong>{% if p.organization %} &middot; {{ p.organization }}{% endif %}<br><span class="muted small">{{ p.email }} &middot; applied {{ p.applied_at|short_date }}{% if p.platforms %} &middot; {{ p.platforms }}{% endif %}</span></div>
-        <a class="button small secondary" href="/admin/promoters/{{ p.id }}">Full record</a>
-      </div>
-      <p style="white-space:pre-wrap; margin:8px 0; font-size:13px">{{ p.application }}</p>
-      <div class="two-col" style="gap:14px">
-        <form method="post" action="/admin/partners/{{ p.id }}/approve">
-          <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px">
-            <div><label>Tier</label><select name="tier"><option value="founding" {% if seats_left > 0 %}selected{% else %}disabled{% endif %}>Founding ({{ program.FOUNDING_SHARE|int }}%)</option><option value="standard" {% if seats_left <= 0 %}selected{% endif %}>Standard ({{ program.STANDARD_SHARE|int }}%)</option></select></div>
-            <div><label>Share % <span class="muted">(blank = tier's)</span></label><input type="number" name="share_pct" min="0.5" max="100" step="0.5" placeholder="tier"></div>
-            <div><label>First code</label><input type="text" name="code" required value="{{ p.name.split(' ')[0]|upper|replace("'", '') }}" style="text-transform:uppercase"></div>
-            <div><label>Bounty window (days)</label><input type="number" name="window_days" min="0" max="3650" value="{{ program.BOUNTY_WINDOW_DAYS }}"></div>
-          </div>
-          <div style="margin-top:8px; display:flex; gap:8px; align-items:center"><input type="text" name="notes" placeholder="Note for the record (optional)"><button type="submit" class="small">Approve &amp; send welcome</button></div>
-        </form>
-        <form method="post" action="/admin/partners/{{ p.id }}/decline" style="display:flex; gap:8px; align-items:flex-end">
-          <div style="flex:1"><label>Decline <span class="muted">(they get a kind email)</span></label><input type="text" name="note" placeholder="Why, for the record (optional)"></div>
-          <button type="submit" class="small secondary" onclick="return confirm('Decline {{ p.name|e }}\'s application?')">Decline</button>
-        </form>
-      </div>
-    </div>
-    {% endfor %}
+    <h2>Applications waiting</h2>
+    <p class="muted small" style="margin-top:0">Read the application and look at what they post before deciding &mdash; that's the whole basis of it. Approving happens on the review page.</p>
+    <table>
+      <tr><th>Who</th><th>Where</th><th>What they said</th><th>Applied</th><th></th></tr>
+      {% for p in queue %}
+      <tr>
+        <td><strong>{{ p.name }}</strong>{% if p.organization %}<br><span class="muted small">{{ p.organization }}</span>{% endif %}<br><span class="muted small">{{ p.email }}</span></td>
+        <td class="small">{{ p.platforms or '—' }}{% if p.handles %}<br><span class="pill yes">handles given</span>{% endif %}</td>
+        <td class="small" style="max-width:420px">{{ p.application[:220] }}{% if p.application|length > 220 %}&hellip;{% endif %}</td>
+        <td class="muted small">{{ p.applied_at|short_date }}</td>
+        <td><a class="button small" href="/admin/partners/{{ p.id }}/review">Review</a></td>
+      </tr>
+      {% endfor %}
+    </table>
   </div>
   {% endif %}
 
@@ -109,6 +102,77 @@
       <button type="submit" class="small secondary">Set window on the ticked partners</button>
     </div>
     </form>
+  </div>
+
+  <div class="card" id="codes">
+    <h2>Code requests</h2>
+    <p class="muted small" style="margin-top:0">Partners ask for a code per channel from their portal. Approving creates it on their own terms &mdash; their share, the {{ program.COMMISSION_MONTHS }}-month term and the same {{ program.OFFER_TRIAL_DAYS }}-day / {{ program.OFFER_PROOFS }}-proof offer &mdash; and tells them it's live.</p>
+    <table>
+      <tr><th>Partner</th><th>Asked for</th><th>For what</th><th>When</th><th>Decision</th></tr>
+      {% for r in code_requests %}
+      <tr>
+        <td><a href="/admin/promoters/{{ r.promoter_id }}">{{ r.promoter_name }}</a></td>
+        <td class="mono"><strong>{{ r.requested_code }}</strong></td>
+        <td class="small">{{ r.reason or '—' }}</td>
+        <td class="muted small">{{ r.created_at|short_date }}</td>
+        <td>{% if r.status == 'pending' %}
+          <form method="post" action="/admin/partners/codes/{{ r.id }}" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+            <input type="text" name="code" value="{{ r.requested_code }}" style="width:150px; text-transform:uppercase" title="Change it if it needs tidying">
+            <input type="text" name="note" placeholder="Reason, if declining" style="width:190px">
+            <button class="small" type="submit" name="decision" value="approve">Approve</button>
+            <button class="small secondary" type="submit" name="decision" value="decline">Decline</button>
+          </form>
+        {% elif r.status == 'approved' %}<span class="pill active">live</span>{% if r.promotion_id %} <a class="mono small" href="/admin/promotions/{{ r.promotion_id }}">{{ r.requested_code }}</a>{% endif %}
+        {% else %}<span class="pill ended">declined</span> <span class="muted small">{{ r.decided_note }}</span>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="muted">No requests yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+
+  <div class="card" id="kit">
+    <h2>The partner kit</h2>
+    <p class="muted small" style="margin-top:0">Videos, graphics and anything else partners can use as it is. These appear in the creative kit at the foot of every partner's portal, in this order.</p>
+    <table>
+      <tr><th>Title</th><th>Kind</th><th>Link</th><th>Order</th><th>Shown</th><th></th></tr>
+      {% for r in resources %}
+      <tr>
+        <form method="post" action="/admin/partners/resources/{{ r.id }}">
+          <td><input type="text" name="title" value="{{ r.title }}"><br><input type="text" name="description" value="{{ r.description }}" placeholder="One line about it" style="margin-top:4px; font-size:12px"></td>
+          <td><select name="kind">{% for k in ['video','graphic','document','link'] %}<option value="{{ k }}" {% if r.kind == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select></td>
+          <td><input type="text" name="url" value="{{ r.url }}"><br><a class="muted small" href="{{ r.url }}" target="_blank" rel="noopener">open</a></td>
+          <td><input type="number" name="sort_order" value="{{ r.sort_order }}" style="width:70px"></td>
+          <td><label class="inline"><input type="checkbox" name="active" value="1" {% if r.active %}checked{% endif %}> shown</label></td>
+          <td><button class="small secondary" type="submit">Save</button><button class="small secondary" type="submit" name="delete" value="1" onclick="return confirm('Remove this from the kit?')" style="margin-top:4px">&times;</button></td>
+        </form>
+      </tr>
+      {% else %}<tr><td colspan="6" class="muted">Nothing in the kit yet — add your first video below.</td></tr>{% endfor %}
+    </table>
+    <h3>Add to the kit</h3>
+    <form method="post" action="/admin/partners/resources">
+      <div style="display:grid; grid-template-columns: 1.4fr 1fr 1.6fr .5fr; gap:10px">
+        <div><label>Title</label><input type="text" name="title" required placeholder="How PiperStitch digitizes a cap logo"></div>
+        <div><label>Kind</label><select name="kind"><option value="video">video</option><option value="graphic">graphic</option><option value="document">document</option><option value="link">link</option></select></div>
+        <div><label>Link</label><input type="url" name="url" required placeholder="https://youtu.be/… or a file link"></div>
+        <div><label>Order</label><input type="number" name="sort_order" value="0"></div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:8px"><input type="text" name="description" placeholder="One line on what it is and where a partner would use it"><button type="submit" class="small">Add</button></div>
+    </form>
+  </div>
+
+  <div class="card" id="feedback">
+    <div class="toolbar"><h2 style="margin:0">What partners are telling us</h2><span class="muted small">They use it daily and talk to the people who haven't bought yet.</span></div>
+    <table>
+      <tr><th>When</th><th>Partner</th><th>About</th><th>What they said</th><th></th></tr>
+      {% for f in partner_feedback %}
+      <tr{% if not f.reviewed_at %} style="background:#fffdf5"{% endif %}>
+        <td class="muted small">{{ f.created_at|short_date }}</td>
+        <td><a href="/admin/promoters/{{ f.promoter_id }}">{{ f.promoter_name }}</a></td>
+        <td class="small">{{ f.topic or '—' }}</td>
+        <td class="small" style="white-space:pre-wrap; max-width:420px">{{ f.message }}</td>
+        <td>{% if f.reviewed_at %}<span class="pill yes">read</span>{% else %}<form method="post" action="/admin/partner-feedback/{{ f.id }}/reviewed"><button class="small secondary" type="submit">Mark read</button></form>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="muted">Nothing yet — the welcome email and the portal both ask for it.</td></tr>{% endfor %}
+    </table>
   </div>
 
   <div class="card">

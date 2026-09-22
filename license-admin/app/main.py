@@ -1005,6 +1005,31 @@ def partner_portal_logout(request: Request):
     return RedirectResponse("/partners/portal", status_code=303)
 
 
+@app.post("/partners/portal/codes")
+def partner_portal_request_code(request: Request, code: str = Form(""), reason: str = Form("")):
+    """A partner asking for another code -- usually one per channel."""
+    promoter = _portal_partner(request)
+    if promoter is None:
+        return RedirectResponse("/partners/portal", status_code=303)
+    try:
+        partners.request_code(promoter, code=code, reason=reason)
+    except (partners.PartnerError, promotions.PromoError) as e:
+        return RedirectResponse("/partners/portal?error=" + quote_plus(e.message) + "#codes", status_code=303)
+    return RedirectResponse("/partners/portal?message=" + quote_plus(f"Asked for {promotions.normalize_code(code)} — we'll set it up or come back to you, usually within a day.") + "#codes", status_code=303)
+
+
+@app.post("/partners/portal/feedback")
+def partner_portal_feedback(request: Request, topic: str = Form(""), message: str = Form("")):
+    promoter = _portal_partner(request)
+    if promoter is None:
+        return RedirectResponse("/partners/portal", status_code=303)
+    try:
+        partners.submit_feedback(promoter, topic=topic, message=message)
+    except partners.PartnerError as e:
+        return RedirectResponse("/partners/portal?error=" + quote_plus(e.message) + "#feedback", status_code=303)
+    return RedirectResponse("/partners/portal?message=" + quote_plus("Thank you — that's with us, and a person reads every one.") + "#feedback", status_code=303)
+
+
 @app.get("/partners/portal/qr/{code}.svg")
 def partner_portal_qr(request: Request, code: str):
     promoter = _portal_partner(request)
@@ -1101,19 +1126,22 @@ def partner_apply_form(request: Request):
 
 @app.post("/partners/apply", response_class=HTMLResponse)
 def partner_apply_submit(request: Request, name: str = Form(""), email: str = Form(""), organization: str = Form(""), platforms: str = Form(""), application: str = Form(""),
-                         agree: str = Form(""), website: str = Form("")):
+                         has_social: str = Form(""), handles: str = Form(""), agree: str = Form(""), website: str = Form("")):
     """The public application (spec §8). `website` is a honeypot: real
     people never see it."""
     prospect, allowed = _program_reader(request)
     if not allowed:
         return _program_gate(request)
-    form = {"name": name, "email": email, "organization": organization, "platforms": platforms, "application": application}
+    form = {"name": name, "email": email, "organization": organization, "platforms": platforms, "application": application, "has_social": has_social, "handles": handles}
     if website.strip():
         return templates.TemplateResponse(request, "partner_applied.html", {"email": email})
+    if has_social and not handles.strip():
+        return templates.TemplateResponse(request, "partner_apply.html", {"form": form, "error": "Pop in your handles or links so we can have a look at what you post.",
+                                                                          "seats_left": partners.founding_seats_left(), "program": partners}, status_code=400)
     if not agree:
         return templates.TemplateResponse(request, "partner_apply.html", {"form": form, "error": "Please read and agree to the partner terms.", "seats_left": partners.founding_seats_left(), "program": partners}, status_code=400)
     try:
-        partners.apply(name=name, email=email, organization=organization, platforms=platforms, application=application)
+        partners.apply(name=name, email=email, organization=organization, platforms=platforms, application=application, handles=handles if has_social else "")
     except partners.PartnerError as e:
         return templates.TemplateResponse(request, "partner_apply.html", {"form": form, "error": e.message, "seats_left": partners.founding_seats_left(), "program": partners}, status_code=400)
     return templates.TemplateResponse(request, "partner_applied.html", {"email": email.strip().lower()})
@@ -1694,7 +1722,7 @@ def _parse_number(value: str, *, name: str, lo: float, hi: float, blank_ok: bool
     return n
 
 
-def _partners_redirect(*, message: str = "", error: str = "", status: str = "") -> RedirectResponse:
+def _partners_redirect(*, message: str = "", error: str = "", status: str = "", anchor: str = "") -> RedirectResponse:
     q = []
     if status:
         q.append("status=" + quote_plus(status))
@@ -1702,7 +1730,7 @@ def _partners_redirect(*, message: str = "", error: str = "", status: str = "") 
         q.append("message=" + quote_plus(message))
     if error:
         q.append("error=" + quote_plus(error))
-    return RedirectResponse("/admin/partners" + ("?" + "&".join(q) if q else ""), status_code=303)
+    return RedirectResponse("/admin/partners" + ("?" + "&".join(q) if q else "") + (("#" + anchor) if anchor else ""), status_code=303)
 
 
 @app.get("/admin/partners", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
@@ -1719,6 +1747,7 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "seats_left": partners.founding_seats_left(), "program": partners, "today": datetime.now(timezone.utc).date().isoformat(),
         "alerts": partners.alerts(), "tax": partners.tax_report(year), "year": year,
         "prospects": db.list_partner_prospects(), "prospect_counts": db.count_partner_prospects(), "program_link": lambda pid: partners.program_url(pid),
+        "code_requests": db.list_code_requests(), "resources": db.list_partner_resources(), "partner_feedback": db.list_partner_feedback(limit=25),
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
     })
@@ -1811,6 +1840,20 @@ def admin_partner_content_update(promoter_id: int, content_id: int, disclosure: 
     return _promoter_redirect(promoter_id, message="Content entry updated.")
 
 
+@app.get("/admin/partners/{promoter_id}/review", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_partner_review(request: Request, promoter_id: int, message: str = "", error: str = ""):
+    """Everything they told us, on one page, with the decision at the
+    bottom -- so approval follows a read rather than a glance at a row."""
+    p = db.get_promoter(promoter_id)
+    if p is None:
+        return _partners_redirect(error="That partner doesn't exist.")
+    return templates.TemplateResponse(request, "partner_review.html", {
+        "active_nav": "partners", "p": p, "seats_left": partners.founding_seats_left(), "program": partners,
+        "suggested_code": re.sub(r"[^A-Z0-9]", "", (p["name"] or "").split(" ")[0].upper())[:20],
+        "message": message or None, "error": error or None,
+    })
+
+
 @app.post("/admin/partners/{promoter_id}/approve", dependencies=[Depends(auth.require_admin)])
 def admin_partner_approve(promoter_id: int, tier: str = Form("standard"), share_pct: str = Form(""), code: str = Form(...), window_days: str = Form("120"), notes: str = Form("")):
     try:
@@ -1844,6 +1887,54 @@ def admin_partner_portal_link(promoter_id: int):
     except email_sender.EmailSendError as e:
         return _promoter_redirect(promoter_id, error=f"Couldn't send the link: {e}")
     return _promoter_redirect(promoter_id, message=f"Portal link sent to {p['email']}.")
+
+
+@app.post("/admin/partners/codes/{request_id}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_code_request(request_id: int, decision: str = Form("approve"), code: str = Form(""), note: str = Form("")):
+    """Approve the code a partner asked for (creating it on their terms),
+    or decline it with a reason they'll be told."""
+    try:
+        if decision == "approve":
+            promotion_id = partners.approve_code_request(request_id, code=code, note=note)
+            return _partners_redirect(message=f"{db.get_promotion(promotion_id)['code']} is live and they've been told.", anchor="codes")
+        if not note.strip():
+            return _partners_redirect(error="Say why, so we can tell them something useful.", anchor="codes")
+        partners.decline_code_request(request_id, note=note)
+        return _partners_redirect(message="Declined, with your reason sent on.", anchor="codes")
+    except (partners.PartnerError, promotions.PromoError) as e:
+        return _partners_redirect(error=e.message, anchor="codes")
+
+
+@app.post("/admin/partners/resources", dependencies=[Depends(auth.require_admin)])
+def admin_partner_resource_add(title: str = Form(...), url: str = Form(...), kind: str = Form("video"), description: str = Form(""), sort_order: str = Form("0")):
+    """The creative kit's library -- videos and anything else partners can
+    use as it is."""
+    if not url.strip().lower().startswith(("http://", "https://")):
+        return _partners_redirect(error="The link should start with http:// or https://.", anchor="kit")
+    if kind not in ("video", "graphic", "document", "link"):
+        kind = "link"
+    db.add_partner_resource(title=title, url=url, kind=kind, description=description, sort_order=int(sort_order) if sort_order.strip().lstrip("-").isdigit() else 0)
+    return _partners_redirect(message=f"Added &ldquo;{title.strip()}&rdquo; to the partner kit.", anchor="kit")
+
+
+@app.post("/admin/partners/resources/{resource_id}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_resource_update(resource_id: int, title: str = Form(""), url: str = Form(""), kind: str = Form("video"), description: str = Form(""),
+                                  sort_order: str = Form("0"), active: str = Form(""), delete: str = Form("")):
+    row = db.get_partner_resource(resource_id)
+    if row is None:
+        return _partners_redirect(error="That item isn't in the kit.", anchor="kit")
+    if delete:
+        db.delete_partner_resource(resource_id)
+        return _partners_redirect(message="Removed from the kit.", anchor="kit")
+    db.update_partner_resource(resource_id, title=title or row["title"], url=url or row["url"], kind=kind, description=description,
+                               sort_order=int(sort_order) if sort_order.strip().lstrip("-").isdigit() else row["sort_order"], active=bool(active))
+    return _partners_redirect(message="Kit updated.", anchor="kit")
+
+
+@app.post("/admin/partner-feedback/{feedback_id}/reviewed", dependencies=[Depends(auth.require_admin)])
+def admin_partner_feedback_reviewed(feedback_id: int):
+    db.mark_partner_feedback_reviewed(feedback_id)
+    return _partners_redirect(message="Marked as read.", anchor="feedback")
 
 
 @app.post("/admin/partners/windows", dependencies=[Depends(auth.require_admin)])
@@ -1904,6 +1995,8 @@ def admin_promoter_detail(request: Request, promoter_id: int, message: str = "",
         "payments": db.list_promoter_payments(promoter_id),
         "referrals_by_id": {r["id"]: r for r in partners.referral_rows(promoter_id)},
         "content": db.list_partner_content(promoter_id),
+        "feedback": db.list_partner_feedback(promoter_id=promoter_id),
+        "code_requests": db.list_code_requests(promoter_id=promoter_id),
         "bounty": partners.bounty_state(promoter),
         "tier_label": partners.tier_label(promoter),
         "is_partner": partners.is_partner(promoter),

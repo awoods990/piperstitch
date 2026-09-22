@@ -1,0 +1,57 @@
+{% extends "admin_base.html" %}
+{% block title %}{{ p.name }} — Application — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="/admin/partners">&larr; Partners</a> &middot; <a href="/admin/promoters/{{ p.id }}">Their full record</a></p>
+
+  <div class="card">
+    <div class="toolbar">
+      <div><h1 style="margin:0">{{ p.name }}</h1>
+        <div class="muted">{{ p.organization }}{% if p.organization and p.email %} &middot; {% endif %}<a href="mailto:{{ p.email }}">{{ p.email }}</a></div></div>
+      <div><span class="pill {{ 'trialing' if p.status == 'applied' else 'active' if p.status in ('active','approved') else 'ended' }}">{{ p.status }}</span>
+        {% if p.applied_at %}<span class="muted small"> applied {{ p.applied_at|short_date }}</span>{% endif %}</div>
+    </div>
+
+    <h2>What they told us</h2>
+    <table>
+      <tr><th style="width:190px">Where their audience is</th><td>{{ p.platforms or '—' }}</td></tr>
+      <tr><th>Handles and links</th><td>{% if p.handles %}{% for line in p.handles.split('\n') %}{% set url = line.strip() %}{% if url %}
+        {% if url.startswith('http://') or url.startswith('https://') %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a>{% elif '.' in url and ' ' not in url %}<a href="https://{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a>{% else %}{{ url }}{% endif %}<br>
+      {% endif %}{% endfor %}<span class="muted small">Open these before deciding — what they post is the decision.</span>{% else %}<span class="muted">They didn't say they post publicly.</span>{% endif %}</td></tr>
+      <tr><th>In their words</th><td style="white-space:pre-wrap">{{ p.application or '—' }}</td></tr>
+      {% if p.notes %}<tr><th>Our notes</th><td style="white-space:pre-wrap">{{ p.notes }}</td></tr>{% endif %}
+    </table>
+  </div>
+
+  {% if p.status == 'applied' %}
+  <div class="two-col">
+    <div class="card">
+      <h2>Approve</h2>
+      <p class="muted small" style="margin-top:0">Sets their tier and rate, opens the bounty window, creates their first code with the {{ program.OFFER_TRIAL_DAYS }}-day trial and {{ program.OFFER_PROOFS }} proofs on it, and sends the welcome with their link and portal sign-in.</p>
+      <form method="post" action="/admin/partners/{{ p.id }}/approve">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+          <div><label>Tier</label><select name="tier"><option value="founding" {% if seats_left > 0 %}selected{% else %}disabled{% endif %}>Founding ({{ program.FOUNDING_SHARE|int }}%) — {{ seats_left }} left</option><option value="standard" {% if seats_left <= 0 %}selected{% endif %}>Standard ({{ program.STANDARD_SHARE|int }}%)</option></select></div>
+          <div><label>Share % <span class="muted">(blank = the tier's)</span></label><input type="number" name="share_pct" min="0.5" max="100" step="0.5" placeholder="tier"></div>
+          <div><label>First code</label><input type="text" name="code" required value="{{ suggested_code }}" style="text-transform:uppercase"></div>
+          <div><label>Bounty window (days)</label><input type="number" name="window_days" min="0" max="3650" value="{{ program.BOUNTY_WINDOW_DAYS }}"></div>
+        </div>
+        <label>Note for the record <span class="muted">(optional)</span></label><input type="text" name="notes" placeholder="Why we said yes — worth writing down">
+        <div style="margin-top:12px"><button type="submit">Approve &amp; send the welcome</button></div>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Decline</h2>
+      <p class="muted small" style="margin-top:0">Closes the application and sends the kind version: it's about the size of the group, not about them, and they're welcome to apply again.</p>
+      <form method="post" action="/admin/partners/{{ p.id }}/decline">
+        <label>Why, for the record <span class="muted">(not sent to them)</span></label><input type="text" name="note" placeholder="Too small for the first cohort">
+        <div style="margin-top:12px"><button type="submit" class="secondary" onclick="return confirm('Decline {{ p.name|e }}\'s application?')">Decline</button></div>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <div class="card"><p class="muted" style="margin:0">This application has been dealt with &mdash; they're <strong>{{ p.status }}</strong>. Everything else is on <a href="/admin/promoters/{{ p.id }}">their record</a>.</p></div>
+  {% endif %}
+</main>
+{% endblock %}

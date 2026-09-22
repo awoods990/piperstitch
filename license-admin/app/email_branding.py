@@ -81,9 +81,14 @@ def button(label: str, url: str) -> str:
     )
 
 
-def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader: str = "", footer_note: str = "") -> str:
-    """Wraps a plain-text body in the PiperStitch shell."""
+def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader: str = "", footer_note: str = "", hero_image: str = "", hero_alt: str = "") -> str:
+    """Wraps a plain-text body in the PiperStitch shell. `hero_image` is an
+    absolute URL shown above the words -- Piper's confetti on a welcome,
+    and nothing at all on an ordinary email."""
     blocks = "".join(_render_block(b) for b in _paragraphs(body_text))
+    hero = (f'<tr><td align="center" style="padding:6px 32px 0 32px;">'
+            f'<img src="{html.escape(hero_image, quote=True)}" width="240" alt="{html.escape(hero_alt, quote=True)}" '
+            f'style="display:block;width:240px;max-width:70%;height:auto;border:0;margin:0 auto;"></td></tr>') if hero_image else ""
     cta = button(cta_label, cta_url) if cta_label and cta_url else ""
     pre = f'<div style="display:none;max-height:0;overflow:hidden;opacity:0;">{html.escape(preheader)}</div>' if preheader else ""
     note = html.escape(footer_note) if footer_note else "You're receiving this because you have a PiperStitch account. Replies reach a person."
@@ -105,6 +110,7 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
       <span style="color:{NAVY};">Piper</span><span style="color:{BLUE};">Stitch</span>
     </div>
   </td></tr>
+  {hero}
   <tr><td style="padding:22px 32px 8px 32px;">
     {blocks}
     {cta}

@@ -64,7 +64,23 @@
       <a class="qr" href="/partners/portal/qr/{{ c.code }}.svg" download title="Download QR code"><img src="/partners/portal/qr/{{ c.code }}.svg" alt="QR code for {{ c.link }}" style="width:100%;height:100%;display:block"></a>
     </div>
     {% else %}<p class="muted">No code yet &mdash; it arrives with your welcome email.</p>{% endfor %}
-    <p class="muted small" style="margin:12px 0 0">Want a second code for a different channel (say, one for YouTube and one for Facebook)? Reply to any of our emails and we'll add it.</p>
+
+    <h3 id="codes" style="margin-top:18px">Want another code?</h3>
+    <p class="muted small" style="margin-top:0">One per channel is the usual reason &mdash; <span class="mono">{{ codes[0].code if codes else 'YOURNAME' }}-YT</span> for YouTube, <span class="mono">{{ codes[0].code if codes else 'YOURNAME' }}-FB</span> for a group &mdash; so you can see which one converts. Ask and we&rsquo;ll set it up, usually within a day; it carries exactly the same terms as your first.</p>
+    <form method="post" action="/partners/portal/codes" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap">
+      <div><label>The code you&rsquo;d like</label><input type="text" name="code" required placeholder="{{ (codes[0].code ~ '-YT') if codes else 'YOURNAME-YT' }}" style="text-transform:uppercase; width:200px"></div>
+      <div style="flex:1; min-width:200px"><label>Where you&rsquo;ll use it</label><input type="text" name="reason" placeholder="My YouTube channel"></div>
+      <button class="small" type="submit">Ask for this code</button>
+    </form>
+    {% if code_requests %}
+    <table style="margin-top:12px">
+      <tr><th>Asked for</th><th>Where</th><th>When</th><th>Status</th></tr>
+      {% for r in code_requests %}
+      <tr><td class="mono">{{ r.requested_code }}</td><td class="small">{{ r.reason }}</td><td class="muted small">{{ r.created_at|short_date }}</td>
+        <td>{% if r.status == 'pending' %}<span class="pill trialing">with us</span>{% elif r.status == 'approved' %}<span class="pill active">live &mdash; it&rsquo;s above</span>{% else %}<span class="pill ended">not this one</span> <span class="muted small">{{ r.decided_note }}</span>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
   </div>
 
   <div class="card">
@@ -126,11 +142,14 @@
   <div class="card kit">
     <h2>Creative kit</h2>
     <div class="disclosure">
-      <b>Disclose, every time.</b> The FTC requires a plain disclosure wherever your link or code appears &mdash; and it has to be inside a video (not only the description), on screen long enough to read in a Story, and repeated during a livestream.
+      <b>Disclose, every time.</b> The <b>Federal Trade Commission (FTC)</b> &mdash; the US regulator for advertising &mdash; requires you to tell people plainly that you&rsquo;re paid, wherever your link or code appears. Any one of these does the job:
       <ul>
         {% for d in disclosure_approved %}<li>&ldquo;{{ d }}&rdquo;</li>{% endfor %}
       </ul>
-      <div class="small" style="margin-top:6px">Not enough on their own: {% for d in disclosure_inadequate %}&ldquo;{{ d }}&rdquo;{{ ', ' if not loop.last }}{% endfor %}.</div>
+      <div style="margin-top:10px"><b>These do not count.</b> The FTC has said outright that people don&rsquo;t understand them, so using one of these is treated the same as saying nothing at all:
+        <ul>{% for d in disclosure_inadequate %}<li>&ldquo;{{ d }}&rdquo;{% if d == 'affiliate link' %} on its own{% endif %}</li>{% endfor %}</ul>
+      </div>
+      <div class="small" style="margin-top:10px">It also has to be where they&rsquo;ll actually see it: spoken <em>and</em> on screen inside a video rather than only in the description, left up long enough to read in a Story, and repeated every so often during a livestream. When in doubt, say more rather than less &mdash; nobody has ever lost an audience by being straight with them.</div>
     </div>
     <h3>Caption drafts</h3>
     <p class="muted small" style="margin:0">Starting points with the disclosure built in. Say it your way &mdash; but keep the disclosure.</p>
@@ -139,6 +158,13 @@
     <ul>{% for c in claims_approved %}<li>{{ c }}</li>{% endfor %}</ul>
     <h3>What you can't</h3>
     <ul>{% for c in claims_forbidden %}<li>{{ c }}</li>{% endfor %}</ul>
+    {% if resources %}
+    <h3>Videos and downloads</h3>
+    <p class="muted small" style="margin:0">Made for you to use as they are &mdash; embed them, cut them up, or post them whole.</p>
+    <ul>
+      {% for r in resources %}<li><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a> <span class="muted small">({{ r.kind }})</span>{% if r.description %} &mdash; <span class="muted small">{{ r.description }}</span>{% endif %}</li>{% endfor %}
+    </ul>
+    {% endif %}
     <h3>Graphics</h3>
     <ul>
       <li><a href="{{ config.WEBSITE_BASE_URL }}/assets/piperstitch-logo-420.png" download>PiperStitch logo (PNG)</a></li>
@@ -147,6 +173,23 @@
       <li>Your QR code, above, for anything printed.</li>
     </ul>
     <p class="muted small">Want a screen recording or sample artwork for a demo? Reply to any of our emails and we'll send what we have.</p>
+  </div>
+  <div class="card" id="feedback">
+    <h2>Tell us what to fix</h2>
+    <p class="muted small" style="margin-top:0">You use PiperStitch on real work and you talk to the people who haven&rsquo;t bought yet &mdash; you see what we can&rsquo;t. What confused someone, what your machine made of a file, what you wish it did, what you keep having to explain. We&rsquo;ll ask you directly from time to time as well; please don&rsquo;t wait for us. Partners have changed this product more than any survey has, and you&rsquo;ll see your fingerprints on what ships.</p>
+    <form method="post" action="/partners/portal/feedback">
+      <label>What&rsquo;s it about?</label>
+      <input type="text" name="topic" placeholder="Caps, lettering, the proof page…">
+      <label style="margin-top:10px">What happened, or what would help</label>
+      <textarea name="message" rows="4" required placeholder="A customer's logo came out with… / people keep asking me whether… / it would save me ten minutes if…"></textarea>
+      <div style="margin-top:12px"><button type="submit">Send it to the team</button></div>
+    </form>
+    {% if feedback %}
+    <h3>What you&rsquo;ve sent</h3>
+    <table>
+      {% for f in feedback %}<tr><td class="muted small" style="width:110px">{{ f.created_at|short_date }}</td><td class="small">{% if f.topic %}<strong>{{ f.topic }}</strong> &mdash; {% endif %}{{ f.message }}</td><td style="width:90px">{% if f.reviewed_at %}<span class="pill yes">read</span>{% else %}<span class="pill trialing">with us</span>{% endif %}</td></tr>{% endfor %}
+    </table>
+    {% endif %}
   </div>
   {% endif %}
   <p class="muted small" style="text-align:center">Questions? <a href="mailto:{{ config.REPLY_TO_EMAIL }}">{{ config.REPLY_TO_EMAIL }}</a> &middot; <a href="/partners/terms">Partner terms</a></p>

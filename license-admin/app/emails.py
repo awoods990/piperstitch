@@ -115,27 +115,55 @@ The link is yours and works for the next {link_days} days. You can apply from th
 
 Thanks for applying to the PiperStitch Partner Program. We read every application ourselves, and you'll hear back within a few days.
 
-If you're approved, the next email has your code, your link and your creative kit — and you can be sharing the same day.""",
+If you're approved, you won't have to work out how to start: the partner package has everything you need in it — your link and your spoken code, a QR code for anything printed, videos and graphics you can use as they are, caption drafts with the disclosure wording already in them, and the exact claims you can and can't make. Your portal shows what you've earned and who's still on trial. You could be sharing the same day you're approved, without making a single asset yourself.""",
          cta_label="", cta_url="", preheader="Thanks — we'll be in touch within a few days.", placeholders="first_name, name, email, site_url"),
-    dict(key="partner_welcome", name="Partner: welcome (approved)", description="Sent on approval: the partner's code, link, rate and a portal sign-in link.",
-         subject="Welcome to the PiperStitch Partner Program — here's your link",
+    dict(key="partner_welcome", name="Partner: welcome (approved)", description="Sent on approval: the partner's code, link, rate and a portal sign-in link. Piper's confetti rides along at the top.",
+         subject="Welcome to the PiperStitch team, {first_name}",
          body="""Hi {first_name},
 
-You're in, as a {tier}. Here's what you need:
+Welcome to the PiperStitch team. We keep this group small on purpose, and we're glad you're in it — as a {tier}.
+
+Here's what's yours:
 
 Your link: {link}
 Your code: {code}
 
 Anyone who starts through your link or types your code gets a 30-day free trial and 10 proofs. You earn {share_pct}% of everything they pay, for 24 months from their first payment — PiperStitch and Proofs alike — plus a $15 signup bounty on each one during your bounty window.
 
-Your portal has your live numbers, statements and the creative kit (graphics, caption drafts and the disclosure wording). One-time sign-in link:
+Your portal has your live numbers, your statements and the creative kit: videos, graphics, caption drafts and a QR code for anything printed. One-time sign-in link:
 
 {portal_link}
 
-Two things before you post. First, the FTC needs a plain disclosure next to your link — "I get a commission if you subscribe through my link", "Paid link" or "#ad". "Affiliate link" on its own isn't enough. Second, we pay through PayPal on the last day of each month for the previous month, once you've passed $50 and we have your W-9 (or W-8BEN) — upload it from the portal.
+Two things before you post.
+
+First, disclosure. The Federal Trade Commission (FTC) — the US regulator for advertising — requires you to tell people plainly that you're paid, wherever your link or code appears. Any of these does the job: "I get a commission if you subscribe through my link", "Paid link", or "#ad". What does NOT count, because the FTC has said outright that people don't understand them: "affiliate link" on its own, "commissionable link", or abbreviations like "sp", "spon" or "collab". It also has to be somewhere they'll actually see it — spoken and on screen inside a video rather than only in the description, left up long enough to read in a Story, and repeated every so often in a livestream. The portal has the full wording; when in doubt, say more rather than less.
+
+Second, payment. We pay through PayPal on the last day of each month for the month before, once you've passed $50 and we have your W-9 (or W-8BEN if you're outside the US). Send that whenever you like — it only has to be with us before the first payout.
+
+One more thing, and it matters to us: you'll be using PiperStitch on real work and talking to people who haven't bought yet, so you'll see what we can't. Tell us. There's a feedback box in your portal — what confused someone, what your machine did with a file, what you wish it did. We'll ask you from time to time as well. Partners have changed this product more than any survey ever has.
 
 Thank you for this. Reply to this email any time; a person reads it.""",
          cta_label="Open the partner portal", cta_url="{portal_link}", preheader="Your code, your link, your rate — and the portal.", placeholders="first_name, name, email, tier, code, link, share_pct, portal_link, site_url"),
+    dict(key="partner_code_ready", name="Partner: new code approved", description="Sent when a code a partner asked for in the portal is live.",
+         subject="Your new PiperStitch code is live: {code}",
+         body="""Hi {first_name},
+
+{code} is live and pointing at your account. Its link:
+
+{link}
+
+It carries the same terms as your other codes — the same share, the same 24 months, and the same 30-day trial and 10 proofs for whoever uses it. Your portal counts clicks and signups per code, so you'll see which channel converts.""",
+         cta_label="Open the partner portal", cta_url="{site_url}/partners/portal", preheader="{code} is ready to share.", placeholders="first_name, name, email, code, link, reason, site_url"),
+    dict(key="partner_code_declined", name="Partner: code request declined", description="Sent when we can't give a partner the code they asked for.",
+         subject="About the code you asked for",
+         body="""Hi {first_name},
+
+We couldn't set up {code} as it stands:
+
+{note}
+
+Ask again in the portal with another spelling and we'll sort it out — it's usually a quick fix, and your existing codes are unaffected.""",
+         cta_label="Ask for another", cta_url="{site_url}/partners/portal", preheader="A small problem with the code you asked for.", placeholders="first_name, name, email, code, note, site_url"),
     dict(key="partner_paid", name="Partner: payout sent", description="Sent by a payout run, with the month's statement attached.",
          subject="Your PiperStitch partner payout: {amount}",
          body="""Hi {first_name},
@@ -716,7 +744,7 @@ def fill(text: str, vars: dict) -> str:
     return (text or "").format_map(_Safe(vars))
 
 
-def render_template(row, vars: dict, *, marketing: bool = False, footer_note: str = "") -> tuple[str, str, str]:
+def render_template(row, vars: dict, *, marketing: bool = False, footer_note: str = "", hero_image: str = "", hero_alt: str = "") -> tuple[str, str, str]:
     """(subject, plain body, html) for a template or sequence-step row."""
     subject = fill(row["subject"], vars)
     body = fill(row["body"], vars)
@@ -726,17 +754,18 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
     if marketing and vars.get("unsubscribe_url"):
         footer_note = footer_note or f"You're getting this because you have a PiperStitch account. Unsubscribe from tips: {vars['unsubscribe_url']}"
         body = body.rstrip() + f"\n\n—\nDon't want these tips? Unsubscribe: {vars['unsubscribe_url']}"
-    html = email_branding.render(body_text=body, cta_label=cta_label, cta_url=cta_url, preheader=preheader, footer_note=footer_note)
+    html = email_branding.render(body_text=body, cta_label=cta_label, cta_url=cta_url, preheader=preheader, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt)
     return subject, body, html
 
 
-def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "") -> None:
+def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "",
+                hero_image: str = "", hero_alt: str = "") -> None:
     """Sends one of the editable system emails. Raises EmailSendError on
     failure after logging it."""
     row = db.get_email_template(key)
     if row is None:
         seed(); row = db.get_email_template(key)
-    subject, body, html = render_template(row, vars or {}, footer_note=footer_note)
+    subject, body, html = render_template(row, vars or {}, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt)
     msg = email_sender._compose(to_email=to_email, subject=subject, body=body, html_body=html, reply_to=reply_to)
     for name, data, ctype in attachments or []:
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")

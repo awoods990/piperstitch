@@ -189,9 +189,22 @@ def send_partner_applied_email(*, to_email: str, partner_name: str) -> None:
     _emails().send_system("partner_applied", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email))
 
 
+PIPER_CONGRATULATIONS = "/assets/piper-congratulations.png"
+
+
 def send_partner_welcome_email(*, to_email: str, partner_name: str, code: str, link: str, portal_link: str, tier: str, share_pct: float) -> None:
+    """Joining the team, with Piper's confetti at the top of it."""
     _emails().send_system("partner_welcome", to_email=to_email, customer_id=None,
+                          hero_image=f"{config.WEBSITE_BASE_URL}{PIPER_CONGRATULATIONS}", hero_alt="Piper the sandpiper, mid-hop, with confetti",
                           vars=_partner_vars(partner_name, to_email, code=code, link=link, portal_link=portal_link, tier=tier, share_pct=f"{share_pct:g}"))
+
+
+def send_partner_code_ready_email(*, to_email: str, partner_name: str, code: str, link: str, reason: str = "") -> None:
+    _emails().send_system("partner_code_ready", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email, code=code, link=link, reason=reason))
+
+
+def send_partner_code_declined_email(*, to_email: str, partner_name: str, code: str, note: str) -> None:
+    _emails().send_system("partner_code_declined", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email, code=code, note=note))
 
 
 def send_partner_paid_email(*, to_email: str, partner_name: str, amount: str, paid_at: str, method: str, payout_email: str, attachments=None) -> None:

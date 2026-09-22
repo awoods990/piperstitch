@@ -87,6 +87,7 @@
       <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>Your rate is yours.</strong> It&rsquo;s written on your account at approval and only changes if we agree it with you. Changing the program later never changes existing partners.</span></li>
       <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>Disclosure is required, not optional.</strong> The FTC holds us responsible for what our partners say. &ldquo;Affiliate link&rdquo; on its own isn&rsquo;t enough; the kit lists what is. No income claims, no &ldquo;perfect every time&rdquo;, no comparisons by name to other software.</span></li>
       <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>You never see who signed up.</strong> The portal shows dates, statuses and amounts &mdash; not names or emails. That&rsquo;s a promise we make to your audience in our privacy policy.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>We&rsquo;ll ask you what to fix, and we mean it.</strong> You&rsquo;ll be using PiperStitch on real work and hearing from people who haven&rsquo;t bought yet &mdash; that&rsquo;s a view we don&rsquo;t have. There&rsquo;s a feedback box in your portal, we ask partners directly from time to time, and partners have changed this product more than any survey has. Please use it.</span></li>
       <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>You&rsquo;re an independent contractor.</strong> We need a W-9 (US) or W-8BEN before the first payout, and we issue a 1099-NEC to US partners paid $600 or more in a year.</span></li>
     </ul>
     <p style="margin-top:22px"><a href="/partners/terms">Read the full partner terms &rarr;</a></p>
@@ -110,7 +111,13 @@
       <label for="application">About your audience</label>
       <textarea id="application" name="application" rows="5" required placeholder="Who follows you, roughly how many, and what you'd say about PiperStitch."></textarea>
       <div class="apply-honey" aria-hidden="true"><label>Website</label><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
-      <label class="apply-check"><input type="checkbox" name="agree" value="1" required> I&rsquo;ve read the <a href="/partners/terms" target="_blank" rel="noopener">partner terms</a>, including the disclosure rules.</label>
+      <label class="apply-check"><input type="checkbox" id="hasSocial" name="has_social" value="1" > <span>I post publicly &mdash; a channel, a group, a page, a newsletter or a class list.</span></label>
+      <div id="handlesRow">
+        <label for="handles">Your handles and links</label>
+        <textarea id="handles" name="handles" rows="3" placeholder="youtube.com/@yourchannel&#10;facebook.com/groups/yourgroup&#10;@yourhandle on TikTok"></textarea>
+        <p class="muted" style="font-size:.88rem; margin:6px 0 0">One per line is fine. We look at what you post before approving &mdash; it&rsquo;s the whole basis of the decision, so send us where you actually are.</p>
+      </div>
+      <label class="apply-check"><input type="checkbox" name="agree" value="1" required> <span>I&rsquo;ve read the <a href="/partners/terms" target="_blank" rel="noopener">partner terms</a>, including the disclosure rules.</span></label>
       <div class="cta-row" style="margin-top:20px"><button class="btn btn-primary" type="submit">Send my application</button></div>
     </form>
   </div>
@@ -189,5 +196,15 @@
   document.querySelectorAll('input[name=calcRate]').forEach(function (el) { el.addEventListener('change', update); });
   update();
 })();
+</script>
+<script>
+  // The handles box belongs to the "I post publicly" tick. Without
+  // JavaScript it simply stays visible, which is the right fallback.
+  (function () {
+    var tick = document.getElementById("hasSocial"), row = document.getElementById("handlesRow");
+    if (!tick || !row) return;
+    var sync = function () { row.style.display = tick.checked ? "" : "none"; };
+    tick.addEventListener("change", sync); sync();
+  })();
 </script>
 {% endblock %}

@@ -322,6 +322,49 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS partner_code_requests (
+    -- A partner asking for another code (one per channel is the usual
+    -- reason). We approve them when the code fits the house rules.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    requested_code TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',          -- which channel it is for
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | declined
+    decided_at TEXT,
+    decided_note TEXT NOT NULL DEFAULT '',
+    promotion_id INTEGER REFERENCES promotions(id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_code_requests_promoter ON partner_code_requests(promoter_id, status);
+
+CREATE TABLE IF NOT EXISTS partner_resources (
+    -- The creative kit's own library: videos, graphics and anything else
+    -- we want partners to have. Managed from the admin, shown in the
+    -- portal.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'video',       -- video | graphic | document | link
+    description TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS partner_feedback (
+    -- What partners tell us about the product. They are using it daily
+    -- on real work and talking to the people who aren't buying yet, so
+    -- this is the most valuable post we get (spec §7: ask for it).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    topic TEXT NOT NULL DEFAULT '',           -- what it is about, in their words
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    reviewed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_partner_feedback_created ON partner_feedback(created_at);
+
 CREATE TABLE IF NOT EXISTS partner_prospects (
     -- Someone who asked to see the Partner Program details. The program
     -- page carries rates and payout terms, so it sits behind a short
@@ -506,6 +549,7 @@ def init_db() -> None:
             ("tax_form_type", "TEXT NOT NULL DEFAULT ''"), ("tax_form_received_at", "TEXT"),
             ("platforms", "TEXT NOT NULL DEFAULT ''"), ("application", "TEXT NOT NULL DEFAULT ''"),
             ("portal_token_hash", "TEXT NOT NULL DEFAULT ''"), ("applied_at", "TEXT"), ("approved_at", "TEXT"),
+            ("handles", "TEXT NOT NULL DEFAULT ''"),               # channel links they gave us when applying
         ):
             _add_column_if_missing(conn, "promoters", column, definition)
         _add_column_if_missing(conn, "promotions", "trial_days", "INTEGER")                          # NULL = config.TRIAL_DAYS
@@ -1423,16 +1467,114 @@ def get_promoter_by_email(email: str) -> Optional[sqlite3.Row]:
         return conn.execute("SELECT * FROM promoters WHERE email = ? OR (payout_email != '' AND payout_email = ?) ORDER BY active DESC, id LIMIT 1", (e, e)).fetchone()
 
 
-def create_partner_application(*, name: str, email: str, organization: str, platforms: str, application: str) -> int:
+def create_partner_application(*, name: str, email: str, organization: str, platforms: str, application: str, handles: str = "") -> int:
     """A public application: a promoter in status 'applied' with no
     codes, waiting in the admin queue."""
     with connection() as conn:
         cur = conn.execute(
-            "INSERT INTO promoters (name, email, organization, default_share_pct, notes, active, status, platforms, application, applied_at, created_at, updated_at) "
-            "VALUES (?, ?, ?, 0, '', 1, 'applied', ?, ?, ?, ?, ?)",
-            (name.strip(), email.strip().lower(), organization.strip(), platforms.strip(), application.strip(), _now(), _now(), _now()),
+            "INSERT INTO promoters (name, email, organization, default_share_pct, notes, active, status, platforms, handles, application, applied_at, created_at, updated_at) "
+            "VALUES (?, ?, ?, 0, '', 1, 'applied', ?, ?, ?, ?, ?, ?)",
+            (name.strip(), email.strip().lower(), organization.strip(), platforms.strip(), handles.strip(), application.strip(), _now(), _now(), _now()),
         )
         return cur.lastrowid
+
+
+# ------------------------------------------ code requests, kit, feedback --
+
+
+def create_code_request(*, promoter_id: int, requested_code: str, reason: str) -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_code_requests (promoter_id, requested_code, reason, created_at) VALUES (?, ?, ?, ?)",
+                           (promoter_id, requested_code.strip().upper(), reason.strip(), _now()))
+        return cur.lastrowid
+
+
+def get_code_request(request_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT r.*, promoters.name AS promoter_name, promoters.default_share_pct, promoters.tier FROM partner_code_requests r "
+                            "JOIN promoters ON promoters.id = r.promoter_id WHERE r.id = ?", (request_id,)).fetchone()
+
+
+def list_code_requests(*, promoter_id: Optional[int] = None, status: str = "") -> list[sqlite3.Row]:
+    sql = ("SELECT r.*, promoters.name AS promoter_name, promoters.email AS promoter_email FROM partner_code_requests r "
+           "JOIN promoters ON promoters.id = r.promoter_id WHERE 1 = 1")
+    args: list = []
+    if promoter_id:
+        sql += " AND r.promoter_id = ?"; args.append(promoter_id)
+    if status:
+        sql += " AND r.status = ?"; args.append(status)
+    sql += " ORDER BY r.created_at DESC"
+    with connection() as conn:
+        return conn.execute(sql, args).fetchall()
+
+
+def decide_code_request(request_id: int, *, status: str, note: str = "", promotion_id: Optional[int] = None) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_code_requests SET status = ?, decided_at = ?, decided_note = ?, promotion_id = ? WHERE id = ?",
+                     (status, _now(), note.strip(), promotion_id, request_id))
+
+
+def count_pending_code_requests() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM partner_code_requests WHERE status = 'pending'").fetchone()[0]
+
+
+def add_partner_resource(*, title: str, url: str, kind: str, description: str, sort_order: int = 0) -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_resources (title, url, kind, description, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                           (title.strip(), url.strip(), kind, description.strip(), sort_order, _now()))
+        return cur.lastrowid
+
+
+def list_partner_resources(*, active_only: bool = False) -> list[sqlite3.Row]:
+    with connection() as conn:
+        sql = "SELECT * FROM partner_resources"
+        if active_only:
+            sql += " WHERE active = 1"
+        return conn.execute(sql + " ORDER BY sort_order, id").fetchall()
+
+
+def get_partner_resource(resource_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_resources WHERE id = ?", (resource_id,)).fetchone()
+
+
+def update_partner_resource(resource_id: int, *, title: str, url: str, kind: str, description: str, sort_order: int, active: bool) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_resources SET title = ?, url = ?, kind = ?, description = ?, sort_order = ?, active = ? WHERE id = ?",
+                     (title.strip(), url.strip(), kind, description.strip(), sort_order, 1 if active else 0, resource_id))
+
+
+def delete_partner_resource(resource_id: int) -> None:
+    with connection() as conn:
+        conn.execute("DELETE FROM partner_resources WHERE id = ?", (resource_id,))
+
+
+def add_partner_feedback(*, promoter_id: int, topic: str, message: str) -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_feedback (promoter_id, topic, message, created_at) VALUES (?, ?, ?, ?)",
+                           (promoter_id, topic.strip(), message.strip(), _now()))
+        return cur.lastrowid
+
+
+def list_partner_feedback(*, promoter_id: Optional[int] = None, limit: int = 100) -> list[sqlite3.Row]:
+    sql = ("SELECT f.*, promoters.name AS promoter_name FROM partner_feedback f JOIN promoters ON promoters.id = f.promoter_id")
+    args: list = []
+    if promoter_id:
+        sql += " WHERE f.promoter_id = ?"; args.append(promoter_id)
+    sql += " ORDER BY f.created_at DESC LIMIT ?"; args.append(limit)
+    with connection() as conn:
+        return conn.execute(sql, args).fetchall()
+
+
+def mark_partner_feedback_reviewed(feedback_id: int, by: str = "admin") -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_feedback SET reviewed_at = ?, reviewed_by = ? WHERE id = ?", (_now(), by, feedback_id))
+
+
+def count_unreviewed_partner_feedback() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM partner_feedback WHERE reviewed_at IS NULL").fetchone()[0]
 
 
 def create_partner_prospect(*, name: str, email: str, organization: str = "", platforms: str = "", source: str = "self", note: str = "") -> int:

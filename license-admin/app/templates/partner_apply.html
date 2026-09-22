@@ -23,10 +23,26 @@
       <label for="application">About your audience</label>
       <textarea id="application" name="application" rows="5" required placeholder="Who follows you, roughly how many, and what you'd say about PiperStitch.">{{ form.application or '' }}</textarea>
       <div class="apply-honey" aria-hidden="true"><label>Website</label><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
-      <label class="apply-check"><input type="checkbox" name="agree" value="1" required> I&rsquo;ve read the <a href="/partners/terms" target="_blank" rel="noopener">partner terms</a>, including the disclosure rules.</label>
+      <label class="apply-check"><input type="checkbox" id="hasSocial" name="has_social" value="1" {% if form.has_social %}checked{% endif %}> <span>I post publicly &mdash; a channel, a group, a page, a newsletter or a class list.</span></label>
+      <div id="handlesRow">
+        <label for="handles">Your handles and links</label>
+        <textarea id="handles" name="handles" rows="3" placeholder="youtube.com/@yourchannel&#10;facebook.com/groups/yourgroup&#10;@yourhandle on TikTok">{{ form.handles or '' }}</textarea>
+        <p class="muted" style="font-size:.88rem; margin:6px 0 0">One per line is fine. We look at what you post before approving &mdash; it&rsquo;s the whole basis of the decision, so send us where you actually are.</p>
+      </div>
+      <label class="apply-check"><input type="checkbox" name="agree" value="1" required> <span>I&rsquo;ve read the <a href="/partners/terms" target="_blank" rel="noopener">partner terms</a>, including the disclosure rules.</span></label>
       <div class="cta-row" style="margin-top:20px"><button class="btn btn-primary" type="submit">Send my application</button></div>
     </form>
     <p class="muted" style="margin-top:22px; font-size:.95rem">Already a partner? <a href="/partners/portal">Sign in to the portal</a>. Want to re-read the program first? <a href="/partners/program">It&rsquo;s here</a>.</p>
   </div>
 </section>
+<script>
+  // The handles box belongs to the "I post publicly" tick. Without
+  // JavaScript it simply stays visible, which is the right fallback.
+  (function () {
+    var tick = document.getElementById("hasSocial"), row = document.getElementById("handlesRow");
+    if (!tick || !row) return;
+    var sync = function () { row.style.display = tick.checked ? "" : "none"; };
+    tick.addEventListener("change", sync); sync();
+  })();
+</script>
 {% endblock %}
