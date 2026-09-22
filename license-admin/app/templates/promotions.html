@@ -68,11 +68,17 @@
         <div><label for="pc_code">Code</label><input type="text" id="pc_code" name="code" required placeholder="STITCHCLUB20" style="text-transform:uppercase"></div>
         <div><label for="pc_kind">Kind</label><select id="pc_kind" name="kind"><option value="direct">Direct discount</option><option value="promoter">Promoter referral</option></select></div>
         <div><label for="pc_promoter">Promoter (for referral codes)</label><select id="pc_promoter" name="promoter_id"><option value="">—</option>{% for p in promoters if p.active %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></div>
-        <div><label for="pc_pct">Discount %</label><input type="number" id="pc_pct" name="percent_off" required min="1" max="100" step="0.5" value="20"></div>
-        <div><label for="pc_months">For how many months</label><input type="number" id="pc_months" name="duration_months" min="1" max="120" placeholder="blank = forever"></div>
+        <div><label for="pc_pct">Discount %</label><input type="number" id="pc_pct" name="percent_off" min="0" max="100" step="0.5" value="0"></div>
+        <div><label for="pc_months">Discount for how many months</label><input type="number" id="pc_months" name="duration_months" min="1" max="120" placeholder="blank = forever"></div>
+      </div>
+      <p class="muted small" style="margin:8px 0 0">A partner code gives <b>more product, not a discount</b>: leave the discount at 0 and set the perks. Stripe is only involved when there is a discount.</p>
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:6px">
+        <div><label for="pc_trial">Trial length (days)</label><input type="number" id="pc_trial" name="trial_days" min="1" max="365" placeholder="blank = standard {{ trial_days }}"></div>
+        <div><label for="pc_proofs">Extra free proofs</label><input type="number" id="pc_proofs" name="proofs_extra" min="0" max="100" placeholder="0 (7 makes 10 total)"></div>
+        <div><label for="pc_term">Commission term (months)</label><input type="number" id="pc_term" name="commission_months" min="1" max="240" placeholder="blank = no cap; partners 24"></div>
       </div>
       <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 2fr; gap:10px; margin-top:10px">
-        <div><label for="pc_share">Promoter share % of net</label><input type="number" id="pc_share" name="share_pct" min="0" max="100" step="0.5" placeholder="promoter's default"></div>
+        <div><label for="pc_share">Promoter share % (of what the customer pays)</label><input type="number" id="pc_share" name="share_pct" min="0" max="100" step="0.5" placeholder="promoter's default"></div>
         <div><label for="pc_max">Maximum uses</label><input type="number" id="pc_max" name="max_redemptions" min="1" placeholder="unlimited"></div>
         <div><label for="pc_exp">Expires</label><input type="date" id="pc_exp" name="expires_at"></div>
         <div><label for="pc_emails">Only for these emails (direct discounts)</label><input type="text" id="pc_emails" name="allowed_emails" placeholder="a@x.com, b@y.com — blank = anyone"></div>

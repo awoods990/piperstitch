@@ -294,6 +294,34 @@ CREATE TABLE IF NOT EXISTS promoter_payments (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS referral_clicks (
+    -- One row per click on a partner's link (/r/<CODE>). The IP is hashed,
+    -- never stored raw; the signed cookie set alongside is what attributes
+    -- a later signup (Partner Program §5.2).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promotion_id INTEGER NOT NULL REFERENCES promotions(id),
+    clicked_at TEXT NOT NULL,
+    ip_hash TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    landing_path TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_referral_clicks_promo ON referral_clicks(promotion_id, clicked_at);
+
+CREATE TABLE IF NOT EXISTS partner_content (
+    -- FTC monitoring log (Partner Program §10.1): where a partner posted,
+    -- and whether the disclosure was present when we checked.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    url TEXT NOT NULL,
+    platform TEXT NOT NULL DEFAULT '',
+    posted_at TEXT,
+    disclosure_present INTEGER,           -- 1 yes, 0 no, NULL not yet checked
+    checked_at TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
+
 CREATE TABLE IF NOT EXISTS expenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,                 -- YYYY-MM-DD
@@ -441,6 +469,29 @@ def init_db() -> None:
         # Which product a subscription is for: the app ('core') or PiperStitch Proofs ('proofs').
         _add_column_if_missing(conn, "subscriptions", "product", "TEXT NOT NULL DEFAULT 'core'")
         _add_column_if_missing(conn, "customers", "proofs_free_extra", "INTEGER NOT NULL DEFAULT 0")   # extra free proofs an admin has granted
+        # Partner Program (docs: PiperStitch Partner Program build spec, §4). Additive only.
+        for column, definition in (
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),          # applied | approved | active | suspended | closed
+            ("tier", "TEXT NOT NULL DEFAULT ''"),                  # founding (30%) | standard (25%) | '' ; 'established' is DERIVED (bounty_reinstated_at), never stored
+            ("bounty_window_start", "TEXT"), ("bounty_window_end", "TEXT"), ("bounty_reinstated_at", "TEXT"),
+            ("payout_method", "TEXT NOT NULL DEFAULT 'paypal'"), ("payout_email", "TEXT NOT NULL DEFAULT ''"),
+            ("tax_form_type", "TEXT NOT NULL DEFAULT ''"), ("tax_form_received_at", "TEXT"),
+            ("platforms", "TEXT NOT NULL DEFAULT ''"), ("application", "TEXT NOT NULL DEFAULT ''"),
+            ("portal_token_hash", "TEXT NOT NULL DEFAULT ''"), ("applied_at", "TEXT"), ("approved_at", "TEXT"),
+        ):
+            _add_column_if_missing(conn, "promoters", column, definition)
+        _add_column_if_missing(conn, "promotions", "trial_days", "INTEGER")                          # NULL = config.TRIAL_DAYS
+        _add_column_if_missing(conn, "promotions", "proofs_extra", "INTEGER NOT NULL DEFAULT 0")     # added to customers.proofs_free_extra (max, never stacked)
+        _add_column_if_missing(conn, "promotions", "commission_months", "INTEGER")                   # NULL = uncapped (legacy); 24 for partners
+        _add_column_if_missing(conn, "promo_redemptions", "first_payment_at", "TEXT")                 # immutable once written (R3)
+        _add_column_if_missing(conn, "promo_redemptions", "term_ends_at", "TEXT")
+        _add_column_if_missing(conn, "promo_redemptions", "bounty_payout_id", "INTEGER REFERENCES promo_payouts(id)")
+        _add_column_if_missing(conn, "promo_redemptions", "attribution_source", "TEXT NOT NULL DEFAULT 'code'")   # code | link | manual
+        _add_column_if_missing(conn, "promo_redemptions", "attribution_locked", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "promo_payouts", "kind", "TEXT NOT NULL DEFAULT 'recurring'")   # recurring | bounty | reversal
+        _add_column_if_missing(conn, "promo_payouts", "reverses_payout_id", "INTEGER REFERENCES promo_payouts(id)")
+        _add_column_if_missing(conn, "promo_payouts", "note", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "stripe_events", "result", "TEXT NOT NULL DEFAULT ''")
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1299,12 +1350,14 @@ def list_promoters() -> list[sqlite3.Row]:
 
 def create_promotion(*, code: str, kind: str, promoter_id: Optional[int], percent_off: float, duration_months: Optional[int], share_pct: float,
                      max_redemptions: Optional[int], expires_at: Optional[str], allowed_emails: str, stripe_coupon_id: Optional[str],
-                     stripe_promotion_code_id: Optional[str], notes: str) -> int:
+                     stripe_promotion_code_id: Optional[str], notes: str, trial_days: Optional[int] = None, proofs_extra: int = 0,
+                     commission_months: Optional[int] = None) -> int:
     with connection() as conn:
         cur = conn.execute(
             "INSERT INTO promotions (code, kind, promoter_id, percent_off, duration_months, share_pct, max_redemptions, expires_at, allowed_emails, "
-            "stripe_coupon_id, stripe_promotion_code_id, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (code, kind, promoter_id, percent_off, duration_months, share_pct, max_redemptions, expires_at, allowed_emails, stripe_coupon_id, stripe_promotion_code_id, notes.strip(), _now(), _now()),
+            "stripe_coupon_id, stripe_promotion_code_id, notes, trial_days, proofs_extra, commission_months, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (code, kind, promoter_id, percent_off, duration_months, share_pct, max_redemptions, expires_at, allowed_emails, stripe_coupon_id, stripe_promotion_code_id, notes.strip(),
+             trial_days, int(proofs_extra or 0), commission_months, _now(), _now()),
         )
         return cur.lastrowid
 
@@ -1368,6 +1421,7 @@ def record_redemption(*, promotion_id: int, customer_id: int, subscription_id: O
 
 _REDEMPTIONS_WITH_CONTEXT = (
     "SELECT r.*, promotions.code, promotions.kind, promotions.percent_off, promotions.duration_months, promotions.share_pct, promotions.promoter_id, "
+    "promotions.trial_days, promotions.proofs_extra, promotions.commission_months, promoters.status AS promoter_status, "
     "promoters.name AS promoter_name, customers.name AS customer_name, customers.email AS customer_email, subscriptions.status AS subscription_status "
     "FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id LEFT JOIN promoters ON promoters.id = promotions.promoter_id "
     "JOIN customers ON customers.id = r.customer_id LEFT JOIN subscriptions ON subscriptions.id = r.subscription_id"

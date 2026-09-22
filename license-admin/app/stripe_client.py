@@ -40,7 +40,9 @@ def create_subscription_checkout(*, customer_name: str, customer_email: str, cus
         metadata["promotion_id"] = str(promotion["id"])
         metadata["promo_code"] = promotion["code"]
     extra = {}
-    if promotion is not None:
+    if promotion is not None and promotion["stripe_promotion_code_id"]:
+        # A code with no discount (a partner's perks-only code) has no
+        # Stripe objects: it rides on the metadata alone.
         extra["discounts"] = [{"promotion_code": promotion["stripe_promotion_code_id"]}]
         if float(promotion["percent_off"]) >= 100:
             # A fully free period should not demand a card up front.

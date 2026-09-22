@@ -174,3 +174,45 @@ def test_share_accrues_on_every_subscription_the_referred_customer_holds(isolate
     subscriptions.sync_from_stripe(old)
     assert db.redemption_for_customer(cid2)["code"] == "LEGACY"
     assert db.redemption_for_subscription(db.get_subscription_by_stripe_id("sub_old")["id"])["code"] == "LEGACY"
+
+
+def test_a_perks_only_code_has_no_stripe_objects_and_charges_full_price(isolated_db, test_keypair, fake_stripe, monkeypatch):
+    """§3.2 / test 28: percent_off = 0 is a real code -- attribution plus a
+    longer trial and extra proofs -- with nothing created on Stripe and no
+    discount passed to Checkout. Test 29: a direct discount is untouched."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import app.main as main_mod
+    pid = db.create_promoter(name="Kathleen", email="k@example.com", default_share_pct=30)
+    promo_id = promotions.create_promotion(code="KATHLEEN", kind="promoter", promoter_id=pid, percent_off=0, duration_months=None, share_pct=30, trial_days=30, proofs_extra=7, commission_months=24)
+    promo = db.get_promotion(promo_id)
+    assert promo["stripe_coupon_id"] is None and promo["stripe_promotion_code_id"] is None and fake_stripe["created"] == []
+    assert promo["trial_days"] == 30 and promo["proofs_extra"] == 7 and promo["commission_months"] == 24
+    assert promotions.describe(promo) == "30-day free trial and 10 proofs included"
+    assert promotions.validate("kathleen", email="x@example.com")["id"] == promo_id
+    # No discount and no perk is refused: a code has to offer something.
+    with pytest.raises(promotions.PromoError) as e:
+        promotions.create_promotion(code="NOTHING", kind="promoter", promoter_id=pid, percent_off=0, duration_months=None, share_pct=30)
+    assert e.value.code == "no_offer"
+    # Checkout: the code rides on metadata; no `discounts` for Stripe.
+    captured = {}
+    class FakeSession: id = "cs_test"; url = "https://checkout.stripe.com/c/pay/cs_test"
+    real = stripe_client.create_subscription_checkout
+    def fake_create(**kw): captured.update(kw); return FakeSession()
+    monkeypatch.setattr(main_mod.stripe_client, "create_subscription_checkout", fake_create)
+    r = TestClient(app).post("/api/checkout", json={"customer_name": "A", "customer_email": "a@example.com", "promo_code": "KATHLEEN"})
+    assert r.status_code == 200 and captured["promotion"]["id"] == promo_id
+    # The real builder's Stripe params for that promotion carry no discount.
+    seen = {}
+    class FakeStripeSession:
+        @staticmethod
+        def create(**kw): seen.update(kw); return FakeSession()
+    monkeypatch.setattr(stripe_client.stripe.checkout, "Session", FakeStripeSession)
+    real(customer_name="A", customer_email="a@example.com", customer_id=1, promotion=promo)
+    assert "discounts" not in seen and seen["subscription_data"]["metadata"]["promotion_id"] == str(promo_id)
+    # A direct discount still becomes a coupon and is passed to Checkout as before.
+    direct = promotions.create_promotion(code="TEN", kind="direct", promoter_id=None, percent_off=10, duration_months=1)
+    assert fake_stripe["created"][-1]["code"] == "TEN"
+    seen.clear(); real(customer_name="A", customer_email="a@example.com", customer_id=1, promotion=db.get_promotion(direct))
+    assert seen["discounts"] == [{"promotion_code": "promo_TEN"}]
+    assert promotions.describe(db.get_promotion(direct)) == "10% off your first month"

@@ -1488,6 +1488,7 @@ def admin_promotions(request: Request, message: str = "", error: str = ""):
         "promoters": promoters,
         "promotions": db.list_promotions(),
         "describe": promotions.describe,
+        "trial_days": config.TRIAL_DAYS,
         "message": message or None,
         "error": error or None,
     })
@@ -1551,21 +1552,26 @@ def admin_record_promoter_payment(promoter_id: int, amount: str = Form(...), pai
 
 
 @app.post("/admin/promotions", dependencies=[Depends(auth.require_admin)])
-def admin_create_promotion(code: str = Form(...), kind: str = Form("direct"), promoter_id: str = Form(""), percent_off: str = Form(...), duration_months: str = Form(""),
-                           share_pct: str = Form(""), max_redemptions: str = Form(""), expires_at: str = Form(""), allowed_emails: str = Form(""), notes: str = Form("")):
+def admin_create_promotion(code: str = Form(...), kind: str = Form("direct"), promoter_id: str = Form(""), percent_off: str = Form("0"), duration_months: str = Form(""),
+                           share_pct: str = Form(""), max_redemptions: str = Form(""), expires_at: str = Form(""), allowed_emails: str = Form(""), notes: str = Form(""),
+                           trial_days: str = Form(""), proofs_extra: str = Form(""), commission_months: str = Form("")):
     anchor = "codes"
     try:
         pid = int(promoter_id) if promoter_id.strip().isdigit() else None
         promoter = db.get_promoter(pid) if pid else None
-        pct = _parse_number(percent_off, name="Discount", lo=0.01, hi=100)
+        pct = _parse_number(percent_off or "0", name="Discount", lo=0, hi=100)
         months = _parse_number(duration_months, name="Duration", lo=1, hi=120, blank_ok=True)
         share = _parse_number(share_pct, name="Revenue share", lo=0, hi=100, blank_ok=True)
         if share is None:
             share = float(promoter["default_share_pct"]) if promoter else 0
         max_r = _parse_number(max_redemptions, name="Maximum uses", lo=1, hi=1_000_000, blank_ok=True)
+        trial = _parse_number(trial_days, name="Trial days", lo=1, hi=365, blank_ok=True)
+        extra = _parse_number(proofs_extra, name="Extra proofs", lo=0, hi=100, blank_ok=True)
+        term = _parse_number(commission_months, name="Commission term", lo=1, hi=240, blank_ok=True)
         promotion_id = promotions.create_promotion(
             code=code, kind=kind, promoter_id=pid, percent_off=pct, duration_months=int(months) if months else None, share_pct=share,
             max_redemptions=int(max_r) if max_r else None, expires_at=_parse_expiry(expires_at), allowed_emails=allowed_emails, notes=notes,
+            trial_days=int(trial) if trial else None, proofs_extra=int(extra or 0), commission_months=int(term) if term else None,
         )
     except promotions.PromoError as e:
         return (_promoter_redirect(int(promoter_id), error=e.message) if promoter_id.strip().isdigit() else _promotions_redirect(error=e.message, anchor=anchor))

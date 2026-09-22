@@ -51,7 +51,14 @@ def normalize_code(code: str) -> str:
 
 
 def create_promotion(*, code: str, kind: str, promoter_id: Optional[int], percent_off: float, duration_months: Optional[int], share_pct: float = 0,
-                     max_redemptions: Optional[int] = None, expires_at: Optional[datetime] = None, allowed_emails: str = "", notes: str = "") -> int:
+                     max_redemptions: Optional[int] = None, expires_at: Optional[datetime] = None, allowed_emails: str = "", notes: str = "",
+                     trial_days: Optional[int] = None, proofs_extra: int = 0, commission_months: Optional[int] = None) -> int:
+    """A code. With a discount it becomes a Stripe coupon + promotion code;
+    with `percent_off == 0` (the partner offer: more product, not less
+    money -- a longer trial and extra proofs, see the Partner Program
+    spec §3.2/§9) Stripe is not involved at all, since Stripe refuses a
+    0% coupon: the code is attribution plus perks, carried on the
+    subscription's metadata alone."""
     code = normalize_code(code)
     if not CODE_RE.match(code):
         raise PromoError("invalid_code", "Codes are 3–30 letters, numbers or dashes.")
@@ -59,8 +66,16 @@ def create_promotion(*, code: str, kind: str, promoter_id: Optional[int], percen
         raise PromoError("invalid_kind", "Kind must be promoter or direct.")
     if kind == "promoter" and not promoter_id:
         raise PromoError("no_promoter", "A promoter code needs a promoter.")
-    if not (0 < percent_off <= 100):
-        raise PromoError("invalid_percent", "Discount must be between 1 and 100 percent.")
+    if not (0 <= percent_off <= 100):
+        raise PromoError("invalid_percent", "Discount must be between 0 and 100 percent (0 = no discount, perks only).")
+    if percent_off == 0 and not (trial_days or proofs_extra):
+        raise PromoError("no_offer", "A code with no discount needs a perk: a longer trial, extra proofs, or both.")
+    if trial_days is not None and not (1 <= trial_days <= 365):
+        raise PromoError("invalid_trial", "The trial is a number of days, 1 to 365.")
+    if not (0 <= proofs_extra <= 100):
+        raise PromoError("invalid_proofs", "Extra proofs is a number from 0 to 100.")
+    if commission_months is not None and commission_months < 1:
+        raise PromoError("invalid_term", "The commission term is a number of months (1 or more), or blank for no cap.")
     if duration_months is not None and duration_months < 1:
         raise PromoError("invalid_duration", "Duration is a number of monthly cycles (1 or more), or blank for every month.")
     if not (0 <= share_pct <= 100):
@@ -72,17 +87,20 @@ def create_promotion(*, code: str, kind: str, promoter_id: Optional[int], percen
     emails = ",".join(sorted({e.strip().lower() for e in re.split(r"[,\s]+", allowed_emails or "") if e.strip()}))
     promoter = db.get_promoter(promoter_id) if promoter_id else None
     name = f"PiperStitch {code}" + (f" ({promoter['name']})" if promoter else "")
-    try:
-        coupon_id, pc_id = stripe_client.create_coupon_and_code(
-            code=code, name=name, percent_off=percent_off, duration_months=duration_months, max_redemptions=max_redemptions,
-            expires_at_ts=int(expires_at.timestamp()) if expires_at else None,
-        )
-    except stripe.error.StripeError as e:
-        log.error("Stripe refused to create promotion %s: %s", code, e)
-        raise PromoError("stripe", f"Stripe couldn't create the code: {getattr(e, 'user_message', None) or e}") from e
-    return db.create_promotion(code=code, kind=kind, promoter_id=promoter_id, percent_off=percent_off, duration_months=duration_months, share_pct=share_pct,
+    coupon_id = pc_id = None
+    if percent_off > 0:
+        try:
+            coupon_id, pc_id = stripe_client.create_coupon_and_code(
+                code=code, name=name, percent_off=percent_off, duration_months=duration_months, max_redemptions=max_redemptions,
+                expires_at_ts=int(expires_at.timestamp()) if expires_at else None,
+            )
+        except stripe.error.StripeError as e:
+            log.error("Stripe refused to create promotion %s: %s", code, e)
+            raise PromoError("stripe", f"Stripe couldn't create the code: {getattr(e, 'user_message', None) or e}") from e
+    return db.create_promotion(code=code, kind=kind, promoter_id=promoter_id, percent_off=percent_off, duration_months=duration_months if percent_off > 0 else None, share_pct=share_pct,
                                max_redemptions=max_redemptions, expires_at=_iso(expires_at) if expires_at else None, allowed_emails=emails,
-                               stripe_coupon_id=coupon_id, stripe_promotion_code_id=pc_id, notes=notes)
+                               stripe_coupon_id=coupon_id, stripe_promotion_code_id=pc_id, notes=notes,
+                               trial_days=trial_days, proofs_extra=int(proofs_extra or 0), commission_months=commission_months)
 
 
 def set_active(promotion_id: int, active: bool) -> None:
@@ -121,18 +139,34 @@ def validate(code: str, *, email: str = "") -> "db.sqlite3.Row":
     return promo
 
 
+def perks(promo) -> list[str]:
+    """The non-price perks a code carries, in plain words (empty for a
+    plain discount)."""
+    out = []
+    keys = promo.keys() if hasattr(promo, "keys") else ()
+    trial = promo["trial_days"] if "trial_days" in keys else None
+    extra = promo["proofs_extra"] if "proofs_extra" in keys else 0
+    if trial and trial != config.TRIAL_DAYS:
+        out.append(f"{trial}-day free trial")
+    if extra:
+        out.append(f"{config.PROOFS_FREE_PROOFS + extra} proofs included")
+    return out
+
+
 def describe(promo) -> str:
-    pct = f"{promo['percent_off']:g}%"
+    pct = float(promo["percent_off"] or 0)
+    extras = perks(promo)
+    if pct == 0:
+        return " and ".join(extras) if extras else "no discount"
     months = promo["duration_months"]
-    if months is None:
-        return f"{pct} off every month"
-    if months == 1:
-        return f"{pct} off your first month"
-    return f"{pct} off your first {months} months"
+    base = f"{pct:g}% off every month" if months is None else (f"{pct:g}% off your first month" if months == 1 else f"{pct:g}% off your first {months} months")
+    return base + (", plus " + " and ".join(extras) if extras else "")
 
 
 def payload(promo) -> dict:
-    return {"code": promo["code"], "percent_off": promo["percent_off"], "duration_months": promo["duration_months"], "description": describe(promo)}
+    keys = promo.keys() if hasattr(promo, "keys") else ()
+    return {"code": promo["code"], "percent_off": promo["percent_off"], "duration_months": promo["duration_months"], "description": describe(promo),
+            "trial_days": promo["trial_days"] if "trial_days" in keys else None, "proofs_extra": promo["proofs_extra"] if "proofs_extra" in keys else 0}
 
 
 # ----------------------------------------------------------- attributing ---
