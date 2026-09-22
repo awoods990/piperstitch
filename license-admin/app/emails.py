@@ -85,6 +85,30 @@ Here's your link to the partner portal:
 
 It expires in {link_minutes} minutes and only works once. If you didn't request it, you can ignore this.""",
          cta_label="Open the partner portal", cta_url="{url}", preheader="Your one-time link to the PiperStitch partner portal.", placeholders="first_name, name, email, url, link_minutes, site_url"),
+    dict(key="partner_program", name="Partner: program details link", description="Sent when someone registers to see the Partner Program details, and when we invite someone to look.",
+         subject="The PiperStitch Partner Program — your link",
+         body="""Hi {first_name},
+
+Here are the full Partner Program details — what you earn, for how long, how the signup bounty works and how we pay:
+
+{url}
+
+The link is yours; it works for the next {link_days} days, and you can apply from the bottom of that page. We keep the numbers off the public site, so please don't repost them — share the program with anyone you think should see it and we'll send them their own link.
+
+Questions before you decide? Reply to this email; a person reads it.""",
+         cta_label="Read the program details", cta_url="{url}", preheader="What you earn, for how long, and how we pay.", placeholders="first_name, name, email, url, link_days, site_url"),
+    dict(key="partner_invited", name="Partner: invitation to the program", description="Sent when an admin invites someone to see the Partner Program.",
+         subject="An invitation to the PiperStitch Partner Program",
+         body="""Hi {first_name},
+
+We'd like you in the first group of PiperStitch partners — people embroiderers already trust, who get paid properly for saying so.
+
+Here are the full details: what you earn on every referral, for how long, the signup bounty and how we pay.
+
+{url}
+
+The link is yours and works for the next {link_days} days. You can apply from the bottom of the page, or just reply to this email and ask me anything first.""",
+         cta_label="Read the program details", cta_url="{url}", preheader="What you earn, for how long, and how we pay.", placeholders="first_name, name, email, url, link_days, site_url"),
     dict(key="partner_applied", name="Partner: application received", description="Sent when someone applies to the Partner Program.",
          subject="We got your PiperStitch partner application",
          body="""Hi {first_name},

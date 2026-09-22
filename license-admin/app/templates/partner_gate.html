@@ -1,0 +1,36 @@
+{% extends "partner_site_base.html" %}
+{% block title %}Partner Program details — PiperStitch{% endblock %}
+{% block body %}
+<section class="page-hero sky">
+  <div class="wrap narrow">
+    <p class="eyebrow">Partner Program</p>
+    <h1>Tell us who you are and the details are yours.</h1>
+    <p class="lede">
+      The full program &mdash; what you earn on every referral, for how long, the signup bounty and how we pay &mdash;
+      isn&rsquo;t on the public site. Leave your name and email and it opens straight away; we&rsquo;ll also send the link
+      so you can come back to it or read it properly later.
+    </p>
+  </div>
+</section>
+<section class="bg-white">
+  <div class="wrap narrow">
+    {% if error %}<div class="callout" style="background:#fdeaea; border-color:#f3c6c6"><strong>{{ error }}</strong></div>{% endif %}
+    <form class="apply-form" method="post" action="/partners/register">
+      <div class="apply-grid">
+        <div><label for="name">Your name</label><input type="text" id="name" name="name" required autocomplete="name" value="{{ form.name or '' }}" autofocus></div>
+        <div><label for="email">Email</label><input type="email" id="email" name="email" required autocomplete="email" value="{{ form.email or '' }}"></div>
+      </div>
+      <label for="organization">Shop, channel or business name <span class="muted">(optional)</span></label>
+      <input type="text" id="organization" name="organization" value="{{ form.organization or '' }}">
+      <label for="platforms">Where your audience is <span class="muted">(optional)</span></label>
+      <input type="text" id="platforms" name="platforms" placeholder="YouTube, a Facebook group, TikTok, a newsletter, in-person classes…" value="{{ form.platforms or '' }}">
+      <div class="apply-honey" aria-hidden="true"><label>Website</label><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
+      <div class="cta-row" style="margin-top:20px"><button class="btn btn-primary" type="submit">Show me the details</button></div>
+      <p class="muted" style="font-size:.9rem; margin:14px 0 0">No commitment, and nothing to install. This isn&rsquo;t the application &mdash; that&rsquo;s at the bottom of the details page, once you&rsquo;ve read them.</p>
+    </form>
+    <p class="muted" style="margin-top:22px; font-size:.95rem">
+      Already a partner? <a href="/partners/portal">Sign in to the portal</a>. Sent a link that&rsquo;s stopped working? Register again above with the same email and we&rsquo;ll issue a fresh one.
+    </p>
+  </div>
+</section>
+{% endblock %}

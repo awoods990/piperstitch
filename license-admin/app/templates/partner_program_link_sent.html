@@ -1,0 +1,12 @@
+{% extends "partner_site_base.html" %}
+{% block title %}Check your email — PiperStitch Partners{% endblock %}
+{% block body %}
+<section class="page-hero sky">
+  <div class="wrap narrow">
+    <p class="eyebrow">Partner Program</p>
+    <h1>Check your email.</h1>
+    <p class="lede">We&rsquo;ve sent the Partner Program details to <strong>{{ email }}</strong>. The link is yours and works for the next {{ days }} days.</p>
+    <p class="muted">Nothing arrived? Check spam, or <a href="/partners/program">try again</a> with a different address.</p>
+  </div>
+</section>
+{% endblock %}

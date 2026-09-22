@@ -156,6 +156,10 @@ WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:5173").rstrip("/")
 # unset) and the domain it is set for (derived from PUBLIC_BASE_URL when unset:
 # `.piperstitch.com`, so www, app, proofs and admin all see it).
 REFERRAL_SECRET = os.environ.get("REFERRAL_SECRET", "")
+# The Partner Program details page is gated by a short registration. With
+# this on, registering only mails the link rather than opening the page at
+# once -- a verified address before anyone sees the rates.
+PARTNER_PROGRAM_VERIFY_EMAIL = _bool("PARTNER_PROGRAM_VERIFY_EMAIL")
 REFERRAL_COOKIE_DOMAIN = os.environ.get("REFERRAL_COOKIE_DOMAIN", "")
 # The app server's own address for server-to-server calls (re-digitizing a
 # saved project for the admin's project view). Usually the same as

@@ -322,6 +322,23 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS partner_prospects (
+    -- Someone who asked to see the Partner Program details. The program
+    -- page carries rates and payout terms, so it sits behind a short
+    -- registration rather than in public (spec §7 gating).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL UNIQUE,
+    organization TEXT NOT NULL DEFAULT '',
+    platforms TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'self',     -- 'self' (registered on the site) | 'invite' (we sent them a link)
+    note TEXT NOT NULL DEFAULT '',
+    views INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    applied_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS partner_links (
     -- One-time sign-in links to the partner portal (the same magic-link
     -- pattern as account_links, keyed by promoter instead of customer).
@@ -1416,6 +1433,56 @@ def create_partner_application(*, name: str, email: str, organization: str, plat
             (name.strip(), email.strip().lower(), organization.strip(), platforms.strip(), application.strip(), _now(), _now(), _now()),
         )
         return cur.lastrowid
+
+
+def create_partner_prospect(*, name: str, email: str, organization: str = "", platforms: str = "", source: str = "self", note: str = "") -> int:
+    """Records who asked for the program details. Returning with the same
+    address updates what they told us rather than making a second row."""
+    email = (email or "").strip().lower()
+    with connection() as conn:
+        existing = conn.execute("SELECT id FROM partner_prospects WHERE email = ?", (email,)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE partner_prospects SET name = COALESCE(NULLIF(?, ''), name), organization = COALESCE(NULLIF(?, ''), organization), "
+                "platforms = COALESCE(NULLIF(?, ''), platforms), note = COALESCE(NULLIF(?, ''), note) WHERE id = ?",
+                (name.strip(), organization.strip(), platforms.strip(), note.strip(), existing["id"]))
+            return existing["id"]
+        cur = conn.execute(
+            "INSERT INTO partner_prospects (name, email, organization, platforms, source, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name.strip(), email, organization.strip(), platforms.strip(), source, note.strip(), _now()))
+        return cur.lastrowid
+
+
+def get_partner_prospect(prospect_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_prospects WHERE id = ?", (prospect_id,)).fetchone()
+
+
+def get_partner_prospect_by_email(email: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_prospects WHERE email = ?", ((email or "").strip().lower(),)).fetchone()
+
+
+def touch_partner_prospect(prospect_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_prospects SET views = views + 1, last_seen_at = ? WHERE id = ?", (_now(), prospect_id))
+
+
+def mark_prospect_applied(email: str) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_prospects SET applied_at = COALESCE(applied_at, ?) WHERE email = ?", (_now(), (email or "").strip().lower()))
+
+
+def list_partner_prospects(limit: int = 200) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_prospects ORDER BY COALESCE(last_seen_at, created_at) DESC LIMIT ?", (limit,)).fetchall()
+
+
+def count_partner_prospects() -> dict:
+    with connection() as conn:
+        r = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied, "
+                         "SUM(CASE WHEN last_seen_at IS NULL THEN 1 ELSE 0 END) AS never_opened FROM partner_prospects").fetchone()
+    return {"total": r["total"] or 0, "applied": r["applied"] or 0, "never_opened": r["never_opened"] or 0}
 
 
 def create_partner_link(*, promoter_id: int, token_hash: str, ttl_minutes: int) -> int:

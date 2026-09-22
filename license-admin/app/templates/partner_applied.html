@@ -1,12 +1,12 @@
-{% extends "base.html" %}
+{% extends "partner_site_base.html" %}
 {% block title %}Application received — PiperStitch Partners{% endblock %}
 {% block body %}
-<main class="public">
-  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
-  <div class="card">
-    <h1>Thank you — we have it.</h1>
-    <p>We read every application ourselves and you'll hear back at <strong>{{ email }}</strong> within a few days. If you're approved, that email has your code, your link and your creative kit.</p>
-    <p class="muted small">Meanwhile, the best preparation is to <a href="{{ config.WEB_APP_URL }}/?trial=1">use PiperStitch on a real order</a> — partners only talk about what they've used.</p>
+<section class="page-hero sky">
+  <div class="wrap narrow">
+    <p class="eyebrow">Partner Program</p>
+    <h1>Thank you &mdash; we have it.</h1>
+    <p class="lede">We read every application ourselves and you&rsquo;ll hear back at <strong>{{ email }}</strong> within a few days. If you&rsquo;re approved, that email has your code, your link and your creative kit.</p>
+    <p class="muted">Meanwhile, the best preparation is to <a href="{{ config.WEB_APP_URL }}/?trial=1">use PiperStitch on a real order</a> &mdash; partners only talk about what they&rsquo;ve used.</p>
   </div>
-</main>
+</section>
 {% endblock %}

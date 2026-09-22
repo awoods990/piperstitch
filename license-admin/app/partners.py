@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import io
 import secrets
 from datetime import date, datetime, timedelta, timezone
@@ -31,6 +32,7 @@ PAYOUT_MINIMUM_CENTS = 50_00
 OFFER_TRIAL_DAYS = 30
 OFFER_PROOFS = 10            # total included proofs the audience offer gives
 LINK_TTL_MINUTES = 30
+PROGRAM_TOKEN_DAYS = 180     # how long a "here are the details" link keeps working
 
 # FTC disclosure (§10.1). Shown above the creative kit, in the agreement,
 # and in the welcome email.
@@ -138,6 +140,71 @@ def send_portal_link(email: str) -> bool:
     return True
 
 
+# ------------------------------------------------- the program details gate --
+# The program page carries rates, the bounty and payout terms. That is not
+# something every customer should meet by wandering the site, so it sits
+# behind a short registration: name and email, then straight in. We also
+# mail a link so they can come back, and can send that link cold to
+# someone we want in the program.
+
+
+def _program_sign(payload: str) -> str:
+    return hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _secret() -> bytes:
+    return (config.REFERRAL_SECRET or config.SESSION_SECRET or "development-only").encode()
+
+
+def program_token(prospect_id: int, *, at: Optional[datetime] = None) -> str:
+    payload = f"{int(prospect_id)}|{(at or _now()).date().isoformat()}"
+    return f"{payload}|{_program_sign(payload)}"
+
+
+def resolve_program_token(token: str) -> Optional[int]:
+    """The prospect a details link points at, if the signature holds and
+    it is under PROGRAM_TOKEN_DAYS old."""
+    if not token:
+        return None
+    try:
+        pid, issued, sig = token.split("|", 2)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(sig, _program_sign(f"{pid}|{issued}")):
+        return None
+    try:
+        when = date.fromisoformat(issued)
+    except ValueError:
+        return None
+    if (_now().date() - when).days > PROGRAM_TOKEN_DAYS or when > _now().date() + timedelta(days=1):
+        return None
+    prospect = db.get_partner_prospect(int(pid))
+    return prospect["id"] if prospect is not None else None
+
+
+def program_url(prospect_id: int) -> str:
+    return f"{config.PUBLIC_BASE_URL}/partners/program?k={program_token(prospect_id)}"
+
+
+def register_prospect(*, name: str, email: str, organization: str = "", platforms: str = "", source: str = "self", note: str = "") -> int:
+    name = (name or "").strip(); email = (email or "").strip().lower()
+    if len(name) < 2:
+        raise PartnerError("name", "Please tell us your name.")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise PartnerError("email", "That doesn't look like an email address.")
+    prospect_id = db.create_partner_prospect(name=name, email=email, organization=organization, platforms=platforms, source=source, note=note)
+    try:
+        email_sender.send_partner_program_email(to_email=email, partner_name=name, url=program_url(prospect_id), invited=(source == "invite"))
+    except email_sender.EmailSendError:
+        pass
+    return prospect_id
+
+
+def prospect_context(prospect) -> dict:
+    """What the gated program page needs to know about its reader."""
+    return {"prospect": prospect, "seats_left": founding_seats_left(), "program_link": program_url(prospect["id"]) if prospect else ""}
+
+
 # ------------------------------------------------------------ application --
 
 
@@ -156,6 +223,7 @@ def apply(*, name: str, email: str, organization: str, platforms: str, applicati
         if existing["status"] in ("approved", "active"):
             raise PartnerError("duplicate", "You're already a partner. Sign in to the portal instead.")
     pid = db.create_partner_application(name=name, email=email, organization=organization or "", platforms=platforms or "", application=application)
+    db.mark_prospect_applied(email)
     try:
         email_sender.send_partner_applied_email(to_email=email, partner_name=name)
     except email_sender.EmailSendError:

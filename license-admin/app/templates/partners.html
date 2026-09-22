@@ -28,6 +28,29 @@
     <div class="kpi-tile"><div class="kpi-value">{{ counts.get('closed', 0) }}</div><div class="kpi-label">Closed / declined</div></div>
   </div>
 
+  <div class="card">
+    <div class="toolbar"><h2 style="margin:0">Who has seen the program</h2><span class="muted small">{{ prospect_counts.total }} registered &middot; {{ prospect_counts.applied }} went on to apply{% if prospect_counts.never_opened %} &middot; {{ prospect_counts.never_opened }} never opened their link{% endif %}</span></div>
+    <p class="muted small" style="margin-top:0">The details page (rates, bounty, payouts) is gated: people register on the site, or we send them a link from here that opens it without registering.</p>
+    <form method="post" action="/admin/partners/invite" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px">
+      <div><label>Name</label><input type="text" name="name" required placeholder="Kathleen Reyes"></div>
+      <div><label>Email</label><input type="email" name="email" required></div>
+      <div style="flex:1; min-width:180px"><label>Note <span class="muted">(for the record)</span></label><input type="text" name="note" placeholder="Met at the trade show"></div>
+      <button type="submit" class="small">Send them the details</button>
+    </form>
+    <table>
+      <tr><th>Who</th><th>Where</th><th>How</th><th>Registered</th><th>Opened</th><th>Applied</th><th>Their link</th></tr>
+      {% for p in prospects %}
+      <tr><td><strong>{{ p.name }}</strong><br><span class="muted small">{{ p.email }}</span>{% if p.note %}<br><span class="muted small">{{ p.note }}</span>{% endif %}</td>
+        <td class="small">{{ p.organization }}{% if p.organization and p.platforms %}<br>{% endif %}<span class="muted">{{ p.platforms }}</span></td>
+        <td>{% if p.source == 'invite' %}<span class="pill comp">invited</span>{% else %}<span class="pill trialing">registered</span>{% endif %}</td>
+        <td class="muted small">{{ p.created_at|short_date }}</td>
+        <td class="small">{% if p.last_seen_at %}{{ p.last_seen_at|short_date }} <span class="muted">({{ p.views }}&times;)</span>{% else %}<span class="muted">not yet</span>{% endif %}</td>
+        <td>{% if p.applied_at %}<span class="pill yes">{{ p.applied_at|short_date }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td><input type="text" readonly value="{{ program_link(p.id) }}" onclick="this.select()" style="font-size:11px; padding:4px 6px"></td></tr>
+      {% else %}<tr><td colspan="7" class="muted">Nobody has asked for the details yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+
   {% set queue = rows|selectattr('status', 'equalto', 'applied')|list %}
   {% if queue and not status %}
   <div class="card">

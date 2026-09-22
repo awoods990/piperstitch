@@ -1,0 +1,192 @@
+{% extends "partner_site_base.html" %}
+{% block title %}Partner Program — PiperStitch{% endblock %}
+{% block body %}
+{% if welcome %}<div class="wrap" style="padding-top:22px"><div class="callout" style="background:#e6f4ea; border-color:#c6ecd0"><strong>You&rsquo;re in.</strong> Everything is below, and we&rsquo;ve emailed you this link so you can come back to it whenever you like.</div></div>{% endif %}
+<section class="page-hero sky">
+  <div class="wrap">
+    <p class="eyebrow">Partner Program</p>
+    <h1>Tell embroiderers about PiperStitch.<br>Earn 30% of what they pay, for two years.</h1>
+    <p class="lede">
+      If people already ask you which software to use, this is for you. Every person who subscribes through your link or
+      code earns you <strong>30% of every invoice</strong> &mdash; PiperStitch and Proofs alike &mdash; for <strong>24 months</strong>,
+      plus a <strong>$15 signup bounty</strong> in your first 120 days. Your audience gets a <strong>30-day free trial and 10 proofs</strong>
+      instead of the usual 14 days and three.
+    </p>
+    <div class="cta-row" style="margin-top:28px">
+      <a class="btn btn-primary" href="#apply">Apply to the program</a>
+      <a class="btn btn-secondary" href="#calculator">What it adds up to</a>
+    </div>
+    <p class="muted" style="margin-top:14px; font-size:.95rem">Founding partners &mdash; the first 50 &mdash; keep the 30% rate. After that, open enrolment is 25%.</p>
+  </div>
+</section>
+
+<section class="bg-white">
+  <div class="wrap">
+    <div class="grid grid-3">
+      <div class="card"><div class="card-num">Recurring</div><h3>30% of every invoice</h3><p>Not a one-off. Each referral pays you every month they stay, for 24 months from their first payment. At $24 a month that&rsquo;s $7.20 a month per person &mdash; $14.40 if they add Proofs. Computed from the actual invoice, so an upgrade pays you more and a price change never pays you less.</p></div>
+      <div class="card"><div class="card-num">Bounty</div><h3>$15 per signup, first 120 days</h3><p>Every referral who makes a first payment inside your first 120 days also earns a $15 bounty. No cap. After the window, the bounty comes back <em>permanently</em> once 25 of your referrals are active subscribers &mdash; and it never lapses again.</p></div>
+      <div class="card"><div class="card-num">For your audience</div><h3>30 days and 10 proofs, free</h3><p>Your link gives them more product, not a discount: a 30-day trial instead of 14, and 10 proofs instead of three. Nothing to install, no card to enter. And the code works spoken out loud on a Live, where nothing is clickable.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-line-top" id="calculator">
+  <div class="wrap">
+    <div class="feature">
+      <div>
+        <p class="eyebrow">What it adds up to</p>
+        <h3>Move the sliders. It&rsquo;s just arithmetic.</h3>
+        <p>Say how many people you think you&rsquo;d refer each month, and how many of those would add Proofs. The numbers below assume each referral stays the full two years &mdash; some won&rsquo;t, so treat it as the ceiling, not a promise. Nothing here is an income claim; it&rsquo;s the program&rsquo;s math.</p>
+        <div class="calc">
+          <label>New referrals per month <output id="calcRefOut">5</output></label>
+          <input type="range" id="calcRef" min="1" max="40" value="5">
+          <label>Share who add Proofs <output id="calcProofsOut">30%</output></label>
+          <input type="range" id="calcProofs" min="0" max="100" value="30" step="10">
+          <label>Your rate <output id="calcRateOut">30%</output></label>
+          <div class="calc-rate"><label class="calc-pill"><input type="radio" name="calcRate" value="30" checked> Founding &middot; 30%</label><label class="calc-pill"><input type="radio" name="calcRate" value="25"> Standard &middot; 25%</label></div>
+        </div>
+      </div>
+      <div class="feature-visual">
+        <div class="calc-results">
+          <div class="calc-row"><span>Per referral, per month</span><strong id="calcPerMonth">$7.20</strong></div>
+          <div class="calc-row"><span>Per referral, over 24 months</span><strong id="calcPerRef">$187.80</strong></div>
+          <div class="calc-row"><span>Signup bounties, first 120 days</span><strong id="calcBounty">$300</strong></div>
+          <div class="calc-row big"><span>Monthly, once 12 months in</span><strong id="calcMonth12">$518</strong></div>
+          <div class="calc-row big"><span>Monthly, at the two-year steady state</span><strong id="calcSteady">$1,037</strong></div>
+          <p class="muted" style="font-size:.88rem; margin:14px 0 0">Assumes every referral stays subscribed and the first-120-day bounty on the first four months of signups. Real numbers will be lower.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-white" id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">How it works</p>
+      <h2>Four steps, and none of them is a form.</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="step-n">1</div><div><h3>Apply below.</h3><p>Tell us about your audience. We read every application ourselves and answer within a few days.</p></div></div>
+      <div class="step"><div class="step-n">2</div><div><h3>Get your link and code.</h3><p>Approval brings a welcome email with <code>piperstitch.com/r/YOURCODE</code>, a spoken code for Lives and classes, a QR code for print, and the creative kit.</p></div></div>
+      <div class="step"><div class="step-n">3</div><div><h3>Share it, with the disclosure.</h3><p>Video, Live, group, newsletter, class handout &mdash; wherever you already talk about tools. &ldquo;I get a commission if you subscribe through my link&rdquo; goes next to it every time; the kit has the exact wording.</p></div></div>
+      <div class="step"><div class="step-n">4</div><div><h3>Watch it in the portal.</h3><p>Clicks, signups, who&rsquo;s in month what of 24, what&rsquo;s payable, monthly statements. Paid by PayPal on the last day of each month for the month before, from $50.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-line-top">
+  <div class="wrap narrow">
+    <p class="eyebrow">The fine print, in plain words</p>
+    <h2>What we&rsquo;ll hold you to, and what we hold ourselves to.</h2>
+    <ul class="checks">
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>The clock starts at first payment</strong>, not at signup, and runs 24 months. A referral who cancels and comes back resumes inside the same window; it never restarts.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>A typed code beats a link.</strong> Someone who clicked your link gets 90 days for it to count; someone who types a code is attributed to that code, whoever&rsquo;s link they clicked. One partner per customer, settled at first payment.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>Refunds and chargebacks reverse the matching commission.</strong> A cancellation or refund within 60 days of first payment also reverses that referral&rsquo;s $15 bounty. Commission becomes payable 60 days after the invoice for the same reason.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>Your rate is yours.</strong> It&rsquo;s written on your account at approval and only changes if we agree it with you. Changing the program later never changes existing partners.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>Disclosure is required, not optional.</strong> The FTC holds us responsible for what our partners say. &ldquo;Affiliate link&rdquo; on its own isn&rsquo;t enough; the kit lists what is. No income claims, no &ldquo;perfect every time&rdquo;, no comparisons by name to other software.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>You never see who signed up.</strong> The portal shows dates, statuses and amounts &mdash; not names or emails. That&rsquo;s a promise we make to your audience in our privacy policy.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="9" stroke="#1a6fd1" stroke-width="1.6" opacity=".5"/><path d="M6 10.4l2.6 2.6L14.2 7.4" stroke="#1a6fd1" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> <span><strong>You&rsquo;re an independent contractor.</strong> We need a W-9 (US) or W-8BEN before the first payout, and we issue a 1099-NEC to US partners paid $600 or more in a year.</span></li>
+    </ul>
+    <p style="margin-top:22px"><a href="/partners/terms">Read the full partner terms &rarr;</a></p>
+  </div>
+</section>
+
+<section class="bg-white" id="apply">
+  <div class="wrap narrow">
+    <p class="eyebrow">Apply</p>
+    <h2>Tell us about your audience.</h2>
+    <p>A few sentences is plenty: who follows you, roughly how many, and where. We&rsquo;re looking for people embroiderers already trust &mdash; size matters less than that.</p>
+    <form class="apply-form" method="post" action="/partners/apply">
+      <div class="apply-grid">
+        <div><label for="name">Your name</label><input type="text" id="name" name="name" required autocomplete="name" value="{{ prospect.name if prospect else '' }}"></div>
+        <div><label for="email">Email</label><input type="email" id="email" name="email" required autocomplete="email" value="{{ prospect.email if prospect else '' }}"></div>
+      </div>
+      <label for="organization">Shop, channel or business name <span class="muted">(optional)</span></label>
+      <input type="text" id="organization" name="organization" value="{{ prospect.organization if prospect else '' }}">
+      <label for="platforms">Where your audience is</label>
+      <input type="text" id="platforms" name="platforms" placeholder="YouTube, a Facebook group, TikTok, a newsletter, in-person classes…" value="{{ prospect.platforms if prospect else '' }}">
+      <label for="application">About your audience</label>
+      <textarea id="application" name="application" rows="5" required placeholder="Who follows you, roughly how many, and what you'd say about PiperStitch."></textarea>
+      <div class="apply-honey" aria-hidden="true"><label>Website</label><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
+      <label class="apply-check"><input type="checkbox" name="agree" value="1" required> I&rsquo;ve read the <a href="/partners/terms" target="_blank" rel="noopener">partner terms</a>, including the disclosure rules.</label>
+      <div class="cta-row" style="margin-top:20px"><button class="btn btn-primary" type="submit">Send my application</button></div>
+    </form>
+  </div>
+</section>
+
+<section class="bg-line-top">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">Questions</p>
+      <h2>The ones partners ask first.</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>Do I need to be a PiperStitch subscriber?</summary>
+        <div class="answer"><p>You need to have used it &mdash; partners only talk about what they&rsquo;ve tried, and your audience will know the difference. The free trial is enough to start; most partners end up subscribing because they&rsquo;re using it on real orders.</p></div>
+      </details>
+      <details>
+        <summary>Can I get more than one code?</summary>
+        <div class="answer"><p>Yes. Many partners keep one code per channel &mdash; <code>KATHLEEN-YT</code> and <code>KATHLEEN-FB</code>, say &mdash; so the portal shows which one converts. Reply to any of our emails and we&rsquo;ll add it.</p></div>
+      </details>
+      <details>
+        <summary>Does the 30% apply to Proofs too?</summary>
+        <div class="answer"><p>Yes &mdash; to every invoice the referred customer pays, on both the PiperStitch subscription and the Proofs add-on, computed from the actual amount. It&rsquo;s a share of what they pay, before payment-processing fees, with no footnote.</p></div>
+      </details>
+      <details>
+        <summary>When and how am I paid?</summary>
+        <div class="answer"><p>By PayPal, on the last day of each month, for everything that became payable in the month before. Commission becomes payable 60 days after the invoice it comes from (the refund window). Balances under $50 roll over to the next month. We need your W-9 or W-8BEN on file first.</p></div>
+      </details>
+      <details>
+        <summary>What if someone I referred cancels?</summary>
+        <div class="answer"><p>You keep everything already earned, except where the invoice itself is refunded or charged back. If they cancel or refund within 60 days of their first payment, the $15 bounty for that person is reversed. If they come back later, commission resumes inside the original 24-month window.</p></div>
+      </details>
+      <details>
+        <summary>What can&rsquo;t I say?</summary>
+        <div class="answer"><p>Anything you haven&rsquo;t seen yourself; &ldquo;perfect every time&rdquo; or &ldquo;never needs editing&rdquo;; that it replaces a professional digitizer; comparisons by name to other digitizing software; any income claim for your viewers; and calling it AI (it&rsquo;s rules-based, which is why the same artwork gives the same file every time). The portal has the full list, with what you <em>can</em> say.</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="sky cta-band">
+  <div class="wrap">
+    <h2>{% if seats_left %}{{ seats_left }} founding seat{{ '' if seats_left == 1 else 's' }} left. Then the rate drops to {{ program.STANDARD_SHARE|int }}%.{% else %}The founding seats are taken. Open enrolment is {{ program.STANDARD_SHARE|int }}%.{% endif %}</h2>
+    <p class="lede">If your audience already asks you what to use, apply now and keep the 30% for as long as you&rsquo;re a partner.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#apply">Apply to the program</a>
+      <a class="btn btn-secondary" href="/partners/portal">Partner sign-in</a>
+    </div>
+  </div>
+</section>
+
+
+<script>
+// Partner page calculator: the program's arithmetic, nothing more.
+// $24/mo core, $24/mo Proofs, rate on the gross, 24-month term,
+// $15 bounty on signups in the first 120 days (four months of signups).
+(function () {
+  var CORE = 24, PROOFS = 24, MONTHS = 24, BOUNTY = 15, WINDOW_MONTHS = 4;
+  var ref = document.getElementById('calcRef'), proofs = document.getElementById('calcProofs');
+  if (!ref || !proofs) return;
+  var money = function (n, cents) { return '$' + (cents ? n.toFixed(2) : Math.round(n).toLocaleString('en-US')); };
+  function update() {
+    var n = +ref.value, p = +proofs.value / 100;
+    var rate = +(document.querySelector('input[name=calcRate]:checked') || {}).value / 100 || .3;
+    var perMonth = (CORE + PROOFS * p) * rate;            // per referral, blended for Proofs
+    document.getElementById('calcRefOut').textContent = n;
+    document.getElementById('calcProofsOut').textContent = Math.round(p * 100) + '%';
+    document.getElementById('calcRateOut').textContent = Math.round(rate * 100) + '%';
+    document.getElementById('calcPerMonth').textContent = money(perMonth, true);
+    document.getElementById('calcPerRef').textContent = money(perMonth * MONTHS + (p ? 0 : 0), true);
+    document.getElementById('calcBounty').textContent = money(n * WINDOW_MONTHS * BOUNTY);
+    document.getElementById('calcMonth12').textContent = money(perMonth * n * 12);
+    document.getElementById('calcSteady').textContent = money(perMonth * n * MONTHS);
+  }
+  [ref, proofs].forEach(function (el) { el.addEventListener('input', update); });
+  document.querySelectorAll('input[name=calcRate]').forEach(function (el) { el.addEventListener('change', update); });
+  update();
+})();
+</script>
+{% endblock %}

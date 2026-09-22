@@ -1,0 +1,40 @@
+{# The gated partner pages wear the marketing site's clothes: same
+   stylesheet, same header and footer, served from the account service so
+   they can be kept behind the registration gate. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}PiperStitch Partner Program{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="{{ config.WEBSITE_BASE_URL }}/styles.css?v=3">
+  {% block head %}{% endblock %}
+</head>
+<body>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand-link" href="{{ config.WEBSITE_BASE_URL }}/" aria-label="PiperStitch home">
+      <img src="{{ config.WEBSITE_BASE_URL }}/assets/piperstitch-mark-180.png" alt="" width="34" height="34">
+      <span class="brand-word">Piper<span class="blue">Stitch</span><span class="brand-sub">EMBROIDERY DIGITIZING</span></span>
+    </a>
+    <nav class="site-nav">
+      <a href="{{ config.WEBSITE_BASE_URL }}/how-it-works.html">How It Works</a><a href="{{ config.WEBSITE_BASE_URL }}/proofs.html">Proofs</a><a href="{{ config.WEBSITE_BASE_URL }}/pricing.html">Pricing</a>
+      <a class="btn btn-secondary nav-login" href="/partners/portal">Partner sign-in</a>
+    </nav>
+  </div>
+</header>
+<main>
+{% block body %}{% endblock %}
+</main>
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-bottom">
+      <span>&copy; {{ year_now() }} PiperStitch. All rights reserved. These Partner Program details are shared with you personally &mdash; please don&rsquo;t repost the figures. Anyone you&rsquo;d like us to send them to, just say.</span>
+      <span class="footer-motto">From artwork to approved.</span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

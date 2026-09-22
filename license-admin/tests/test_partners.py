@@ -352,6 +352,10 @@ def _body(msg) -> str:
 def test_application_lands_in_the_queue_and_approval_creates_the_code_window_and_welcome(isolated_db, test_keypair, fake_smtp, admin_password_configured):
     from app import partners
     with TestClient(app) as client:
+        # The application sits behind the program-details gate, so applicants
+        # have read the terms by the time they get here.
+        assert "Show me the details" in client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com"}).text
+        client.post("/partners/register", data={"name": "Kathleen Reyes", "email": "kathleen@example.com"})
         # Public application: needs the terms box; a bot filling the honeypot is quietly ignored.
         r = client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com", "platforms": "YouTube", "application": "I run a 40k embroidery channel and teach classes weekly."})
         assert r.status_code == 400 and "agree" in r.text
@@ -580,3 +584,83 @@ def test_content_log_and_alerts(isolated_db, test_keypair, fake_smtp, admin_pass
         client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
         page = client.get("/admin/partners").text
         assert "Needs a look" in page and "self-referral" in page and "inactive promoter" in page and "evt_bad" in page
+
+
+# ------------------------------------------- the program details gate ---
+
+
+def test_program_details_are_gated_by_registration_and_by_a_link_we_send(isolated_db, test_keypair, fake_smtp):
+    from app import partners
+    with TestClient(app) as client:
+        # Cold: the numbers are nowhere on the page, only the registration.
+        r = client.get("/partners/program")
+        assert r.status_code == 200 and "Show me the details" in r.text
+        assert "30%" not in r.text and "$15" not in r.text and "Signup bounty" not in r.text
+        assert '<meta name="robots" content="noindex, nofollow">' in r.text
+        # The terms and the application are behind the same door.
+        assert "Show me the details" in client.get("/partners/terms").text
+        assert "Show me the details" in client.get("/partners/apply").text
+        # A bad name is refused; the email is kept so they needn't retype it.
+        r = client.post("/partners/register", data={"name": "", "email": "kath@example.com"})
+        assert r.status_code == 400 and "tell us your name" in r.text and "kath@example.com" in r.text
+        # Registering opens it at once and mails the same link.
+        r = client.post("/partners/register", data={"name": "Kathleen Reyes", "email": "Kath@Example.com ", "organization": "StitchLab", "platforms": "YouTube"}, follow_redirects=True)
+        assert r.status_code == 200 and "You&rsquo;re in" in r.text
+        assert "30% of every invoice" in r.text and "$15 per signup" in r.text and "Move the sliders" in r.text
+        assert 'value="Kathleen Reyes"' in r.text and 'value="kath@example.com"' in r.text and 'value="StitchLab"' in r.text
+        assert "50 founding seat" in r.text
+        prospect = db.get_partner_prospect_by_email("kath@example.com")
+        assert prospect["source"] == "self" and prospect["views"] == 1 and prospect["applied_at"] is None
+        assert "The PiperStitch Partner Program" in fake_smtp.sent[-1]["Subject"]
+        link = _body(fake_smtp.sent[-1]).split("/partners/program?k=")[1].split()[0]
+        # The terms and the application are open to them now, prefilled.
+        terms = client.get("/partners/terms").text
+        assert "5. SIGNUP BOUNTY" in terms and "16. GENERAL" in terms and "independent contractor" in terms
+        assert 'value="kath@example.com"' in client.get("/partners/apply").text
+        # Applying is recorded against the registration.
+        client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kath@example.com", "application": "A 40k-subscriber channel about machine embroidery.", "agree": "1"})
+        assert db.get_partner_prospect_by_email("kath@example.com")["applied_at"]
+
+    # A fresh browser: the link alone opens it, and keeps working.
+    with TestClient(app) as other:
+        assert "Show me the details" in other.get("/partners/program").text
+        r = other.get(f"/partners/program?k={link}", follow_redirects=True)
+        assert "30% of every invoice" in r.text
+        assert "30% of every invoice" in other.get("/partners/program").text      # the session sticks
+        assert db.get_partner_prospect_by_email("kath@example.com")["views"] == 3
+    # Tampered, unsigned and stale links are refused.
+    with TestClient(app) as other:
+        pid = db.get_partner_prospect_by_email("kath@example.com")["id"]
+        assert partners.resolve_program_token(link) == pid
+        assert partners.resolve_program_token(link[:-1] + ("0" if link[-1] != "0" else "1")) is None
+        assert partners.resolve_program_token(f"{pid}|2026-09-22|nonsense") is None
+        stale = partners.program_token(pid, at=datetime.now(timezone.utc) - timedelta(days=partners.PROGRAM_TOKEN_DAYS + 1))
+        assert partners.resolve_program_token(stale) is None
+        assert "Show me the details" in other.get(f"/partners/program?k={stale}").text
+
+
+def test_admin_can_send_the_details_and_sees_who_looked(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post("/admin/partners/invite", data={"name": "Dev Patel", "email": "dev@example.com", "note": "Met at the trade show"}, follow_redirects=False)
+        assert r.status_code == 303 and "Invitation+sent" in r.headers["location"]
+        invite = fake_smtp.sent[-1]
+        assert invite["Subject"] == "An invitation to the PiperStitch Partner Program"
+        link = _body(invite).split("/partners/program?k=")[1].split()[0]
+        p = db.get_partner_prospect_by_email("dev@example.com")
+        assert p["source"] == "invite" and p["note"] == "Met at the trade show" and p["last_seen_at"] is None
+        page = client.get("/admin/partners").text
+        assert "Dev Patel" in page and "invited" in page and "not yet" in page and "/partners/program?k=" in page
+    with TestClient(app) as guest:
+        assert "30% of every invoice" in guest.get(f"/partners/program?k={link}", follow_redirects=True).text
+    assert db.get_partner_prospect_by_email("dev@example.com")["last_seen_at"]
+
+
+def test_verify_email_mode_withholds_the_page_until_the_link_is_clicked(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    monkeypatch.setattr(config, "PARTNER_PROGRAM_VERIFY_EMAIL", True)
+    with TestClient(app) as client:
+        r = client.post("/partners/register", data={"name": "Cautious Sam", "email": "sam@example.com"}, follow_redirects=True)
+        assert "Check your email" in r.text and "30%" not in r.text
+        assert "Show me the details" in client.get("/partners/program").text
+        link = _body(fake_smtp.sent[-1]).split("/partners/program?k=")[1].split()[0]
+        assert "30% of every invoice" in client.get(f"/partners/program?k={link}", follow_redirects=True).text

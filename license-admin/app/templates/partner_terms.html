@@ -1,50 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Partner Program Terms — PiperStitch</title>
-<meta name="description" content="The agreement between Piperstitch LLC and its Partner Program participants: commission, term, bounty, payouts, disclosure and conduct.">
-<link rel="canonical" href="https://www.piperstitch.com/partner-terms.html">
-<meta name="theme-color" content="#0f2a4d">
-
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="PiperStitch">
-<meta property="og:title" content="PiperStitch Partner Program Terms">
-<meta property="og:description" content="The agreement between Piperstitch LLC and its Partner Program participants: commission, term, bounty, payouts, disclosure and conduct.">
-<meta property="og:url" content="https://www.piperstitch.com/partner-terms.html">
-<meta property="og:image" content="https://www.piperstitch.com/assets/piperstitch-icon-512.png">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="PiperStitch Partner Program Terms">
-<meta name="twitter:description" content="The agreement between Piperstitch LLC and its Partner Program participants: commission, term, bounty, payouts, disclosure and conduct.">
-<meta name="twitter:image" content="https://www.piperstitch.com/assets/piperstitch-icon-512.png">
-
-<link rel="icon" href="favicon.ico" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="assets/piperstitch-mark-32.png">
-<link rel="apple-touch-icon" href="assets/piperstitch-icon-180.png">
-<link rel="stylesheet" href="styles.css?v=3">
-</head>
-<body>
-
-<header class="site-header">
-  <div class="header-inner">
-    <a class="brand-link" href="index.html" aria-label="PiperStitch home">
-      <img src="assets/piperstitch-mark-180.png" alt="" width="34" height="34">
-      <span class="brand-word">Piper<span class="blue">Stitch</span><span class="brand-sub">EMBROIDERY DIGITIZING</span></span>
-    </a>
-    <button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="siteNav">
-      <span></span><span></span><span></span>
-    </button>
-    <nav class="site-nav" id="siteNav">
-      <a href="how-it-works.html">How It Works</a><a href="proofs.html">Proofs</a><a href="formats.html">Formats</a><a href="pricing.html">Pricing</a><a href="faq.html">FAQ</a>
-      <a class="btn btn-secondary nav-login" href="https://app.piperstitch.com/?signin=1">Log in</a><a class="btn btn-primary" href="https://app.piperstitch.com/?trial=1">Start free trial</a>
-    </nav>
-  </div>
-</header>
-<main>
-
-<main>
-
+{% extends "partner_site_base.html" %}
+{% block title %}Partner Program Terms — PiperStitch{% endblock %}
+{% block body %}
 <section class="page-hero sky">
   <div class="wrap">
     <p class="eyebrow">Legal</p>
@@ -57,7 +13,7 @@
     <span class="legal-meta">Version 2026-09-21 &middot; Last updated September 21, 2026</span>
     <div class="legal-toc"><h4>Contents</h4><ol><li><a href="#p1">1. THE PROGRAM AND THIS AGREEMENT</a></li><li><a href="#p2">2. JOINING</a></li><li><a href="#p3">3. YOUR LINK AND CODE; ATTRIBUTION</a></li><li><a href="#p4">4. COMMISSION</a></li><li><a href="#p5">5. SIGNUP BOUNTY</a></li><li><a href="#p6">6. REVERSALS</a></li><li><a href="#p7">7. PAYMENT</a></li><li><a href="#p8">8. TAXES; INDEPENDENT CONTRACTOR</a></li><li><a href="#p9">9. DISCLOSURE AND PERMITTED CLAIMS</a></li><li><a href="#p10">10. CONDUCT</a></li><li><a href="#p11">11. PRIVACY</a></li><li><a href="#p12">12. TRADEMARKS AND MATERIALS</a></li><li><a href="#p13">13. TERM, SUSPENSION AND TERMINATION</a></li><li><a href="#p14">14. DISCLAIMERS; LIMITATION OF LIABILITY</a></li><li><a href="#p15">15. CHANGES TO THE PROGRAM</a></li><li><a href="#p16">16. GENERAL</a></li></ol></div>
 
-<p>These Partner Program Terms (&ldquo;Partner Terms&rdquo;) are an agreement between Piperstitch LLC, a Florida limited liability company (&ldquo;Piperstitch LLC,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;), and the person or entity that applies to and takes part in the PiperStitch Partner Program (&ldquo;Partner,&rdquo; &ldquo;you&rdquo;). They supplement our <a href="terms.html">Terms and Conditions of Use</a> and <a href="privacy-policy.html">Privacy Policy</a>, which also apply to you as a user of PiperStitch. Where these Partner Terms and the Terms of Use conflict on a Program matter, these Partner Terms control.</p>
+<p>These Partner Program Terms (&ldquo;Partner Terms&rdquo;) are an agreement between Piperstitch LLC, a Florida limited liability company (&ldquo;Piperstitch LLC,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;), and the person or entity that applies to and takes part in the PiperStitch Partner Program (&ldquo;Partner,&rdquo; &ldquo;you&rdquo;). They supplement our <a href="{{ config.WEBSITE_BASE_URL }}/terms.html">Terms and Conditions of Use</a> and <a href="{{ config.WEBSITE_BASE_URL }}/privacy-policy.html">Privacy Policy</a>, which also apply to you as a user of PiperStitch. Where these Partner Terms and the Terms of Use conflict on a Program matter, these Partner Terms control.</p>
 <p>By submitting an application, by accepting a partner link or code, or by receiving a Program payment, you agree to these Partner Terms. If you do not agree, do not take part.</p>
 
 <h2 id="p1">1. THE PROGRAM AND THIS AGREEMENT</h2>
@@ -141,51 +97,5 @@
   </div>
 </section>
 
-</main>
-<footer class="site-footer">
-  <div class="wrap">
-    <div class="footer-top">
-      <div class="footer-brand">
-        <img src="assets/piperstitch-logo-420.png" alt="PiperStitch" width="202">
-        <p>Automatic embroidery digitizing in your browser, and a stitch-accurate proof whoever it&rsquo;s for can approve from their phone. From artwork to approved.</p>
-      </div>
-      <div>
-        <h4>Product</h4>
-        <ul>
-          <li><a href="how-it-works.html">How It Works</a></li>
-          <li><a href="proofs.html">Proofs</a></li>
-          <li><a href="formats.html">Formats &amp; Machines</a></li>
-          <li><a href="technology.html">Under the Hood</a></li>
-          <li><a href="system-requirements.html">What You Need</a></li>
-          <li><a href="https://app.piperstitch.com/">Open the app</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Account</h4>
-        <ul>
-          <li><a href="pricing.html">Pricing</a></li>
-          <li><a href="pricing.html#subscribe">Subscribe</a></li>
-          <li><a href="https://admin.piperstitch.com/account">Manage subscription</a></li>
-          <li><a href="partners.html">Partner program</a></li>
-          <li><a href="faq.html">FAQ</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Legal</h4>
-        <ul>
-          <li><a href="terms.html">Terms of Use</a></li>
-          <li><a href="privacy-policy.html">Privacy Policy</a></li>
-          <li><a href="mailto:contact@piperstitch.com">Contact</a></li>
-        </ul>
-      </div>
-    </div>
-    <div class="footer-bottom">
-      <span>&copy; <span id="year">2026</span> PiperStitch. All rights reserved. PiperStitch is not affiliated with, endorsed by, or sponsored by any machine, hoop or thread manufacturer. Tajima, Brother, Baby Lock, Janome, Elna, Melco, Bernina, Husqvarna Viking, Pfaff, Singer, Ricoma, Barudan, SWF, Happy and ZSK identify machines and the file formats they read; Mighty Hoop, Durkee, EZ Frame and HoopMaster identify hoops and frames; Isacord, Madeira, Polyneon, Robison-Anton, Sulky, Gunold, Floriani and Hemingworth identify thread lines whose published colour charts PiperStitch matches against. All trademarks belong to their respective owners and are used only to identify compatibility.</span>
-      <span class="footer-motto">From artwork to approved.</span>
-    </div>
-  </div>
-</footer>
-<script src="site.js"></script>
-<script src="piper.js?v=3" defer></script>
-</body>
-</html>
+
+{% endblock %}

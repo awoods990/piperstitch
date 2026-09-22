@@ -97,7 +97,8 @@ def _price_label() -> str:
 
 
 templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES, unreviewed_feedback_count=db.count_feedback_unreviewed,
-                              partner_applications_count=lambda: db.count_partners_by_status().get("applied", 0))
+                              partner_applications_count=lambda: db.count_partners_by_status().get("applied", 0),
+                              year_now=lambda: datetime.now(timezone.utc).year)
 
 
 def _browser_name(user_agent: str) -> str:
@@ -1024,9 +1025,78 @@ def partner_portal_statement(request: Request, period: str):
     return Response(partners.statement_csv(promoter, period), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="piperstitch-partner-statement-{period}.csv"'})
 
 
+def _program_reader(request: Request):
+    """Who may read the program details: someone who registered (or
+    followed a link we sent), or a partner already signed in to the
+    portal. Returns (prospect_row_or_None, allowed)."""
+    token = request.query_params.get("k", "")
+    if token:
+        pid = partners.resolve_program_token(token)
+        if pid is not None:
+            request.session["partner_prospect_id"] = pid
+    pid = request.session.get("partner_prospect_id")
+    prospect = db.get_partner_prospect(int(pid)) if pid else None
+    if prospect is not None:
+        return prospect, True
+    request.session.pop("partner_prospect_id", None)
+    return None, _portal_partner(request) is not None
+
+
+def _program_gate(request: Request, error: str = "", form: Optional[dict] = None, status: int = 200) -> HTMLResponse:
+    return templates.TemplateResponse(request, "partner_gate.html", {"error": error or None, "form": form or {}, "program": partners}, status_code=status)
+
+
+@app.get("/partners/program", response_class=HTMLResponse)
+def partner_program(request: Request, k: str = "", welcome: str = ""):
+    """The full program: rates, the bounty, payouts and the terms. Kept
+    off the public site (it is money, not marketing) -- a short
+    registration or a link we sent opens it."""
+    prospect, allowed = _program_reader(request)
+    if not allowed:
+        return _program_gate(request)
+    if k and prospect is not None:
+        return RedirectResponse("/partners/program", status_code=303)
+    if prospect is not None:
+        db.touch_partner_prospect(prospect["id"])
+    return templates.TemplateResponse(request, "partner_program.html", {
+        **partners.prospect_context(prospect), "program": partners, "welcome": bool(welcome),
+        "trial_days": partners.OFFER_TRIAL_DAYS, "proofs": partners.OFFER_PROOFS,
+    })
+
+
+@app.post("/partners/register", response_class=HTMLResponse)
+def partner_register(request: Request, name: str = Form(""), email: str = Form(""), organization: str = Form(""), platforms: str = Form(""), website: str = Form("")):
+    """The short registration in front of the program details. It is a
+    doorway, not a wall: they are in as soon as they tell us who they
+    are, and the same link reaches them by email."""
+    if website.strip():                      # honeypot
+        return RedirectResponse("/partners/program", status_code=303)
+    form = {"name": name, "email": email, "organization": organization, "platforms": platforms}
+    try:
+        prospect_id = partners.register_prospect(name=name, email=email, organization=organization, platforms=platforms)
+    except partners.PartnerError as e:
+        return _program_gate(request, error=e.message, form=form, status=400)
+    if config.PARTNER_PROGRAM_VERIFY_EMAIL:
+        return templates.TemplateResponse(request, "partner_program_link_sent.html", {"email": email.strip().lower(), "days": partners.PROGRAM_TOKEN_DAYS})
+    request.session["partner_prospect_id"] = prospect_id
+    return RedirectResponse("/partners/program?welcome=1", status_code=303)
+
+
+@app.get("/partners/terms", response_class=HTMLResponse)
+def partner_terms(request: Request, k: str = ""):
+    prospect, allowed = _program_reader(request)
+    if not allowed:
+        return _program_gate(request)
+    return templates.TemplateResponse(request, "partner_terms.html", {"program": partners})
+
+
 @app.get("/partners/apply", response_class=HTMLResponse)
 def partner_apply_form(request: Request):
-    return templates.TemplateResponse(request, "partner_apply.html", {"form": {}, "seats_left": partners.founding_seats_left(), "program": partners})
+    prospect, allowed = _program_reader(request)
+    if not allowed:
+        return _program_gate(request)
+    form = {"name": prospect["name"], "email": prospect["email"], "organization": prospect["organization"], "platforms": prospect["platforms"]} if prospect else {}
+    return templates.TemplateResponse(request, "partner_apply.html", {"form": form, "seats_left": partners.founding_seats_left(), "program": partners})
 
 
 @app.post("/partners/apply", response_class=HTMLResponse)
@@ -1034,6 +1104,9 @@ def partner_apply_submit(request: Request, name: str = Form(""), email: str = Fo
                          agree: str = Form(""), website: str = Form("")):
     """The public application (spec §8). `website` is a honeypot: real
     people never see it."""
+    prospect, allowed = _program_reader(request)
+    if not allowed:
+        return _program_gate(request)
     form = {"name": name, "email": email, "organization": organization, "platforms": platforms, "application": application}
     if website.strip():
         return templates.TemplateResponse(request, "partner_applied.html", {"email": email})
@@ -1645,9 +1718,21 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "active_nav": "partners", "rows": rows, "status": status, "counts": db.count_partners_by_status(),
         "seats_left": partners.founding_seats_left(), "program": partners, "today": datetime.now(timezone.utc).date().isoformat(),
         "alerts": partners.alerts(), "tax": partners.tax_report(year), "year": year,
+        "prospects": db.list_partner_prospects(), "prospect_counts": db.count_partner_prospects(), "program_link": lambda pid: partners.program_url(pid),
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
     })
+
+
+@app.post("/admin/partners/invite", dependencies=[Depends(auth.require_admin)])
+def admin_partner_invite(name: str = Form(""), email: str = Form(""), note: str = Form("")):
+    """Send someone the program details directly -- the link opens the
+    gated page without them registering first (spec §8)."""
+    try:
+        prospect_id = partners.register_prospect(name=name, email=email, source="invite", note=note)
+    except partners.PartnerError as e:
+        return _partners_redirect(error=e.message)
+    return _partners_redirect(message=f"Invitation sent to {email.strip().lower()}. Their link: {partners.program_url(prospect_id)}")
 
 
 @app.get("/admin/partners/payouts", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
