@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Apply — PiperStitch Partner Program{% endblock %}
+{% block body %}
+<main class="public" style="max-width:640px">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <h1>Apply to the Partner Program</h1>
+    <p class="muted" style="margin-top:0">{{ program.FOUNDING_SHARE|int }}% of everything your referrals pay for 24 months{% if seats_left %}, plus a ${{ program.BOUNTY_DOLLARS }} signup bounty in your first {{ program.BOUNTY_WINDOW_DAYS }} days &mdash; {{ seats_left }} founding seat{{ '' if seats_left == 1 else 's' }} left{% endif %}. <a href="{{ config.WEBSITE_BASE_URL }}/partners.html">How the program works.</a></p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/partners/apply">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+        <div><label for="name">Your name</label><input type="text" id="name" name="name" required autocomplete="name" value="{{ form.name or '' }}"></div>
+        <div><label for="email">Email</label><input type="email" id="email" name="email" required autocomplete="email" value="{{ form.email or '' }}"></div>
+      </div>
+      <label for="organization">Shop, channel or business name <span class="muted">(optional)</span></label>
+      <input type="text" id="organization" name="organization" value="{{ form.organization or '' }}">
+      <label for="platforms">Where your audience is</label>
+      <input type="text" id="platforms" name="platforms" placeholder="YouTube, Facebook group, TikTok, a newsletter, in-person classes…" value="{{ form.platforms or '' }}">
+      <label for="application">Tell us about your audience</label>
+      <textarea id="application" name="application" rows="5" required placeholder="Who follows you, roughly how many, and what you'd say about PiperStitch. A few sentences is plenty.">{{ form.application or '' }}</textarea>
+      <div style="position:absolute; left:-9999px" aria-hidden="true"><label>Website</label><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
+      <div style="margin-top:14px"><label class="inline"><input type="checkbox" name="agree" value="1" required> I've read the <a href="{{ config.WEBSITE_BASE_URL }}/partner-terms.html" target="_blank" rel="noopener">partner terms</a>, including the disclosure rules.</label></div>
+      <div style="margin-top:18px"><button type="submit">Send my application</button></div>
+    </form>
+  </div>
+  <p class="small muted">Already a partner? <a href="/partners/portal">Sign in to the portal</a>.</p>
+</main>
+{% endblock %}

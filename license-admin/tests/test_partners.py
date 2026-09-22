@@ -339,3 +339,115 @@ def test_admin_can_set_partner_details_and_approval_opens_the_window(isolated_db
         # 'established' can't be stored as a tier.
         r = client.post(f"/admin/promoters/{pid}/partner", data={"status": "active", "tier": "established"}, follow_redirects=False)
         assert "earned" in r.headers["location"]
+
+
+# ------------------------------------------------------ Phase 2: portal ---
+
+
+def _body(msg) -> str:
+    part = msg.get_body(preferencelist=("plain",))
+    return part.get_content() if part else ""
+
+
+def test_application_lands_in_the_queue_and_approval_creates_the_code_window_and_welcome(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    with TestClient(app) as client:
+        # Public application: needs the terms box; a bot filling the honeypot is quietly ignored.
+        r = client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com", "platforms": "YouTube", "application": "I run a 40k embroidery channel and teach classes weekly."})
+        assert r.status_code == 400 and "agree" in r.text
+        r = client.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com", "platforms": "YouTube", "application": "I run a 40k embroidery channel and teach classes weekly.", "agree": "1"})
+        assert r.status_code == 200 and "we have it" in r.text
+        p = db.get_promoter_by_email("kathleen@example.com")
+        assert p["status"] == "applied" and p["applied_at"] and p["tier"] == "" and fake_smtp.sent[-1]["Subject"].startswith("We got your")
+        # A second application from the same address is refused kindly.
+        r = client.post("/partners/apply", data={"name": "Kat", "email": "kathleen@example.com", "application": "Trying again with the same email address here.", "agree": "1"})
+        assert r.status_code == 400 and "already have an application" in r.text
+        # Applied partners can sign in and see their application is pending, nothing else.
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        url = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        r = client.get(f"/partners/portal/open?token={url}", follow_redirects=True)
+        assert "Your application is in" in r.text and "Your link and code" not in r.text
+        client.post("/partners/portal/logout")
+
+        # Admin: the queue shows it; approval sets tier, rate, window and the first code, and sends the welcome.
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.get("/admin/partners")
+        assert "Kathleen Reyes" in r.text and "40k embroidery channel" in r.text and "Approve" in r.text
+        r = client.post(f"/admin/partners/{p['id']}/approve", data={"tier": "founding", "share_pct": "", "code": "kathleen", "window_days": "120"}, follow_redirects=False)
+        assert r.status_code == 303 and "approved" in r.headers["location"]
+        p = db.get_promoter(p["id"])
+        assert p["status"] == "active" and p["tier"] == "founding" and p["approved_at"] and float(p["default_share_pct"]) == 30
+        start = datetime.fromisoformat(p["bounty_window_start"]).date(); end = datetime.fromisoformat(p["bounty_window_end"]).date()
+        assert (end - start).days == 120
+        promo = db.get_promotion_by_code("KATHLEEN")
+        assert promo["promoter_id"] == p["id"] and promo["percent_off"] == 0 and promo["share_pct"] == 30 and promo["trial_days"] == 30 and promo["proofs_extra"] == 7 and promo["commission_months"] == 24
+        welcome = fake_smtp.sent[-1]
+        assert welcome["Subject"].startswith("Welcome") and "/r/KATHLEEN" in _body(welcome) and "30%" in _body(welcome) and "/partners/portal/open?token=" in _body(welcome) and "Founding partner" in _body(welcome)
+        assert partners.founding_seats_left() == partners.FOUNDING_LIMIT - 1
+
+
+def test_decline_closes_the_application_and_tells_them(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    pid = partners.apply(name="Maybe Later", email="maybe@example.com", organization="", platforms="", application="A small group with a few hundred followers, mostly friends.")
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post(f"/admin/partners/{pid}/decline", data={"note": "Too small for the first cohort"}, follow_redirects=False)
+        assert r.status_code == 303
+    p = db.get_promoter(pid)
+    assert p["status"] == "closed" and not p["active"] and "Too small" in p["notes"]
+    assert fake_smtp.sent[-1]["Subject"] == "About your PiperStitch partner application"
+    # Closed partners can't get a portal link; the page still says "check your email".
+    with TestClient(app) as client:
+        n = len(fake_smtp.sent)
+        r = client.post("/partners/portal", data={"email": "maybe@example.com"})
+        assert r.status_code == 200 and "Check your email" in r.text and len(fake_smtp.sent) == n
+
+
+def test_portal_shows_link_code_window_earnings_and_referrals_without_identity(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    from app import partners
+    pid, promo_id = partner()
+    today = datetime.now(timezone.utc).date()
+    db.update_partner_fields(pid, bounty_window_start=(today - timedelta(days=40)).isoformat(), bounty_window_end=(today + timedelta(days=100)).isoformat())
+    # A referral who has paid twice (first payment ~35 days ago, inside the window), and one still on trial.
+    session = sign_up(fake_smtp, "jane@example.com", promo_code="KATHLEEN")
+    sub = stripe_subscription(sub_id="sub_j", customer="cus_j", customer_id=session.customer_id, email="jane@example.com", amount=2400)
+    subscriptions.sync_from_stripe(sub)
+    first = datetime.now(timezone.utc) - timedelta(days=35)
+    sub_row = db.get_subscription_by_stripe_id("sub_j")
+    for i, when in enumerate((first, first + timedelta(days=30))):
+        payment_id = db.record_payment(customer_id=session.customer_id, subscription_id=sub_row["id"], stripe_invoice_id=f"in_{i}", stripe_payment_intent=None, amount_cents=2400, currency="usd",
+                                       paid_at=when.isoformat(timespec="seconds").replace("+00:00", "Z"), status="paid")
+        promotions.record_share_for_payment(payment_id=payment_id, subscription_row=sub_row, customer_id=session.customer_id, gross_cents=2400,
+                                            invoice={"status_transitions": {"paid_at": int(when.timestamp())}})
+    sign_up(fake_smtp, "trial@example.com", promo_code="KATHLEEN")
+
+    with TestClient(app) as client:
+        r = client.get("/partners/portal")
+        assert "Email me a link" in r.text
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        r = client.get(f"/partners/portal/open?token={token}", follow_redirects=True)
+        assert r.status_code == 200
+        t = r.text
+        # 1. code and link, with a QR.
+        assert "KATHLEEN" in t and config.WEBSITE_BASE_URL + "/r/KATHLEEN" in t and "/partners/portal/qr/KATHLEEN.svg" in t
+        # 2. the window countdown.
+        assert "100" in t and "left in your bounty window" in t
+        # 3. earnings: two $7.20 shares + one $15 bounty = $29.40 earned; nothing payable yet (under 60 days).
+        assert "$29.40" in t and "Payable now" in t
+        # 4. referrals: month 2 of 24 for Jane, the trial one pending -- and no identity anywhere.
+        assert "month 2 of 24" in t and "starts at first payment" in t
+        assert "jane@example.com" not in t and "trial@example.com" not in t and "Jane" not in t
+        # 5. statements for this month, downloadable; 6. the kit with the disclosure first.
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        assert f"/partners/portal/statements/{period}.csv" in t
+        csv_text = client.get(f"/partners/portal/statements/{period}.csv").text
+        assert "recurring" in csv_text and "bounty" in csv_text and "jane" not in csv_text.lower()
+        assert t.index("Disclose, every time") < t.index("Caption drafts") and "I get a commission if you subscribe through my link" in t
+        qr = client.get("/partners/portal/qr/KATHLEEN.svg")
+        assert qr.status_code == 200 and qr.headers["content-type"].startswith("image/svg+xml") and "<svg" in qr.text
+        assert client.get("/partners/portal/qr/NOTMINE.svg").status_code == 404
+        # The link was one-time.
+        assert client.get(f"/partners/portal/open?token={token}", follow_redirects=False).status_code == 400
+        client.post("/partners/portal/logout")
+        assert "Email me a link" in client.get("/partners/portal").text

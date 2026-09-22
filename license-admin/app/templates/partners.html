@@ -1,0 +1,80 @@
+{% extends "admin_base.html" %}
+{% block title %}Partners — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="toolbar">
+    <div><h1 style="margin:0">Partner Program</h1><div class="muted small">{{ program.FOUNDING_SHARE|int }}% founding / {{ program.STANDARD_SHARE|int }}% standard of the gross for {{ program.COMMISSION_MONTHS }} months &middot; ${{ program.BOUNTY_DOLLARS }} bounty in the first {{ program.BOUNTY_WINDOW_DAYS }} days, back for good at {{ program.REINSTATE_AT }} active &middot; {{ seats_left }} of {{ program.FOUNDING_LIMIT }} founding seats left</div></div>
+    <div class="muted small">Portal: <a href="/partners/portal" target="_blank" rel="noopener">{{ config.PUBLIC_BASE_URL }}/partners/portal</a> &middot; Apply: <a href="/partners/apply" target="_blank" rel="noopener">/partners/apply</a></div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-tile{% if counts.get('applied') %} warn{% endif %}"><div class="kpi-value">{{ counts.get('applied', 0) }}</div><div class="kpi-label">Applications waiting</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.get('active', 0) + counts.get('approved', 0) }}</div><div class="kpi-label">Active partners</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.get('suspended', 0) }}</div><div class="kpi-label">Suspended</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ counts.get('closed', 0) }}</div><div class="kpi-label">Closed / declined</div></div>
+  </div>
+
+  {% set queue = rows|selectattr('status', 'equalto', 'applied')|list %}
+  {% if queue and not status %}
+  <div class="card">
+    <h2>Applications</h2>
+    {% for p in queue %}
+    <div style="padding:12px 0; border-bottom:1px solid var(--border)">
+      <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap">
+        <div><strong>{{ p.name }}</strong>{% if p.organization %} &middot; {{ p.organization }}{% endif %}<br><span class="muted small">{{ p.email }} &middot; applied {{ p.applied_at|short_date }}{% if p.platforms %} &middot; {{ p.platforms }}{% endif %}</span></div>
+        <a class="button small secondary" href="/admin/promoters/{{ p.id }}">Full record</a>
+      </div>
+      <p style="white-space:pre-wrap; margin:8px 0; font-size:13px">{{ p.application }}</p>
+      <div class="two-col" style="gap:14px">
+        <form method="post" action="/admin/partners/{{ p.id }}/approve">
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px">
+            <div><label>Tier</label><select name="tier"><option value="founding" {% if seats_left > 0 %}selected{% else %}disabled{% endif %}>Founding ({{ program.FOUNDING_SHARE|int }}%)</option><option value="standard" {% if seats_left <= 0 %}selected{% endif %}>Standard ({{ program.STANDARD_SHARE|int }}%)</option></select></div>
+            <div><label>Share % <span class="muted">(blank = tier's)</span></label><input type="number" name="share_pct" min="0.5" max="100" step="0.5" placeholder="tier"></div>
+            <div><label>First code</label><input type="text" name="code" required value="{{ p.name.split(' ')[0]|upper|replace("'", '') }}" style="text-transform:uppercase"></div>
+            <div><label>Bounty window (days)</label><input type="number" name="window_days" min="0" max="3650" value="{{ program.BOUNTY_WINDOW_DAYS }}"></div>
+          </div>
+          <div style="margin-top:8px; display:flex; gap:8px; align-items:center"><input type="text" name="notes" placeholder="Note for the record (optional)"><button type="submit" class="small">Approve &amp; send welcome</button></div>
+        </form>
+        <form method="post" action="/admin/partners/{{ p.id }}/decline" style="display:flex; gap:8px; align-items:flex-end">
+          <div style="flex:1"><label>Decline <span class="muted">(they get a kind email)</span></label><input type="text" name="note" placeholder="Why, for the record (optional)"></div>
+          <button type="submit" class="small secondary" onclick="return confirm('Decline {{ p.name|e }}\'s application?')">Decline</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">Partners</h2>
+      <div class="muted small">Show: <a href="/admin/partners" {% if not status %}style="font-weight:700"{% endif %}>all</a>{% for st in ['applied','active','suspended','closed'] %} &middot; <a href="/admin/partners?status={{ st }}" {% if status == st %}style="font-weight:700"{% endif %}>{{ st }}</a>{% endfor %}</div>
+    </div>
+    <form method="post" action="/admin/partners/windows" id="windows-form">
+    <table>
+      <tr><th><input type="checkbox" onclick="document.querySelectorAll('input[name=promoter_ids]').forEach(c=>c.checked=this.checked)" style="width:auto"></th><th>Partner</th><th>Status</th><th>Tier</th><th>Codes</th><th>Clicks</th><th>Referrals</th><th>Active</th><th>Earned</th><th>Payable</th><th>Bounty window</th><th>Tax form</th></tr>
+      {% for p in rows %}
+      <tr>
+        <td><input type="checkbox" name="promoter_ids" value="{{ p.id }}" style="width:auto"></td>
+        <td><a href="/admin/promoters/{{ p.id }}"><strong>{{ p.name }}</strong></a><br><span class="muted small">{{ p.email }}</span></td>
+        <td><span class="pill {{ 'active' if p.status in ('active','approved') else 'trialing' if p.status == 'applied' else 'past_due' if p.status == 'suspended' else 'ended' }}">{{ p.status }}</span></td>
+        <td>{{ p.tier_label if p.tier else '—' }}</td>
+        <td>{{ p.code_count }}</td><td>{{ p.clicks }}</td><td>{{ p.referrals }}</td><td>{{ p.totals.active }}</td>
+        <td>{{ p.totals.earned_cents|money }}</td><td>{{ p.totals.payable_cents|money }}</td>
+        <td class="small">{% if p.bounty.state == 'open' %}<span class="pill active">open</span> {{ p.bounty.days_left }}d left{% elif p.bounty.state == 'restored' %}<span class="pill active">restored</span>{% elif p.bounty.state == 'closed' %}<span class="pill ended">closed</span> {{ p.bounty.active }}/{{ p.bounty.needed }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{% if p.tax_form_received_at %}<span class="pill yes">{{ p.tax_form_type|upper }}</span>{% else %}<span class="pill no">missing</span>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="12" class="muted">No partners yet. Approve an application above, or add a promoter under Promotions and set their tier on their page.</td></tr>{% endfor %}
+    </table>
+    <div style="display:flex; gap:10px; align-items:flex-end; margin-top:12px; flex-wrap:wrap">
+      <div><label>Cohort bounty window start</label><input type="date" name="bounty_window_start" value="{{ today }}"></div>
+      <div><label>End</label><input type="date" name="bounty_window_end"></div>
+      <button type="submit" class="small secondary">Set window on the ticked partners</button>
+    </div>
+    </form>
+  </div>
+</main>
+{% endblock %}

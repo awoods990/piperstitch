@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Check your email — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <h1>Check your email.</h1>
+    <p>If <strong>{{ email }}</strong> belongs to a PiperStitch partner, a sign-in link is on its way. It expires in {{ minutes }} minutes.</p>
+    <p class="muted small">Nothing arrived? Check spam, make sure it's the email you applied with, or <a href="/partners/portal">try again</a>.</p>
+  </div>
+</main>
+{% endblock %}

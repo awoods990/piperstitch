@@ -4,13 +4,21 @@
 <main>
   {% if message %}<div class="success">{{ message }}</div>{% endif %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
-  <p class="muted small"><a href="/admin/promotions">&larr; All promotions</a></p>
+  <p class="muted small"><a href="/admin/promotions">&larr; All promotions</a>{% if is_partner %} &middot; <a href="/admin/partners">Partners</a>{% endif %}</p>
 
   <div class="card">
     <div class="toolbar">
-      <div><h1 style="margin:0">{{ promoter.name }}{% if not promoter.active %} <span class="pill ended">inactive</span>{% endif %}</h1>
+      <div><h1 style="margin:0">{{ promoter.name }}{% if not promoter.active %} <span class="pill ended">inactive</span>{% endif %}{% if is_partner %} <span class="pill {{ 'active' if promoter.status in ('active','approved') else 'trialing' if promoter.status == 'applied' else 'ended' }}">{{ tier_label if promoter.tier else promoter.status }}</span>{% endif %}</h1>
         <div class="muted">{{ promoter.organization }}{% if promoter.organization and promoter.email %} &middot; {% endif %}{{ promoter.email }}</div></div>
+      {% if is_partner and promoter.status in ('active','approved') %}<form method="post" action="/admin/partners/{{ promoter.id }}/portal-link"><button type="submit" class="small secondary">Email them a portal link</button></form>{% endif %}
     </div>
+    {% if promoter.status == 'applied' %}
+    <div class="card" style="background:#fff8e6; border-color:#f0d78a">
+      <strong>Application</strong> &mdash; {{ promoter.applied_at|short_date }}{% if promoter.platforms %} &middot; {{ promoter.platforms }}{% endif %}
+      <p style="white-space:pre-wrap; margin:6px 0 0; font-size:13px">{{ promoter.application }}</p>
+      <p class="muted small" style="margin:8px 0 0">Approve or decline from the <a href="/admin/partners">Partners queue</a>.</p>
+    </div>
+    {% endif %}
     <div class="kpi-grid">
       <div class="kpi-tile"><div class="kpi-value">{{ totals.referred }}</div><div class="kpi-label">Customers referred</div><div class="kpi-sub">{{ totals.active }} currently subscribed</div></div>
       <div class="kpi-tile"><div class="kpi-value">{{ totals.gross_cents|money }}</div><div class="kpi-label">Revenue from their customers</div><div class="kpi-sub">{{ totals.net_cents|money }} net of Stripe fees</div></div>
@@ -56,10 +64,13 @@
       <div class="card">
         <h2>Customers they referred</h2>
         <table>
-          <tr><th>Customer</th><th>Code</th><th>Redeemed</th><th>Subscription</th></tr>
-          {% for r in redemptions %}
-          <tr><td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a><br><span class="muted small">{{ r.customer_email }}</span></td><td class="mono">{{ r.code }}</td><td class="muted">{{ r.redeemed_at|short_date }}</td><td>{% if r.subscription_status %}<span class="pill {{ r.subscription_status }}">{{ r.subscription_status.replace('_',' ') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td></tr>
-          {% else %}<tr><td colspan="4" class="muted">No one has used their codes yet.</td></tr>{% endfor %}
+          <tr><th>Customer</th><th>Code</th><th>Redeemed</th><th>First paid</th><th>Term</th><th>Earned</th></tr>
+          {% for r in redemptions %}{% set ref = referrals_by_id.get(r.id) %}
+          <tr><td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a><br><span class="muted small">{{ r.customer_email }}</span></td><td class="mono">{{ r.code }}{% if r.attribution_source == 'link' %} <span class="muted small">link</span>{% endif %}{% if not r.attribution_locked %} <span class="muted small" title="Locks at first payment">provisional</span>{% endif %}</td><td class="muted">{{ r.redeemed_at|short_date }}</td>
+            <td class="muted">{% if r.first_payment_at %}{{ r.first_payment_at|short_date }}{% if r.bounty_payout_id %} <span class="pill comp" title="Signup bounty paid">bounty</span>{% endif %}{% else %}—{% endif %}</td>
+            <td>{% if ref and ref.month %}month {{ ref.month }} of {{ ref.months }}{% if ref.status == 'term complete' %} <span class="pill ended">done</span>{% endif %}{% elif r.subscription_status %}<span class="pill {{ r.subscription_status }}">{{ r.subscription_status.replace('_',' ') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td>{{ (ref.earned_cents if ref else 0)|money }}</td></tr>
+          {% else %}<tr><td colspan="6" class="muted">No one has used their codes yet.</td></tr>{% endfor %}
         </table>
       </div>
     </div>

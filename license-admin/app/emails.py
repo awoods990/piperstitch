@@ -75,6 +75,51 @@ That makes you an Established Partner: from now on, every new customer who subsc
 
 Your portal has the details and your creative kit.""",
          cta_label="Open the partner portal", cta_url="{site_url}/partners/portal", preheader="25 active referrals — the signup bounty is restored for good.", placeholders=COMMON_PLACEHOLDERS),
+    dict(key="partner_link", name="Partner: portal sign-in link", description="The one-time link to the partner portal.",
+         subject="Your PiperStitch partner portal link",
+         body="""Hi {first_name},
+
+Here's your link to the partner portal:
+
+{url}
+
+It expires in {link_minutes} minutes and only works once. If you didn't request it, you can ignore this.""",
+         cta_label="Open the partner portal", cta_url="{url}", preheader="Your one-time link to the PiperStitch partner portal.", placeholders="first_name, name, email, url, link_minutes, site_url"),
+    dict(key="partner_applied", name="Partner: application received", description="Sent when someone applies to the Partner Program.",
+         subject="We got your PiperStitch partner application",
+         body="""Hi {first_name},
+
+Thanks for applying to the PiperStitch Partner Program. We read every application ourselves, and you'll hear back within a few days.
+
+If you're approved, the next email has your code, your link and your creative kit — and you can be sharing the same day.""",
+         cta_label="", cta_url="", preheader="Thanks — we'll be in touch within a few days.", placeholders="first_name, name, email, site_url"),
+    dict(key="partner_welcome", name="Partner: welcome (approved)", description="Sent on approval: the partner's code, link, rate and a portal sign-in link.",
+         subject="Welcome to the PiperStitch Partner Program — here's your link",
+         body="""Hi {first_name},
+
+You're in, as a {tier}. Here's what you need:
+
+Your link: {link}
+Your code: {code}
+
+Anyone who starts through your link or types your code gets a 30-day free trial and 10 proofs. You earn {share_pct}% of everything they pay, for 24 months from their first payment — PiperStitch and Proofs alike — plus a $15 signup bounty on each one during your bounty window.
+
+Your portal has your live numbers, statements and the creative kit (graphics, caption drafts and the disclosure wording). One-time sign-in link:
+
+{portal_link}
+
+Two things before you post. First, the FTC needs a plain disclosure next to your link — "I get a commission if you subscribe through my link", "Paid link" or "#ad". "Affiliate link" on its own isn't enough. Second, we pay through PayPal on the last day of each month for the previous month, once you've passed $50 and we have your W-9 (or W-8BEN) — upload it from the portal.
+
+Thank you for this. Reply to this email any time; a person reads it.""",
+         cta_label="Open the partner portal", cta_url="{portal_link}", preheader="Your code, your link, your rate — and the portal.", placeholders="first_name, name, email, tier, code, link, share_pct, portal_link, site_url"),
+    dict(key="partner_declined", name="Partner: application declined", description="Sent when an application is declined.",
+         subject="About your PiperStitch partner application",
+         body="""Hi {first_name},
+
+Thank you for applying to the PiperStitch Partner Program. We're keeping the first group small and can't bring you on right now.
+
+That's about the size of the group, not about you — and it isn't final. If your audience grows or changes, apply again and we'll take a fresh look. You're welcome to use PiperStitch either way, and to tell people about it.""",
+         cta_label="", cta_url="", preheader="Thank you for applying — we can't bring you on right now.", placeholders="first_name, name, email, site_url"),
     dict(key="sign_in_code", name="Sign-in code", description="The six-digit code, sent every time someone signs in. Keep {code} in it.",
          subject="{code} is your PiperStitch sign-in code",
          body="""Your PiperStitch sign-in code:

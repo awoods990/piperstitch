@@ -322,6 +322,17 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS partner_links (
+    -- One-time sign-in links to the partner portal (the same magic-link
+    -- pattern as account_links, keyed by promoter instead of customer).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS expenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,                 -- YYYY-MM-DD
@@ -1358,6 +1369,113 @@ def get_promoter(promoter_id: int) -> Optional[sqlite3.Row]:
 def list_promoters() -> list[sqlite3.Row]:
     with connection() as conn:
         return conn.execute("SELECT * FROM promoters ORDER BY active DESC, name COLLATE NOCASE").fetchall()
+
+
+def list_partners(status: Optional[str] = None) -> list[sqlite3.Row]:
+    """Promoters in the Partner Program (a tier, or an application on
+    file), with what the partner list shows (spec §8)."""
+    sql = (
+        "SELECT p.*, "
+        "(SELECT COUNT(*) FROM promotions WHERE promotions.promoter_id = p.id) AS code_count, "
+        "(SELECT COUNT(*) FROM referral_clicks c JOIN promotions ON promotions.id = c.promotion_id WHERE promotions.promoter_id = p.id) AS clicks, "
+        "(SELECT COUNT(DISTINCT r.customer_id) FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id WHERE promotions.promoter_id = p.id) AS referrals "
+        "FROM promoters p WHERE (p.tier != '' OR p.status != 'active' OR p.applied_at IS NOT NULL)"
+    )
+    args: tuple = ()
+    if status:
+        sql += " AND p.status = ?"; args = (status,)
+    sql += " ORDER BY CASE p.status WHEN 'applied' THEN 0 WHEN 'approved' THEN 1 WHEN 'active' THEN 2 WHEN 'suspended' THEN 3 ELSE 4 END, p.applied_at DESC, p.name COLLATE NOCASE"
+    with connection() as conn:
+        return conn.execute(sql, args).fetchall()
+
+
+def get_promoter_by_email(email: str) -> Optional[sqlite3.Row]:
+    """A partner by the address they sign in with -- their contact email
+    or their payout email."""
+    e = (email or "").strip().lower()
+    if not e:
+        return None
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promoters WHERE email = ? OR (payout_email != '' AND payout_email = ?) ORDER BY active DESC, id LIMIT 1", (e, e)).fetchone()
+
+
+def create_partner_application(*, name: str, email: str, organization: str, platforms: str, application: str) -> int:
+    """A public application: a promoter in status 'applied' with no
+    codes, waiting in the admin queue."""
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO promoters (name, email, organization, default_share_pct, notes, active, status, platforms, application, applied_at, created_at, updated_at) "
+            "VALUES (?, ?, ?, 0, '', 1, 'applied', ?, ?, ?, ?, ?)",
+            (name.strip(), email.strip().lower(), organization.strip(), platforms.strip(), application.strip(), _now(), _now(), _now()),
+        )
+        return cur.lastrowid
+
+
+def create_partner_link(*, promoter_id: int, token_hash: str, ttl_minutes: int) -> int:
+    expires = (datetime.utcnow() + timedelta(minutes=ttl_minutes)).isoformat(timespec="seconds") + "Z"
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_links (promoter_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)", (promoter_id, token_hash, expires, _now()))
+        return cur.lastrowid
+
+
+def consume_partner_link(token_hash: str) -> Optional[int]:
+    """Promoter id for a live, unused portal link, or None. Consumes it."""
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM partner_links WHERE token_hash = ?", (token_hash,)).fetchone()
+        if row is None or row["consumed_at"] is not None or row["expires_at"] <= _now():
+            return None
+        conn.execute("UPDATE partner_links SET consumed_at = ? WHERE id = ?", (_now(), row["id"]))
+        return row["promoter_id"]
+
+
+def list_referrals_for_partner(promoter_id: int) -> list[sqlite3.Row]:
+    """One row per referred customer for the portal (spec §7): dates,
+    status and money only -- never who they are."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT r.id, r.customer_id, r.redeemed_at, r.first_payment_at, r.term_ends_at, r.attribution_source, r.bounty_payout_id, promotions.code, promotions.commission_months, "
+            "(SELECT s.status FROM subscriptions s WHERE s.customer_id = r.customer_id ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 WHEN 'past_due' THEN 2 WHEN 'comp' THEN 3 ELSE 4 END LIMIT 1) AS subscription_status, "
+            "(SELECT COALESCE(SUM(share_cents), 0) FROM promo_payouts pp WHERE pp.customer_id = r.customer_id AND pp.promoter_id = promotions.promoter_id) AS earned_cents "
+            "FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id WHERE promotions.promoter_id = ? ORDER BY r.redeemed_at DESC",
+            (promoter_id,)).fetchall()
+
+
+def partner_code_stats(promoter_id: int) -> list[sqlite3.Row]:
+    """Each of a partner's codes with its clicks and conversions."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT promotions.*, (SELECT COUNT(*) FROM referral_clicks c WHERE c.promotion_id = promotions.id) AS clicks, "
+            "(SELECT COUNT(*) FROM promo_redemptions r WHERE r.promotion_id = promotions.id) AS signups, "
+            "(SELECT COUNT(*) FROM promo_redemptions r WHERE r.promotion_id = promotions.id AND r.first_payment_at IS NOT NULL) AS paid "
+            "FROM promotions WHERE promoter_id = ? ORDER BY active DESC, created_at", (promoter_id,)).fetchall()
+
+
+def partner_statement_periods(promoter_id: int) -> list[sqlite3.Row]:
+    """Calendar months with ledger activity, newest first, with the month's
+    net earned -- the portal's statements list."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT substr(created_at, 1, 7) AS period, COUNT(*) AS rows, COALESCE(SUM(share_cents), 0) AS earned_cents, "
+            "COALESCE(SUM(CASE WHEN kind = 'recurring' THEN gross_cents ELSE 0 END), 0) AS gross_cents "
+            "FROM promo_payouts WHERE promoter_id = ? GROUP BY period ORDER BY period DESC", (promoter_id,)).fetchall()
+
+
+def partner_statement_rows(promoter_id: int, period: str) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT p.*, promotions.code FROM promo_payouts p JOIN promotions ON promotions.id = p.promotion_id "
+            "WHERE p.promoter_id = ? AND substr(p.created_at, 1, 7) = ? ORDER BY p.created_at, p.id", (promoter_id, period)).fetchall()
+
+
+def count_partners_by_status() -> dict:
+    with connection() as conn:
+        rows = conn.execute("SELECT status, COUNT(*) AS n FROM promoters WHERE tier != '' OR status != 'active' OR applied_at IS NOT NULL GROUP BY status").fetchall()
+    return {r["status"]: r["n"] for r in rows}
+
+
+def count_founding_partners() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM promoters WHERE tier = 'founding'").fetchone()[0]
 
 
 def create_promotion(*, code: str, kind: str, promoter_id: Optional[int], percent_off: float, duration_months: Optional[int], share_pct: float,

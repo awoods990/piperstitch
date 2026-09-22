@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Partner portal — PiperStitch{% endblock %}
+{% block body %}
+<style>
+  .portal { max-width: 900px; margin: 30px auto; padding: 0 20px; }
+  .portal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .portal-head .brand { display: flex; align-items: center; gap: 10px; color: var(--navy); font-weight: 700; font-size: 18px; text-decoration: none; }
+  .portal-head .brand img { width: 36px; height: 36px; }
+  .code-big { font-family: ui-monospace, Menlo, monospace; font-size: 30px; font-weight: 700; letter-spacing: .06em; color: var(--navy); }
+  .link-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .link-row input { flex: 1; min-width: 220px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .code-card { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: start; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .code-card:last-child { border-bottom: none; }
+  .code-card .qr { width: 132px; height: 132px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+  .code-card .qr svg { width: 100%; height: 100%; display: block; }
+  @media (max-width: 600px) { .code-card { grid-template-columns: 1fr; } }
+  .countdown { font-size: 44px; font-weight: 800; line-height: 1; color: var(--navy); }
+  .bar { height: 10px; background: #edeae3; border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
+  .bar > div { height: 100%; background: var(--blue); border-radius: 999px; }
+  .kit h3 { margin-top: 16px; }
+  .kit ul { margin: 6px 0 0 18px; padding: 0; }
+  .kit li { margin: 4px 0; }
+  .caption { background: #f7f5f1; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+  .disclosure { background: #fff8e6; border: 1px solid #f0d78a; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
+  .disclosure b { color: #7a5200; }
+  .warn { background: #fdf6f4; border: 1px solid #f0cabe; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+</style>
+<main class="portal">
+  <div class="portal-head">
+    <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch Partners</a>
+    <div style="display:flex; gap:12px; align-items:center">
+      <span class="muted small">{{ promoter.name }} &middot; <span class="pill {{ 'active' if promoter.bounty_reinstated_at else 'trialing' }}">{{ tier_label }}</span></span>
+      <form method="post" action="/partners/portal/logout" style="margin:0"><button class="small secondary" type="submit">Sign out</button></form>
+    </div>
+  </div>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if promoter.status == 'applied' %}
+  <div class="card">
+    <h1>Your application is in.</h1>
+    <p>We read every application ourselves and you'll hear back within a few days. Once you're approved, this page becomes your portal: your code and link, your earnings, and the creative kit.</p>
+  </div>
+  {% elif promoter.status == 'suspended' %}
+  <div class="card"><h1>Your partner account is paused.</h1><p>Your link and code aren't attributing new signups right now. If that's unexpected, reply to any of our emails and a person will look into it.</p></div>
+  {% else %}
+
+  {% if tax_form_missing %}<div class="warn"><b>Before your first payout:</b> we need a W-9 (US) or W-8BEN (outside the US) on file. Email it to <a href="mailto:{{ config.REPLY_TO_EMAIL }}">{{ config.REPLY_TO_EMAIL }}</a> &mdash; payouts are held until it arrives.</div>{% endif %}
+
+  <div class="card">
+    <h2>Your link and code</h2>
+    <p class="muted small" style="margin-top:0">Share the link where it's clickable; say the code out loud where it isn't (a Live, a class, a podcast). Both give your audience a 30-day free trial and 10 proofs, and both credit you.</p>
+    {% for c in codes %}
+    <div class="code-card">
+      <div>
+        <div class="code-big">{{ c.code }}</div>
+        <div class="link-row">
+          <input type="text" readonly value="{{ c.link }}" id="link-{{ c.id }}" onclick="this.select()">
+          <button class="small secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('link-{{ c.id }}').value).then(()=>{this.textContent='Copied';setTimeout(()=>this.textContent='Copy link',1500)})">Copy link</button>
+        </div>
+        <div class="muted small" style="margin-top:8px">{{ c.clicks }} click{{ '' if c.clicks == 1 else 's' }} &middot; {{ c.signups }} signup{{ '' if c.signups == 1 else 's' }} &middot; {{ c.paid }} subscribed{% if not c.active %} &middot; <span class="pill ended">inactive</span>{% endif %}</div>
+        <div class="muted small">Gives: {{ c.perks }}. <a href="/partners/portal/qr/{{ c.code }}.svg" download>Download the QR code</a> for print.</div>
+      </div>
+      <a class="qr" href="/partners/portal/qr/{{ c.code }}.svg" download title="Download QR code"><img src="/partners/portal/qr/{{ c.code }}.svg" alt="QR code for {{ c.link }}" style="width:100%;height:100%;display:block"></a>
+    </div>
+    {% else %}<p class="muted">No code yet &mdash; it arrives with your welcome email.</p>{% endfor %}
+    <p class="muted small" style="margin:12px 0 0">Want a second code for a different channel (say, one for YouTube and one for Facebook)? Reply to any of our emails and we'll add it.</p>
+  </div>
+
+  <div class="card">
+    <h2>Signup bounty</h2>
+    {% if bounty.state == 'open' %}
+      <div style="display:flex; gap:18px; align-items:baseline; flex-wrap:wrap"><div class="countdown">{{ bounty.days_left }}</div><div>day{{ '' if bounty.days_left == 1 else 's' }} left in your bounty window<br><span class="muted small">Every referral who makes their first payment by {{ bounty.ends }} earns you ${{ program.BOUNTY_DOLLARS }} on top of the commission. No limit on how many.</span></div></div>
+      <div class="bar"><div style="width:{{ (100 * (bounty.total_days - bounty.days_left) / bounty.total_days)|round|int }}%"></div></div>
+      <p class="muted small" style="margin:0">After the window closes, the bounty comes back permanently once {{ bounty.needed or program.REINSTATE_AT }} of your referrals are active subscribers. You have {{ bounty.active }} so far.</p>
+    {% elif bounty.state == 'restored' %}
+      <p><span class="pill active">Established partner</span> The ${{ program.BOUNTY_DOLLARS }} signup bounty is restored for good, since {{ bounty.since }}. It pays on every new referral's first payment, whatever the count does from here. {{ bounty.active }} active referrals right now.</p>
+    {% elif bounty.state == 'closed' %}
+      <p>Your {{ program.BOUNTY_WINDOW_DAYS }}-day bounty window closed on {{ bounty.ended }}. It comes back <b>permanently</b> at {{ bounty.needed }} active referrals &mdash; people you referred who are subscribed and have paid at least once.</p>
+      <div class="bar"><div style="width:{{ (100 * bounty.active / bounty.needed)|round|int if bounty.active < bounty.needed else 100 }}%"></div></div>
+      <p class="muted small" style="margin:0"><b>{{ bounty.active }} of {{ bounty.needed }}</b> active referrals &mdash; {{ bounty.remaining }} to go.</p>
+    {% else %}
+      <p>The ${{ program.BOUNTY_DOLLARS }} signup bounty unlocks <b>permanently</b> at {{ bounty.needed }} active referrals &mdash; people you referred who are subscribed and have paid at least once.</p>
+      <div class="bar"><div style="width:{{ (100 * bounty.active / bounty.needed)|round|int if bounty.active < bounty.needed else 100 }}%"></div></div>
+      <p class="muted small" style="margin:0"><b>{{ bounty.active }} of {{ bounty.needed }}</b> active referrals &mdash; {{ bounty.remaining }} to go.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Earnings</h2>
+    <div class="kpi-grid" style="margin-bottom:8px">
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.earned_cents|money }}</div><div class="kpi-label">Earned to date</div><div class="kpi-sub">{% if totals.bounty_cents %}{{ totals.bounty_cents|money }} in bounties{% endif %}{% if totals.reversed_cents %} &middot; {{ totals.reversed_cents|money }} reversed{% endif %}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.payable_cents|money }}</div><div class="kpi-label">Payable now</div><div class="kpi-sub">{% if held_under_minimum %}under the {{ minimum_cents|money }} minimum &mdash; rolls over{% else %}next payout {{ next_payout }}{% endif %}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.held_cents|money }}</div><div class="kpi-label">Accruing</div><div class="kpi-sub">becomes payable 60 days after each invoice</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.paid_cents|money }}</div><div class="kpi-label">Paid to date</div><div class="kpi-sub">{{ payments|length }} payout{{ '' if payments|length == 1 else 's' }}</div></div>
+    </div>
+    <p class="muted small" style="margin:0">Paid monthly by {{ 'PayPal' if promoter.payout_method == 'paypal' else promoter.payout_method }}{% if promoter.payout_email %} to {{ promoter.payout_email }}{% endif %} on the last day of the month for everything that became payable in the month before, once your balance passes {{ minimum_cents|money }}. Next payout date: <b>{{ next_payout }}</b>.</p>
+  </div>
+
+  <div class="card">
+    <h2>Your referrals</h2>
+    <p class="muted small" style="margin-top:0">One row per person. You earn on each for 24 months from their first payment; the month count tells you where each one is.</p>
+    <table>
+      <tr><th>Signed up</th><th>Via</th><th>Status</th><th>Commission month</th><th>Earned</th></tr>
+      {% for r in referrals %}
+      <tr><td>{{ r.signed_up }}</td><td class="mono">{{ r.code }}{% if r.source == 'link' %} <span class="muted">(link)</span>{% endif %}</td><td>{% if r.status == 'subscribed' %}<span class="pill active">subscribed</span>{% elif r.status == 'trial' %}<span class="pill trialing">on trial</span>{% elif r.status == 'payment due' %}<span class="pill past_due">payment due</span>{% elif r.status == 'term complete' %}<span class="pill comp">term complete</span>{% else %}<span class="pill ended">{{ r.status }}</span>{% endif %}{% if r.bounty %} <span class="muted small">+ bounty</span>{% endif %}</td>
+        <td>{% if r.month %}month {{ r.month }} of {{ r.months }}{% else %}<span class="muted">starts at first payment</span>{% endif %}</td><td>{{ r.earned_cents|money }}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted">No one yet. Share the link &mdash; the first one is the hardest.</td></tr>{% endfor %}
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Statements</h2>
+    <table>
+      <tr><th>Month</th><th>Entries</th><th>Invoiced by your referrals</th><th>Earned</th><th></th></tr>
+      {% for s in statements %}
+      <tr><td>{{ s.period }}</td><td>{{ s.rows }}</td><td>{{ s.gross_cents|money }}</td><td>{{ s.earned_cents|money }}</td><td><a href="/partners/portal/statements/{{ s.period }}.csv">Download CSV</a></td></tr>
+      {% else %}<tr><td colspan="5" class="muted">Your first statement appears the month a referral first pays.</td></tr>{% endfor %}
+    </table>
+    {% if payments %}
+    <h3>Payouts</h3>
+    <table><tr><th>Date</th><th>Amount</th><th>Note</th></tr>{% for p in payments %}<tr><td>{{ p.paid_at }}</td><td>{{ p.amount_cents|money }}</td><td class="muted">{{ p.note }}</td></tr>{% endfor %}</table>
+    {% endif %}
+  </div>
+
+  <div class="card kit">
+    <h2>Creative kit</h2>
+    <div class="disclosure">
+      <b>Disclose, every time.</b> The FTC requires a plain disclosure wherever your link or code appears &mdash; and it has to be inside a video (not only the description), on screen long enough to read in a Story, and repeated during a livestream.
+      <ul>
+        {% for d in disclosure_approved %}<li>&ldquo;{{ d }}&rdquo;</li>{% endfor %}
+      </ul>
+      <div class="small" style="margin-top:6px">Not enough on their own: {% for d in disclosure_inadequate %}&ldquo;{{ d }}&rdquo;{{ ', ' if not loop.last }}{% endfor %}.</div>
+    </div>
+    <h3>Caption drafts</h3>
+    <p class="muted small" style="margin:0">Starting points with the disclosure built in. Say it your way &mdash; but keep the disclosure.</p>
+    {% for c in captions %}<div class="caption">{{ c }}</div>{% endfor %}
+    <h3>What you can say</h3>
+    <ul>{% for c in claims_approved %}<li>{{ c }}</li>{% endfor %}</ul>
+    <h3>What you can't</h3>
+    <ul>{% for c in claims_forbidden %}<li>{{ c }}</li>{% endfor %}</ul>
+    <h3>Graphics</h3>
+    <ul>
+      <li><a href="{{ config.WEBSITE_BASE_URL }}/assets/piperstitch-logo-420.png" download>PiperStitch logo (PNG)</a></li>
+      <li><a href="{{ config.WEBSITE_BASE_URL }}/assets/piperstitch-icon-512.png" download>PiperStitch icon (512&nbsp;px)</a></li>
+      <li><a href="{{ config.WEBSITE_BASE_URL }}/how-it-works.html" target="_blank" rel="noopener">How it works</a> and <a href="{{ config.WEBSITE_BASE_URL }}/proofs.html" target="_blank" rel="noopener">Proofs</a> pages &mdash; screenshots from these are fine to use.</li>
+      <li>Your QR code, above, for anything printed.</li>
+    </ul>
+    <p class="muted small">Want a screen recording or sample artwork for a demo? Reply to any of our emails and we'll send what we have.</p>
+  </div>
+  {% endif %}
+  <p class="muted small" style="text-align:center">Questions? <a href="mailto:{{ config.REPLY_TO_EMAIL }}">{{ config.REPLY_TO_EMAIL }}</a> &middot; <a href="{{ config.WEBSITE_BASE_URL }}/partner-terms.html">Partner terms</a></p>
+</main>
+{% endblock %}

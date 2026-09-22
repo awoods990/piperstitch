@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, emails, finance, project_view, promotions, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, emails, finance, partners, project_view, promotions, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -96,7 +96,8 @@ def _price_label() -> str:
     return f"${cents // 100}" if cents % 100 == 0 else f"${cents / 100:.2f}"
 
 
-templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES, unreviewed_feedback_count=db.count_feedback_unreviewed)
+templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES, unreviewed_feedback_count=db.count_feedback_unreviewed,
+                              partner_applications_count=lambda: db.count_partners_by_status().get("applied", 0))
 
 
 def _browser_name(user_agent: str) -> str:
@@ -947,6 +948,100 @@ def referral_link(request: Request, code: str, to: str = ""):
     return response
 
 
+# ------------------------------------------------------- partner portal ---
+# Magic links, like the customer account page: no password store.
+
+
+def _portal_partner(request: Request):
+    pid = request.session.get("partner_id")
+    promoter = db.get_promoter(int(pid)) if pid else None
+    if not partners.can_use_portal(promoter):
+        request.session.pop("partner_id", None)
+        return None
+    return promoter
+
+
+@app.get("/partners/portal", response_class=HTMLResponse)
+def partner_portal(request: Request, message: str = "", error: str = ""):
+    promoter = _portal_partner(request)
+    if promoter is None:
+        return templates.TemplateResponse(request, "partner_portal_request.html", {})
+    ctx = partners.dashboard(promoter)
+    return templates.TemplateResponse(request, "partner_portal.html", {**ctx, "message": message or None, "error": error or None, "program": partners})
+
+
+@app.post("/partners/portal", response_class=HTMLResponse)
+def partner_portal_request_link(request: Request, email: str = Form(...)):
+    """Enumeration-resistant like /account: the same page whether or not
+    the address is a partner's."""
+    try:
+        email = _validate_email(email)
+    except ValueError:
+        return templates.TemplateResponse(request, "partner_portal_request.html", {"error": "That doesn't look like an email address.", "email": email}, status_code=400)
+    try:
+        partners.send_portal_link(email)
+    except email_sender.EmailSendError as e:
+        log.error("Partner portal link email failed for %s: %s", email, e)
+    return templates.TemplateResponse(request, "partner_portal_link_sent.html", {"email": email, "minutes": partners.LINK_TTL_MINUTES})
+
+
+@app.get("/partners/portal/open")
+def partner_portal_open(request: Request, token: str = ""):
+    pid = partners.resolve_portal_link(token)
+    if pid is None:
+        return templates.TemplateResponse(request, "partner_portal_request.html", {"error": "That link has expired or was already used — request a new one below."}, status_code=400)
+    request.session["partner_id"] = pid
+    return RedirectResponse("/partners/portal", status_code=303)
+
+
+@app.post("/partners/portal/logout")
+def partner_portal_logout(request: Request):
+    request.session.pop("partner_id", None)
+    return RedirectResponse("/partners/portal", status_code=303)
+
+
+@app.get("/partners/portal/qr/{code}.svg")
+def partner_portal_qr(request: Request, code: str):
+    promoter = _portal_partner(request)
+    promo = db.get_promotion_by_code(code)
+    if promoter is None or promo is None or promo["promoter_id"] != promoter["id"]:
+        raise HTTPException(status_code=404)
+    svg = partners.qr_svg(partners.link_url(promo["code"]))
+    if svg is None:
+        raise HTTPException(status_code=404)
+    return Response(svg, media_type="image/svg+xml", headers={"Content-Disposition": f'inline; filename="piperstitch-{promo["code"]}-qr.svg"', "Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/partners/portal/statements/{period}.csv")
+def partner_portal_statement(request: Request, period: str):
+    promoter = _portal_partner(request)
+    if promoter is None or not re.match(r"^\d{4}-\d{2}$", period):
+        raise HTTPException(status_code=404)
+    return Response(partners.statement_csv(promoter, period), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="piperstitch-partner-statement-{period}.csv"'})
+
+
+@app.get("/partners/apply", response_class=HTMLResponse)
+def partner_apply_form(request: Request):
+    return templates.TemplateResponse(request, "partner_apply.html", {"form": {}, "seats_left": partners.founding_seats_left(), "program": partners})
+
+
+@app.post("/partners/apply", response_class=HTMLResponse)
+def partner_apply_submit(request: Request, name: str = Form(""), email: str = Form(""), organization: str = Form(""), platforms: str = Form(""), application: str = Form(""),
+                         agree: str = Form(""), website: str = Form("")):
+    """The public application (spec §8). `website` is a honeypot: real
+    people never see it."""
+    form = {"name": name, "email": email, "organization": organization, "platforms": platforms, "application": application}
+    if website.strip():
+        return templates.TemplateResponse(request, "partner_applied.html", {"email": email})
+    if not agree:
+        return templates.TemplateResponse(request, "partner_apply.html", {"form": form, "error": "Please read and agree to the partner terms.", "seats_left": partners.founding_seats_left(), "program": partners}, status_code=400)
+    try:
+        partners.apply(name=name, email=email, organization=organization, platforms=platforms, application=application)
+    except partners.PartnerError as e:
+        return templates.TemplateResponse(request, "partner_apply.html", {"form": form, "error": e.message, "seats_left": partners.founding_seats_left(), "program": partners}, status_code=400)
+    return templates.TemplateResponse(request, "partner_applied.html", {"email": email.strip().lower()})
+
+
 # ---------------------------------------------------------------- admin ---
 
 
@@ -1522,6 +1617,83 @@ def _parse_number(value: str, *, name: str, lo: float, hi: float, blank_ok: bool
     return n
 
 
+def _partners_redirect(*, message: str = "", error: str = "", status: str = "") -> RedirectResponse:
+    q = []
+    if status:
+        q.append("status=" + quote_plus(status))
+    if message:
+        q.append("message=" + quote_plus(message))
+    if error:
+        q.append("error=" + quote_plus(error))
+    return RedirectResponse("/admin/partners" + ("?" + "&".join(q) if q else ""), status_code=303)
+
+
+@app.get("/admin/partners", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_partners(request: Request, status: str = "", message: str = "", error: str = ""):
+    """The Partner Program (spec §8): the application queue and the
+    partner list with each one's numbers."""
+    rows = []
+    for p in db.list_partners(status or None):
+        totals = db.promoter_totals(p["id"])
+        rows.append(dict(p, totals=totals, tier_label=partners.tier_label(p), bounty=partners.bounty_state(p)))
+    return templates.TemplateResponse(request, "partners.html", {
+        "active_nav": "partners", "rows": rows, "status": status, "counts": db.count_partners_by_status(),
+        "seats_left": partners.founding_seats_left(), "program": partners, "today": datetime.now(timezone.utc).date().isoformat(),
+        "message": message or None, "error": error or None,
+    })
+
+
+@app.post("/admin/partners/{promoter_id}/approve", dependencies=[Depends(auth.require_admin)])
+def admin_partner_approve(promoter_id: int, tier: str = Form("standard"), share_pct: str = Form(""), code: str = Form(...), window_days: str = Form("120"), notes: str = Form("")):
+    try:
+        share = _parse_number(share_pct, name="Revenue share", lo=0.5, hi=100, blank_ok=True)
+        days = _parse_number(window_days or "0", name="Bounty window", lo=0, hi=3650) or 0
+        partners.approve(promoter_id, tier=tier, share_pct=share, code=code, window_days=int(days), notes=notes)
+    except (partners.PartnerError, promotions.PromoError) as e:
+        return _partners_redirect(error=e.message)
+    p = db.get_promoter(promoter_id)
+    return _promoter_redirect(promoter_id, message=f"{p['name']} approved as a {partners.tier_label(p).lower()} — the welcome email with their link is on its way.")
+
+
+@app.post("/admin/partners/{promoter_id}/decline", dependencies=[Depends(auth.require_admin)])
+def admin_partner_decline(promoter_id: int, note: str = Form("")):
+    try:
+        partners.decline(promoter_id, note=note)
+    except partners.PartnerError as e:
+        return _partners_redirect(error=e.message)
+    return _partners_redirect(message="Application declined; they've been told.")
+
+
+@app.post("/admin/partners/{promoter_id}/portal-link", dependencies=[Depends(auth.require_admin)])
+def admin_partner_portal_link(promoter_id: int):
+    p = db.get_promoter(promoter_id)
+    if p is None:
+        return _partners_redirect(error="That partner doesn't exist.")
+    if not p["email"]:
+        return _promoter_redirect(promoter_id, error="They have no email address on file.")
+    try:
+        email_sender.send_partner_link_email(to_email=p["email"], partner_name=p["name"], url=partners.create_portal_link(promoter_id))
+    except email_sender.EmailSendError as e:
+        return _promoter_redirect(promoter_id, error=f"Couldn't send the link: {e}")
+    return _promoter_redirect(promoter_id, message=f"Portal link sent to {p['email']}.")
+
+
+@app.post("/admin/partners/windows", dependencies=[Depends(auth.require_admin)])
+def admin_partner_windows(promoter_ids: list[str] = Form([]), bounty_window_start: str = Form(""), bounty_window_end: str = Form("")):
+    """Bulk-set a cohort's bounty window (spec §4.1)."""
+    try:
+        start = datetime.fromisoformat(bounty_window_start.strip()).date(); end = datetime.fromisoformat(bounty_window_end.strip()).date()
+    except ValueError:
+        return _partners_redirect(error="Both window dates are needed, like 2026-12-31.")
+    if end < start:
+        return _partners_redirect(error="The window can't end before it starts.")
+    n = 0
+    for raw in promoter_ids:
+        if raw.strip().isdigit() and db.get_promoter(int(raw)) is not None:
+            db.update_partner_fields(int(raw), bounty_window_start=start.isoformat(), bounty_window_end=end.isoformat()); n += 1
+    return _partners_redirect(message=f"Bounty window {start} → {end} set on {n} partner{'' if n == 1 else 's'}.")
+
+
 @app.get("/admin/promotions", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
 def admin_promotions(request: Request, message: str = "", error: str = ""):
     promoters = [dict(p, totals=db.promoter_totals(p["id"])) for p in db.list_promoters()]
@@ -1562,6 +1734,11 @@ def admin_promoter_detail(request: Request, promoter_id: int, message: str = "",
         "redemptions": db.list_redemptions_for_promoter(promoter_id),
         "payouts": db.list_promo_payouts_for_promoter(promoter_id),
         "payments": db.list_promoter_payments(promoter_id),
+        "referrals_by_id": {r["id"]: r for r in partners.referral_rows(promoter_id)},
+        "bounty": partners.bounty_state(promoter),
+        "tier_label": partners.tier_label(promoter),
+        "is_partner": partners.is_partner(promoter),
+        "program": partners,
         "describe": promotions.describe,
         "today": datetime.now(timezone.utc).date().isoformat(),
         "message": message or None,

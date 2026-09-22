@@ -168,6 +168,28 @@ def send_partner_reinstated_email(*, to_email: str, partner_name: str) -> None:
     e.send_system("partner_reinstated", to_email=to_email, customer_id=None, vars=e.variables({"name": partner_name, "email": to_email, "id": 0}))
 
 
+def _partner_vars(partner_name: str, to_email: str, **extra) -> dict:
+    return _emails().variables({"name": partner_name, "email": to_email, "id": 0}, **extra)
+
+
+def send_partner_link_email(*, to_email: str, partner_name: str, url: str) -> None:
+    from . import partners
+    _emails().send_system("partner_link", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email, url=url, link_minutes=partners.LINK_TTL_MINUTES))
+
+
+def send_partner_applied_email(*, to_email: str, partner_name: str) -> None:
+    _emails().send_system("partner_applied", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email))
+
+
+def send_partner_welcome_email(*, to_email: str, partner_name: str, code: str, link: str, portal_link: str, tier: str, share_pct: float) -> None:
+    _emails().send_system("partner_welcome", to_email=to_email, customer_id=None,
+                          vars=_partner_vars(partner_name, to_email, code=code, link=link, portal_link=portal_link, tier=tier, share_pct=f"{share_pct:g}"))
+
+
+def send_partner_declined_email(*, to_email: str, partner_name: str) -> None:
+    _emails().send_system("partner_declined", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email))
+
+
 def send_feedback_received_email(*, to_email: str, customer_name: str) -> None:
     e = _emails()
     cid = _customer_id(to_email)
