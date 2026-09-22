@@ -1,0 +1,106 @@
+{% extends "admin_base.html" %}
+{% block title %}{{ p.name }} — Recruiting — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="/admin/partners#recruit">&larr; Recruiting</a>{% if promoter %} &middot; <a href="/admin/promoters/{{ promoter.id }}">Their partner record</a>{% endif %}</p>
+
+  <div class="card">
+    <div class="toolbar">
+      <div><h1 style="margin:0">{{ p.name }}</h1>
+        <div class="muted"><a href="mailto:{{ p.email }}">{{ p.email }}</a>{% if p.organization %} &middot; {{ p.organization }}{% endif %}{% if p.note %} &middot; {{ p.note }}{% endif %}</div></div>
+      <div>
+        {% if p.applied_at %}<span class="pill active">applied {{ p.applied_at|short_date }}</span>
+        {% elif p.outreach_status == 'replied' %}<span class="pill past_due">replied — paused</span>
+        {% elif p.outreach_status == 'active' %}<span class="pill trialing">in progress</span>
+        {% elif p.outreach_status == 'opted_out' %}<span class="pill ended">asked us to stop</span>
+        {% elif p.outreach_status == 'stopped' %}<span class="pill ended">stopped</span>
+        {% else %}<span class="pill comp">sequence finished</span>{% endif %}
+      </div>
+    </div>
+    <div class="kpi-grid" style="margin-bottom:0">
+      <div class="kpi-tile"><div class="kpi-value">{{ plan|selectattr('state', 'equalto', 'sent')|list|length }} of {{ plan|length }}</div><div class="kpi-label">Emails sent</div>
+        <div class="kpi-sub">{% if p.outreach_status == 'active' and p.outreach_next_at %}next due {{ p.outreach_next_at|short_date }}{% elif p.outreach_status == 'replied' %}held while you talk{% else %}nothing scheduled{% endif %}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ p.views }}</div><div class="kpi-label">Opened the details</div><div class="kpi-sub">{% if p.last_seen_at %}last {{ p.last_seen_at|short_date }}{% else %}not yet{% endif %}</div></div>
+      <div class="kpi-tile{% if p.outreach_status == 'replied' %} warn{% endif %}"><div class="kpi-value">{{ timeline|selectattr('kind', 'equalto', 'reply')|list|length }}</div><div class="kpi-label">Replies</div><div class="kpi-sub">from them to us</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ p.created_at|short_date }}</div><div class="kpi-label">Approached</div><div class="kpi-sub">{{ p.source }}</div></div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h2>Where they are in the sequence</h2>
+        <p class="muted small" style="margin-top:0">Send any one of these again whenever it helps &mdash; the same words, and the schedule stays where it is unless you tick the box.</p>
+        <table>
+          <tr><th style="width:64px">Day</th><th>Email</th><th>State</th><th></th></tr>
+          {% for step in plan %}
+          <tr>
+            <td class="muted small">{{ 'at once' if step.delay_days == 0 else '+' ~ step.delay_days ~ 'd' }}</td>
+            <td><a href="/admin/emails/system/{{ step.key }}">{{ step.subject or step.key.replace('partner_outreach_', 'Email ') }}</a>
+              {% if step.sent_at %}<br><span class="muted small">sent {{ step.sent_at|short_date }}{% if step.sent_count > 1 %} &middot; {{ step.sent_count }} times{% endif %}</span>{% endif %}</td>
+            <td>{% if step.state == 'sent' %}<span class="pill yes">sent</span>
+              {% elif step.state == 'next' %}<span class="pill trialing">next{% if p.outreach_next_at %}, {{ p.outreach_next_at|short_date }}{% endif %}</span>
+              {% elif step.state == 'held' %}<span class="pill past_due">held</span>
+              {% else %}<span class="muted">to come</span>{% endif %}</td>
+            <td>
+              <form method="post" action="/admin/partners/recruit/{{ p.id }}/send/{{ step.step }}" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+                <button class="small secondary" type="submit">{{ 'Send again' if step.sent_at else 'Send now' }}</button>
+                {% if step.state in ('next', 'held', 'to come') %}<label class="inline muted small" title="Also move the schedule on from here"><input type="checkbox" name="advance" value="1"> and continue from here</label>{% endif %}
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap">
+          {% if p.outreach_status in ('replied', 'stopped') and not p.applied_at %}
+          <form method="post" action="/admin/partners/recruit/{{ p.id }}/resume"><button class="small" type="submit">Resume the sequence</button></form>
+          {% endif %}
+          {% if p.outreach_status == 'active' %}
+          <form method="post" action="/admin/partners/recruit/{{ p.id }}"><button class="small secondary" type="submit" name="action" value="stop">Stop writing to them</button></form>
+          {% endif %}
+          {% if p.outreach_status in ('done', 'stopped') and not p.applied_at and not p.opted_out_at %}
+          <form method="post" action="/admin/partners/recruit/{{ p.id }}"><button class="small secondary" type="submit" name="action" value="restart">Start the sequence again</button></form>
+          {% endif %}
+        </div>
+        <p class="muted small" style="margin:12px 0 0">Their link into the program details:<br><input type="text" readonly value="{{ program_link }}" onclick="this.select()" style="font-size:11px; padding:4px 6px"></p>
+      </div>
+
+      <div class="card">
+        <h2>They replied</h2>
+        <p class="muted small" style="margin-top:0">Replies come back to your mailbox. Paste one in here and it joins the record below &mdash; and the sequence pauses, so nobody gets a scripted email in the middle of a conversation.</p>
+        <form method="post" action="/admin/partners/recruit/{{ p.id }}/reply">
+          <label>Subject <span class="muted">(optional)</span></label><input type="text" name="subject" placeholder="Re: Would you like to be paid for recommending PiperStitch?">
+          <label>What they wrote</label><textarea name="body" rows="4" required placeholder="Paste their reply here"></textarea>
+          <div style="margin-top:10px"><button class="small" type="submit">Save their reply</button></div>
+        </form>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Everything that happened</h2>
+        <table>
+          {% for e in timeline %}
+          <tr>
+            <td class="muted small" style="width:96px; vertical-align:top">{{ e.at|short_date }}</td>
+            <td>
+              {% if e.kind == 'reply' %}<span class="pill past_due">they wrote</span>
+              {% elif e.kind == 'sent' %}<span class="pill yes">sent {{ e.step }}</span>
+              {% elif e.kind == 'failed' %}<span class="pill incomplete">failed</span>
+              {% elif e.kind == 'opened' %}<span class="pill trialing">opened</span>
+              {% elif e.kind == 'applied' %}<span class="pill active">applied</span>
+              {% else %}<span class="pill ended">said no</span>{% endif %}
+              <div class="small" style="margin-top:3px">{{ e.subject|safe }}</div>
+              {% if e.body %}<div class="small" style="white-space:pre-wrap; background:#f7f5f1; border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-top:6px">{{ e.body }}</div>{% endif %}
+              {% if e.error %}<div class="muted small" style="margin-top:3px">{{ e.error }}</div>{% endif %}
+            </td>
+          </tr>
+          {% else %}<tr><td class="muted">Nothing yet.</td></tr>{% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}

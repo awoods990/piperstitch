@@ -120,6 +120,10 @@ POSTMARK_API_TOKEN = os.environ.get("POSTMARK_API_TOKEN", "")
 # Falls back to SMTP_FROM if blank.
 POSTMARK_FROM = os.environ.get("POSTMARK_FROM", "")
 POSTMARK_MESSAGE_STREAM = os.environ.get("POSTMARK_MESSAGE_STREAM", "outbound")
+# Replies to recruitment email land back here when Postmark's inbound
+# stream is pointed at /webhooks/inbound-email/<this token>. Unset means
+# the endpoint isn't there at all.
+INBOUND_EMAIL_TOKEN = os.environ.get("INBOUND_EMAIL_TOKEN", "")
 
 # --- URLs --------------------------------------------------------------
 # Where THIS service is reachable, no trailing slash — used for Stripe's

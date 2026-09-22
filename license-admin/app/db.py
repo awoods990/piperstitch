@@ -600,6 +600,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "promo_payouts", "note", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "stripe_events", "result", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "partner_resources", "announced_at", "TEXT")          # when partners were told about it
+        _add_column_if_missing(conn, "partner_outreach_log", "direction", "TEXT NOT NULL DEFAULT 'out'")   # out = we wrote; in = they replied
+        _add_column_if_missing(conn, "partner_outreach_log", "body", "TEXT NOT NULL DEFAULT ''")           # the reply itself
         for column, definition in (                                                        # recruitment (spec §8: bring partners in)
             ("outreach_step", "INTEGER NOT NULL DEFAULT 0"), ("outreach_next_at", "TEXT"),
             ("outreach_status", "TEXT NOT NULL DEFAULT ''"),   # '' = not being recruited; active | done | stopped | opted_out
@@ -1743,8 +1745,9 @@ def due_outreach(now_iso: str, limit: int = 50) -> list[sqlite3.Row]:
 def list_recruits(limit: int = 300) -> list[sqlite3.Row]:
     with connection() as conn:
         return conn.execute(
-            "SELECT p.*, (SELECT COUNT(*) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.status = 'sent') AS sent_count, "
-            "(SELECT MAX(created_at) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.status = 'sent') AS last_sent_at "
+            "SELECT p.*, (SELECT COUNT(*) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.status = 'sent' AND l.direction = 'out') AS sent_count, "
+            "(SELECT MAX(created_at) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.status = 'sent' AND l.direction = 'out') AS last_sent_at, "
+            "(SELECT COUNT(*) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.direction = 'in') AS reply_count "
             "FROM partner_prospects p WHERE p.outreach_status != '' ORDER BY COALESCE(p.applied_at, p.last_seen_at, p.created_at) DESC LIMIT ?", (limit,)).fetchall()
 
 
@@ -1757,7 +1760,28 @@ def log_outreach(*, prospect_id: int, step: int, subject: str, status: str = "se
 
 def list_outreach_log(prospect_id: int) -> list[sqlite3.Row]:
     with connection() as conn:
-        return conn.execute("SELECT * FROM partner_outreach_log WHERE prospect_id = ? ORDER BY created_at", (prospect_id,)).fetchall()
+        return conn.execute("SELECT * FROM partner_outreach_log WHERE prospect_id = ? ORDER BY created_at, id", (prospect_id,)).fetchall()
+
+
+def add_outreach_reply(*, prospect_id: int, subject: str, body: str) -> int:
+    """What they wrote back, on the same timeline as what we sent."""
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_outreach_log (prospect_id, step, subject, status, direction, body, created_at) VALUES (?, 0, ?, 'received', 'in', ?, ?)",
+                           (prospect_id, subject[:200], body.strip(), _now()))
+        return cur.lastrowid
+
+
+def count_outreach_replies(prospect_id: int) -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM partner_outreach_log WHERE prospect_id = ? AND direction = 'in'", (prospect_id,)).fetchone()[0]
+
+
+def prospects_with_unanswered_replies(limit: int = 20) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT p.*, l.created_at AS replied_at, l.body AS reply FROM partner_prospects p "
+            "JOIN partner_outreach_log l ON l.prospect_id = p.id AND l.direction = 'in' "
+            "WHERE p.outreach_status = 'replied' GROUP BY p.id ORDER BY l.created_at DESC LIMIT ?", (limit,)).fetchall()
 
 
 def recruitment_counts() -> dict:

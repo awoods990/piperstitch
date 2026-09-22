@@ -923,6 +923,30 @@ def _fulfill_checkout(session: dict, *, stripe_event_id: Optional[str]) -> None:
     db.mark_checkout_completed(session_id)
 
 
+@app.post("/webhooks/inbound-email/{token}")
+async def inbound_email(token: str, request: Request):
+    """Replies to recruitment email, delivered by the mail provider's
+    inbound stream (Postmark's shape). The token in the path is the only
+    thing standing between this and the open internet, so an unset token
+    means no endpoint at all, and anything we can't match to someone we
+    wrote to is dropped rather than stored."""
+    if not config.INBOUND_EMAIL_TOKEN or not hmac.compare_digest(token, config.INBOUND_EMAIL_TOKEN):
+        raise HTTPException(status_code=404)
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="expected JSON")
+    sender = ((payload.get("FromFull") or {}).get("Email") or payload.get("From") or "").strip().lower()
+    if "<" in sender:                                  # "Kathleen <kath@example.com>"
+        sender = sender.split("<", 1)[1].split(">")[0].strip()
+    body = payload.get("StrippedTextReply") or payload.get("TextBody") or ""
+    reply_id = partners.inbound_reply(from_email=sender, subject=payload.get("Subject") or "", body=body)
+    if reply_id is None:
+        log.info("Inbound email from %s did not match anyone we wrote to; ignored.", sender or "(no sender)")
+        return {"received": True, "matched": False}
+    return {"received": True, "matched": True}
+
+
 # ------------------------------------------------------- partner links ---
 
 
@@ -1799,6 +1823,7 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "prospects": db.list_partner_prospects(), "prospect_counts": db.count_partner_prospects(), "program_link": lambda pid: partners.program_url(pid),
         "code_requests": db.list_code_requests(), "resources": db.list_partner_resources(), "partner_feedback": db.list_partner_feedback(limit=25),
         "recruits": db.list_recruits(), "recruit_counts": db.recruitment_counts(), "pending_documents": db.list_partner_documents(pending_only=True),
+        "replies": db.prospects_with_unanswered_replies(),
         "outreach_steps": partners.OUTREACH_STEPS,
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
@@ -2053,6 +2078,60 @@ async def admin_partner_recruit(people: str = Form(""), note: str = Form(""), fi
     if bad:
         msg += f" Couldn't read {len(bad)} line{'' if len(bad) == 1 else 's'}: " + "; ".join(bad[:3]) + ("…" if len(bad) > 3 else "") + "."
     return _partners_redirect(message=msg, anchor="recruit")
+
+
+@app.get("/admin/partners/recruit/{prospect_id}", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_partner_recruit_detail(request: Request, prospect_id: int, message: str = "", error: str = ""):
+    """One person's approach: where they are in the sequence, everything
+    sent and received, and the controls for both."""
+    prospect = db.get_partner_prospect(prospect_id)
+    if prospect is None:
+        return _partners_redirect(error="That person isn't on the list.", anchor="recruit")
+    promoter = db.get_promoter_by_email(prospect["email"])
+    return templates.TemplateResponse(request, "partner_recruit.html", {
+        "active_nav": "partners", "p": prospect, "plan": partners.outreach_plan(prospect), "timeline": partners.recruit_timeline(prospect),
+        "program_link": partners.program_url(prospect_id), "promoter": promoter, "program": partners,
+        "message": message or None, "error": error or None,
+    })
+
+
+def _recruit_redirect(prospect_id: int, *, message: str = "", error: str = "") -> RedirectResponse:
+    q = []
+    if message:
+        q.append("message=" + quote_plus(message))
+    if error:
+        q.append("error=" + quote_plus(error))
+    return RedirectResponse(f"/admin/partners/recruit/{prospect_id}" + ("?" + "&".join(q) if q else ""), status_code=303)
+
+
+@app.post("/admin/partners/recruit/{prospect_id}/send/{step}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_recruit_send_step(prospect_id: int, step: int, advance: str = Form("")):
+    """Send one particular email again -- the same words, and the
+    schedule left where it was unless you say otherwise."""
+    prospect = db.get_partner_prospect(prospect_id)
+    if prospect is None:
+        return _partners_redirect(error="That person isn't on the list.", anchor="recruit")
+    if not partners.send_outreach_step(prospect, step, advance=bool(advance)):
+        return _recruit_redirect(prospect_id, error="That email couldn't be sent — check the mail settings.")
+    return _recruit_redirect(prospect_id, message=f"Email {step} sent to {prospect['email']}.")
+
+
+@app.post("/admin/partners/recruit/{prospect_id}/reply", dependencies=[Depends(auth.require_admin)])
+def admin_partner_recruit_reply(prospect_id: int, subject: str = Form(""), body: str = Form(...)):
+    """Their reply, when it reached your inbox rather than the hook."""
+    prospect = db.get_partner_prospect(prospect_id)
+    if prospect is None:
+        return _partners_redirect(error="That person isn't on the list.", anchor="recruit")
+    if not body.strip():
+        return _recruit_redirect(prospect_id, error="Paste what they wrote.")
+    partners.record_reply(prospect, subject=subject, body=body)
+    return _recruit_redirect(prospect_id, message="Reply saved — the sequence is paused while you talk to them.")
+
+
+@app.post("/admin/partners/recruit/{prospect_id}/resume", dependencies=[Depends(auth.require_admin)])
+def admin_partner_recruit_resume(prospect_id: int):
+    partners.resume_outreach(prospect_id)
+    return _recruit_redirect(prospect_id, message="Back in the sequence, from where it left off.")
 
 
 @app.post("/admin/partners/recruit/{prospect_id}", dependencies=[Depends(auth.require_admin)])

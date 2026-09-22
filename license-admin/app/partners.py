@@ -402,8 +402,10 @@ def partner_exists(promoter) -> bool:
     return promoter is not None and promoter["status"] in ("applied", "approved", "active", "suspended")
 
 
-def send_outreach_step(prospect, step: int) -> bool:
-    """One recruitment email. Everything is logged, sent or failed."""
+def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
+    """One recruitment email. Everything is logged, sent or failed. With
+    `advance` off it is a plain resend: the same words again, and the
+    schedule left exactly where it was."""
     spec = next((s for s in OUTREACH_STEPS if s["step"] == step), None)
     if spec is None:
         return False
@@ -416,6 +418,8 @@ def send_outreach_step(prospect, step: int) -> bool:
         db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
         return False
     db.log_outreach(prospect_id=prospect["id"], step=step, subject=subject)
+    if not advance:
+        return True
     nxt = next((s for s in OUTREACH_STEPS if s["step"] == step + 1), None)
     if nxt is None:
         db.set_prospect_outreach(prospect["id"], outreach_step=step, outreach_status="done", outreach_next_at=None)
@@ -432,6 +436,70 @@ def outreach_check(*, now: Optional[datetime] = None) -> int:
         if send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
             sent += 1
     return sent
+
+
+def record_reply(prospect, *, subject: str = "", body: str, pause: bool = True) -> int:
+    """They wrote back. The sequence stops there: nobody should get the
+    next scripted email while a person is halfway through answering
+    them."""
+    reply_id = db.add_outreach_reply(prospect_id=prospect["id"], subject=subject or "(no subject)", body=body)
+    if pause and prospect["outreach_status"] in ("active", "done"):
+        db.set_prospect_outreach(prospect["id"], outreach_status="replied", outreach_next_at=None)
+    return reply_id
+
+
+def resume_outreach(prospect_id: int) -> None:
+    """Back into the sequence where it left off."""
+    prospect = db.get_partner_prospect(prospect_id)
+    if prospect is None:
+        return
+    step = int(prospect["outreach_step"] or 0)
+    nxt = next((s for s in OUTREACH_STEPS if s["step"] == step + 1), None)
+    if nxt is None:
+        db.set_prospect_outreach(prospect_id, outreach_status="done", outreach_next_at=None)
+        return
+    db.set_prospect_outreach(prospect_id, outreach_status="active", outreach_next_at=db.now_iso())
+
+
+def inbound_reply(*, from_email: str, subject: str, body: str) -> Optional[int]:
+    """A reply arriving from the mail provider's inbound hook. Matched to
+    the person by address; anything we can't place is ignored rather than
+    stored, since this endpoint is open to the internet."""
+    prospect = db.get_partner_prospect_by_email(from_email)
+    if prospect is None or not prospect["outreach_status"]:
+        return None
+    return record_reply(prospect, subject=subject, body=(body or "").strip()[:20000])
+
+
+def recruit_timeline(prospect) -> list[dict]:
+    """Everything that has happened with this person, in order: what we
+    sent, what they wrote back, when they opened the details, and what
+    is due next."""
+    events = []
+    for row in db.list_outreach_log(prospect["id"]):
+        events.append({"at": row["created_at"], "kind": "reply" if row["direction"] == "in" else ("failed" if row["status"] == "failed" else "sent"),
+                       "step": row["step"], "subject": row["subject"], "body": row["body"], "error": row["error"]})
+    if prospect["last_seen_at"]:
+        events.append({"at": prospect["last_seen_at"], "kind": "opened", "subject": f"Opened the program details ({prospect['views']}&times; in all)", "step": 0, "body": "", "error": ""})
+    if prospect["applied_at"]:
+        events.append({"at": prospect["applied_at"], "kind": "applied", "subject": "Applied to the program", "step": 0, "body": "", "error": ""})
+    if prospect["opted_out_at"]:
+        events.append({"at": prospect["opted_out_at"], "kind": "opted_out", "subject": "Asked not to be contacted again", "step": 0, "body": "", "error": ""})
+    return sorted(events, key=lambda e: e["at"] or "")
+
+
+def outreach_plan(prospect) -> list[dict]:
+    """The four steps with where this person is in them."""
+    sent_steps = {row["step"] for row in db.list_outreach_log(prospect["id"]) if row["direction"] == "out" and row["status"] == "sent"}
+    plan = []
+    for spec in OUTREACH_STEPS:
+        row = next((r for r in db.list_outreach_log(prospect["id"]) if r["step"] == spec["step"] and r["direction"] == "out"), None)
+        state = "sent" if spec["step"] in sent_steps else ("next" if spec["step"] == int(prospect["outreach_step"] or 0) + 1 else "to come")
+        if prospect["outreach_status"] in ("stopped", "opted_out", "replied") and state == "next":
+            state = "held"
+        plan.append({**spec, "state": state, "sent_at": row["created_at"] if row else None, "subject": row["subject"] if row else "",
+                     "sent_count": sum(1 for r in db.list_outreach_log(prospect["id"]) if r["step"] == spec["step"] and r["direction"] == "out" and r["status"] == "sent")})
+    return plan
 
 
 def stop_outreach(prospect_id: int, *, opted_out: bool = False) -> None:

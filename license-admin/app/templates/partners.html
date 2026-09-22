@@ -11,7 +11,7 @@
   </div>
   <p class="muted small" style="margin-top:-6px">Portal: <a href="/partners/portal" target="_blank" rel="noopener">{{ config.PUBLIC_BASE_URL }}/partners/portal</a> &middot; Apply: <a href="/partners/apply" target="_blank" rel="noopener">/partners/apply</a> &middot; {{ payable_total|money }} payable now, {{ owed_total|money }} owed in all.</p>
 
-  {% if alerts.events or alerts.webhooks or alerts.spikes or alerts.unchecked_content or pending_documents or code_requests|selectattr('status', 'equalto', 'pending')|list or partner_feedback|rejectattr('reviewed_at')|list %}
+  {% if replies or alerts.events or alerts.webhooks or alerts.spikes or alerts.unchecked_content or pending_documents or code_requests|selectattr('status', 'equalto', 'pending')|list or partner_feedback|rejectattr('reviewed_at')|list %}
   <div class="card" style="border-color:#f0cabe; background:#fdf6f4">
     <h2>Needs a look</h2>
     {% for a in alerts.spikes %}<p style="margin:4px 0"><span class="pill past_due">spike</span> <a href="/admin/promoters/{{ a.id }}">{{ a.name }}</a>: {{ a.recent }} signups in {{ a.days }} days against a weekly average of {{ a.weekly_avg }} — check them before the bounties mature.</p>{% endfor %}
@@ -20,6 +20,7 @@
     {% if alerts.unchecked_content %}<p style="margin:4px 0"><span class="pill trialing">content</span> {{ alerts.unchecked_content }} logged post{{ '' if alerts.unchecked_content == 1 else 's' }} not yet checked for the disclosure.</p>{% endif %}
     {% set pending_codes = code_requests|selectattr('status', 'equalto', 'pending')|list %}
     {% if pending_codes %}<p style="margin:4px 0"><span class="pill trialing">codes</span> {{ pending_codes|length }} code request{{ '' if pending_codes|length == 1 else 's' }} waiting — <a href="#codes">decide them</a>.</p>{% endif %}
+    {% for r in replies %}<p style="margin:4px 0"><span class="pill past_due">reply</span> <a href="/admin/partners/recruit/{{ r.id }}">{{ r.name }}</a> wrote back {{ r.replied_at|short_date }} — the sequence is paused: {{ r.reply[:120] }}{% if r.reply|length > 120 %}…{% endif %}</p>{% endfor %}
     {% if pending_documents %}<p style="margin:4px 0"><span class="pill trialing">tax</span> {{ pending_documents|length }} tax form{{ '' if pending_documents|length == 1 else 's' }} waiting to be accepted: {% for d in pending_documents %}<a href="/admin/promoters/{{ d.promoter_id }}">{{ d.promoter_name }}</a>{{ ', ' if not loop.last }}{% endfor %} — nothing pays out until they are.</p>{% endif %}
     {% set unread = partner_feedback|rejectattr('reviewed_at')|list %}
     {% if unread %}<p style="margin:4px 0"><span class="pill trialing">feedback</span> {{ unread|length }} unread note{{ '' if unread|length == 1 else 's' }} from partners — <a href="#feedback">read them</a>.</p>{% endif %}
@@ -74,18 +75,15 @@
       <tr><th>Who</th><th>Added</th><th>Emails sent</th><th>Opened the details</th><th>Applied</th><th>Status</th><th></th></tr>
       {% for r in recruits %}
       <tr>
-        <td><strong>{{ r.name }}</strong><br><span class="muted small">{{ r.email }}</span>{% if r.note %}<br><span class="muted small">{{ r.note }}</span>{% endif %}</td>
+        <td><a href="/admin/partners/recruit/{{ r.id }}"><strong>{{ r.name }}</strong></a><br><span class="muted small">{{ r.email }}</span>{% if r.note %}<br><span class="muted small">{{ r.note }}</span>{% endif %}</td>
         <td class="muted small">{{ r.created_at|short_date }}</td>
         <td class="small">{{ r.sent_count }} of {{ outreach_steps|length }}{% if r.last_sent_at %}<br><span class="muted">last {{ r.last_sent_at|short_date }}</span>{% endif %}
           {% if r.outreach_status == 'active' and r.outreach_next_at %}<br><span class="muted">next {{ r.outreach_next_at|short_date }}</span>{% endif %}</td>
         <td class="small">{% if r.last_seen_at %}<span class="pill yes">{{ r.views }}&times;</span> <span class="muted">{{ r.last_seen_at|short_date }}</span>{% else %}<span class="muted">not yet</span>{% endif %}</td>
         <td>{% if r.applied_at %}<a href="/admin/partners?status=applied"><span class="pill active">{{ r.applied_at|short_date }}</span></a>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{% if r.outreach_status == 'active' %}<span class="pill trialing">in progress</span>{% elif r.outreach_status == 'opted_out' %}<span class="pill ended">said no</span>{% elif r.outreach_status == 'stopped' %}<span class="pill ended">stopped</span>{% else %}<span class="pill comp">finished</span>{% endif %}</td>
-        <td>{% if r.outreach_status in ('active', 'done') and not r.applied_at %}
-            <form method="post" action="/admin/partners/recruit/{{ r.id }}" style="display:flex; gap:4px">
-              {% if r.outreach_status == 'active' %}<button class="small secondary" type="submit" name="action" value="send" title="Send the next one now">Send next</button>
-              <button class="small secondary" type="submit" name="action" value="stop">Stop</button>{% else %}<button class="small secondary" type="submit" name="action" value="restart">Start again</button>{% endif %}
-            </form>{% endif %}</td>
+        <td>{% if r.outreach_status == 'replied' %}<span class="pill past_due">replied</span>{% elif r.outreach_status == 'active' %}<span class="pill trialing">in progress</span>{% elif r.outreach_status == 'opted_out' %}<span class="pill ended">said no</span>{% elif r.outreach_status == 'stopped' %}<span class="pill ended">stopped</span>{% else %}<span class="pill comp">finished</span>{% endif %}
+          {% if r.reply_count %}<br><span class="muted small">{{ r.reply_count }} repl{{ 'y' if r.reply_count == 1 else 'ies' }}</span>{% endif %}</td>
+        <td><a class="button small secondary" href="/admin/partners/recruit/{{ r.id }}">Open</a></td>
       </tr>
       {% endfor %}
     </table>

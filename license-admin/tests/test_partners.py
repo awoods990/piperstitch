@@ -1012,3 +1012,52 @@ def test_the_partner_emails_are_editable_on_the_emails_page(isolated_db, test_ke
     prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
     partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
     assert fake_smtp.sent[-1]["Subject"] == "A word about PiperStitch, Dev"
+
+
+def test_a_recruits_page_shows_the_sequence_resends_any_email_and_keeps_their_reply(isolated_db, test_keypair, fake_smtp, admin_password_configured, monkeypatch):
+    from app import partners
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    db.set_prospect_outreach(prospect_id, outreach_status="active", outreach_next_at=db.now_iso())
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        page = client.get(f"/admin/partners/recruit/{prospect_id}").text
+        assert "Dev Patel" in page and "1 of 4" in page and "Where they are in the sequence" in page
+        assert "sent" in page and "next" in page                     # step 1 sent, step 2 next
+        # Resending step 1 doesn't disturb the schedule.
+        before = db.get_partner_prospect(prospect_id)
+        fake_smtp.sent.clear()
+        client.post(f"/admin/partners/recruit/{prospect_id}/send/1")
+        after = db.get_partner_prospect(prospect_id)
+        assert len(fake_smtp.sent) == 1 and after["outreach_step"] == before["outreach_step"] == 1
+        assert after["outreach_next_at"] == before["outreach_next_at"]
+        # Sending a later one "and continuing from here" does move it on.
+        client.post(f"/admin/partners/recruit/{prospect_id}/send/2", data={"advance": "1"})
+        assert db.get_partner_prospect(prospect_id)["outreach_step"] == 2
+
+        # A reply: saved, shown, and the sequence pauses.
+        client.post(f"/admin/partners/recruit/{prospect_id}/reply", data={"subject": "Re: PiperStitch", "body": "Interested — can I try it on a customer's cap logo first?"})
+        p = db.get_partner_prospect(prospect_id)
+        assert p["outreach_status"] == "replied" and p["outreach_next_at"] is None
+        assert partners.outreach_check(now=datetime.now(timezone.utc) + timedelta(days=30)) == 0
+        page = client.get(f"/admin/partners/recruit/{prospect_id}").text
+        assert "cap logo first" in page and "they wrote" in page and "held" in page
+        assert "Dev Patel" in client.get("/admin/partners").text and "wrote back" in client.get("/admin/partners").text
+        # Resuming picks up where it left off.
+        client.post(f"/admin/partners/recruit/{prospect_id}/resume")
+        assert db.get_partner_prospect(prospect_id)["outreach_status"] == "active"
+        assert partners.outreach_check() == 1                        # step 3 goes
+
+    # The inbound hook: off without a token, and only for people we wrote to.
+    with TestClient(app) as client:
+        assert client.post("/webhooks/inbound-email/anything", json={}).status_code == 404
+        monkeypatch.setattr(config, "INBOUND_EMAIL_TOKEN", "hook-secret")
+        assert client.post("/webhooks/inbound-email/wrong", json={}).status_code == 404
+        r = client.post("/webhooks/inbound-email/hook-secret", json={
+            "FromFull": {"Email": "Dev@Example.com"}, "Subject": "Re: PiperStitch", "StrippedTextReply": "Go on then, send the link again."})
+        assert r.status_code == 200 and r.json()["matched"] is True
+        r = client.post("/webhooks/inbound-email/hook-secret", json={"From": "Someone Else <nobody@example.com>", "TextBody": "unrelated"})
+        assert r.json()["matched"] is False
+    assert db.count_outreach_replies(prospect_id) == 2
+    assert db.get_partner_prospect(prospect_id)["outreach_status"] == "replied"
+    assert "Go on then" in [e["body"] for e in partners.recruit_timeline(db.get_partner_prospect(prospect_id))][-1]
