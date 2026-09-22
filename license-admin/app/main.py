@@ -972,6 +972,7 @@ def partner_portal(request: Request, message: str = "", error: str = ""):
     if promoter is None:
         return templates.TemplateResponse(request, "partner_portal_request.html", {})
     ctx = partners.dashboard(promoter)
+    ctx["payout"] = partners.payout_readiness(promoter)
     return templates.TemplateResponse(request, "partner_portal.html", {**ctx, "message": message or None, "error": error or None, "program": partners})
 
 
@@ -1016,6 +1017,30 @@ def partner_portal_request_code(request: Request, code: str = Form(""), reason: 
     except (partners.PartnerError, promotions.PromoError) as e:
         return RedirectResponse("/partners/portal?error=" + quote_plus(e.message) + "#codes", status_code=303)
     return RedirectResponse("/partners/portal?message=" + quote_plus(f"Asked for {promotions.normalize_code(code)} — we'll set it up or come back to you, usually within a day.") + "#codes", status_code=303)
+
+
+@app.post("/partners/portal/payout")
+def partner_portal_payout(request: Request, method: str = Form("paypal"), payout_email: str = Form(""), payout_name: str = Form(""), payout_country: str = Form("")):
+    promoter = _portal_partner(request)
+    if promoter is None:
+        return RedirectResponse("/partners/portal", status_code=303)
+    try:
+        partners.save_payout_details(promoter, method=method, payout_email=payout_email, payout_name=payout_name, payout_country=payout_country)
+    except partners.PartnerError as e:
+        return RedirectResponse("/partners/portal?error=" + quote_plus(e.message) + "#getting-paid", status_code=303)
+    return RedirectResponse("/partners/portal?message=" + quote_plus("Payment details saved.") + "#getting-paid", status_code=303)
+
+
+@app.post("/partners/portal/tax-form")
+async def partner_portal_tax_form(request: Request, kind: str = Form("w9"), document: UploadFile = File(...)):
+    promoter = _portal_partner(request)
+    if promoter is None:
+        return RedirectResponse("/partners/portal", status_code=303)
+    try:
+        partners.store_document(promoter, kind=kind, filename=document.filename or "", content_type=(document.content_type or "").split(";")[0], raw=await document.read())
+    except partners.PartnerError as e:
+        return RedirectResponse("/partners/portal?error=" + quote_plus(e.message) + "#getting-paid", status_code=303)
+    return RedirectResponse("/partners/portal?message=" + quote_plus("Got it — we'll check it over and your portal will say when it's accepted.") + "#getting-paid", status_code=303)
 
 
 @app.post("/partners/portal/feedback")
@@ -1113,6 +1138,13 @@ def partner_terms(request: Request, k: str = ""):
     if not allowed:
         return _program_gate(request)
     return templates.TemplateResponse(request, "partner_terms.html", {"program": partners})
+
+
+@app.get("/partners/no-thanks", response_class=HTMLResponse)
+def partner_opt_out(request: Request, k: str = ""):
+    """One click and we stop. No sign-in, no form, no "are you sure"."""
+    prospect = partners.opt_out(k)
+    return templates.TemplateResponse(request, "partner_opt_out.html", {"prospect": prospect})
 
 
 @app.get("/partners/apply", response_class=HTMLResponse)
@@ -1748,6 +1780,8 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "alerts": partners.alerts(), "tax": partners.tax_report(year), "year": year,
         "prospects": db.list_partner_prospects(), "prospect_counts": db.count_partner_prospects(), "program_link": lambda pid: partners.program_url(pid),
         "code_requests": db.list_code_requests(), "resources": db.list_partner_resources(), "partner_feedback": db.list_partner_feedback(limit=25),
+        "recruits": db.list_recruits(), "recruit_counts": db.recruitment_counts(), "pending_documents": db.list_partner_documents(pending_only=True),
+        "outreach_steps": partners.OUTREACH_STEPS,
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
     })
@@ -1906,15 +1940,19 @@ def admin_partner_code_request(request_id: int, decision: str = Form("approve"),
 
 
 @app.post("/admin/partners/resources", dependencies=[Depends(auth.require_admin)])
-def admin_partner_resource_add(title: str = Form(...), url: str = Form(...), kind: str = Form("video"), description: str = Form(""), sort_order: str = Form("0")):
+def admin_partner_resource_add(title: str = Form(...), url: str = Form(...), kind: str = Form("video"), description: str = Form(""), sort_order: str = Form("0"), announce: str = Form("")):
     """The creative kit's library -- videos and anything else partners can
     use as it is."""
     if not url.strip().lower().startswith(("http://", "https://")):
         return _partners_redirect(error="The link should start with http:// or https://.", anchor="kit")
     if kind not in ("video", "graphic", "document", "link"):
         kind = "link"
-    db.add_partner_resource(title=title, url=url, kind=kind, description=description, sort_order=int(sort_order) if sort_order.strip().lstrip("-").isdigit() else 0)
-    return _partners_redirect(message=f"Added &ldquo;{title.strip()}&rdquo; to the partner kit.", anchor="kit")
+    resource_id = db.add_partner_resource(title=title, url=url, kind=kind, description=description, sort_order=int(sort_order) if sort_order.strip().lstrip("-").isdigit() else 0)
+    message = f"Added “{title.strip()}” to the partner kit."
+    if announce:
+        sent = partners.announce_resource(resource_id)
+        message += f" Told {sent} partner{'' if sent == 1 else 's'} about it."
+    return _partners_redirect(message=message, anchor="kit")
 
 
 @app.post("/admin/partners/resources/{resource_id}", dependencies=[Depends(auth.require_admin)])
@@ -1935,6 +1973,86 @@ def admin_partner_resource_update(resource_id: int, title: str = Form(""), url: 
 def admin_partner_feedback_reviewed(feedback_id: int):
     db.mark_partner_feedback_reviewed(feedback_id)
     return _partners_redirect(message="Marked as read.", anchor="feedback")
+
+
+@app.get("/admin/partner-documents/{document_id}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_document(document_id: int):
+    """The file itself, for reading before accepting it."""
+    doc = db.get_partner_document(document_id)
+    if doc is None:
+        raise HTTPException(status_code=404)
+    return Response(base64.b64decode(doc["data"]), media_type=doc["content_type"],
+                    headers={"Content-Disposition": f'inline; filename="{doc["promoter_name"].replace(chr(34), "")}-{doc["kind"]}-{doc["filename"]}"'})
+
+
+@app.post("/admin/partner-documents/{document_id}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_document_decide(document_id: int, decision: str = Form("accept"), note: str = Form("")):
+    doc = db.get_partner_document(document_id)
+    if doc is None:
+        return _partners_redirect(error="That document isn't here.")
+    try:
+        if decision == "accept":
+            partners.accept_document(document_id)
+            return _promoter_redirect(doc["promoter_id"], message="Tax form accepted — they can be paid now.")
+        if not note.strip():
+            return _promoter_redirect(doc["promoter_id"], error="Say what's wrong with it, so they can fix it.")
+        partners.reject_document(document_id, note=note)
+        return _promoter_redirect(doc["promoter_id"], message="Sent back, with your reason.")
+    except partners.PartnerError as e:
+        return _promoter_redirect(doc["promoter_id"], error=e.message)
+
+
+@app.post("/admin/partners/resources/{resource_id}/announce", dependencies=[Depends(auth.require_admin)])
+def admin_partner_resource_announce(resource_id: int):
+    try:
+        sent = partners.announce_resource(resource_id)
+    except partners.PartnerError as e:
+        return _partners_redirect(error=e.message, anchor="kit")
+    return _partners_redirect(message=f"Told {sent} partner{'' if sent == 1 else 's'} about it.", anchor="kit")
+
+
+@app.post("/admin/partners/recruit", dependencies=[Depends(auth.require_admin)])
+async def admin_partner_recruit(people: str = Form(""), note: str = Form(""), file: Optional[UploadFile] = File(None)):
+    """Paste a list or upload a CSV; everyone on it gets the recruitment
+    sequence, which then runs itself."""
+    text = people or ""
+    if file is not None and file.filename:
+        raw = await file.read()
+        if len(raw) > 512 * 1024:
+            return _partners_redirect(error="That file is larger than 512 KB — paste the list instead.", anchor="recruit")
+        try:
+            text += "\n" + raw.decode("utf-8-sig", errors="replace")
+        except Exception:  # noqa: BLE001
+            return _partners_redirect(error="Couldn't read that file — a plain CSV of name,email works best.", anchor="recruit")
+    found, bad = partners.parse_recruits(text)
+    if not found:
+        return _partners_redirect(error="Nothing to send to — one per line, as “Kathleen Reyes <kathleen@example.com>” or “Kathleen Reyes, kathleen@example.com”.", anchor="recruit")
+    result = partners.start_outreach(found, note=note)
+    msg = f"Started {result['started']} approach{'' if result['started'] == 1 else 'es'}: {result['sent']} first email{'' if result['sent'] == 1 else 's'} sent"
+    msg += f", {result['queued']} queued for the next few minutes." if result["queued"] else "."
+    if result["skipped"]:
+        msg += " Skipped: " + "; ".join(result["skipped"][:6]) + ("…" if len(result["skipped"]) > 6 else "") + "."
+    if bad:
+        msg += f" Couldn't read {len(bad)} line{'' if len(bad) == 1 else 's'}: " + "; ".join(bad[:3]) + ("…" if len(bad) > 3 else "") + "."
+    return _partners_redirect(message=msg, anchor="recruit")
+
+
+@app.post("/admin/partners/recruit/{prospect_id}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_recruit_action(prospect_id: int, action: str = Form("stop")):
+    prospect = db.get_partner_prospect(prospect_id)
+    if prospect is None:
+        return _partners_redirect(error="That person isn't on the list.", anchor="recruit")
+    if action == "stop":
+        partners.stop_outreach(prospect_id)
+        return _partners_redirect(message=f"Stopped writing to {prospect['email']}.", anchor="recruit")
+    if action == "send":
+        if partners.send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
+            return _partners_redirect(message=f"Next email sent to {prospect['email']}.", anchor="recruit")
+        return _partners_redirect(error="Nothing left to send them — the sequence is finished.", anchor="recruit")
+    if action == "restart":
+        db.set_prospect_outreach(prospect_id, outreach_step=0, outreach_status="active", outreach_next_at=db.now_iso())
+        return _partners_redirect(message=f"Starting again with {prospect['email']}.", anchor="recruit")
+    return _partners_redirect(error="Unknown action.", anchor="recruit")
 
 
 @app.post("/admin/partners/windows", dependencies=[Depends(auth.require_admin)])
@@ -1997,6 +2115,7 @@ def admin_promoter_detail(request: Request, promoter_id: int, message: str = "",
         "content": db.list_partner_content(promoter_id),
         "feedback": db.list_partner_feedback(promoter_id=promoter_id),
         "code_requests": db.list_code_requests(promoter_id=promoter_id),
+        "documents": db.list_partner_documents(promoter_id),
         "bounty": partners.bounty_state(promoter),
         "tier_label": partners.tier_label(promoter),
         "is_partner": partners.is_partner(promoter),

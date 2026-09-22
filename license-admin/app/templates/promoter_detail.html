@@ -103,6 +103,28 @@
         </form>
       </div>
 
+      {% if is_partner and documents %}
+      <div class="card">
+        <h2>Tax forms</h2>
+        <p class="muted small" style="margin-top:0">Nothing pays out until one of these is accepted. Open it, check the name and the signature, then accept.</p>
+        <table>
+          <tr><th>Sent</th><th>Form</th><th>File</th><th>State</th><th></th></tr>
+          {% for d in documents %}
+          <tr><td class="muted small">{{ d.uploaded_at|short_date }}</td><td>{{ d.kind|upper }}</td>
+            <td><a href="/admin/partner-documents/{{ d.id }}" target="_blank" rel="noopener">{{ d.filename }}</a><br><span class="muted small">{{ (d.size_bytes / 1024)|round|int }} KB</span></td>
+            <td>{% if d.accepted_at %}<span class="pill yes">accepted</span><br><span class="muted small">{{ d.accepted_at|short_date }}</span>{% elif d.rejected_at %}<span class="pill no">sent back</span><br><span class="muted small">{{ d.note }}</span>{% else %}<span class="pill trialing">waiting</span>{% endif %}</td>
+            <td>{% if not d.accepted_at %}
+              <form method="post" action="/admin/partner-documents/{{ d.id }}" style="display:flex; gap:4px; flex-wrap:wrap">
+                <button class="small" type="submit" name="decision" value="accept">Accept</button>
+                <input type="text" name="note" placeholder="What's wrong with it" style="width:150px">
+                <button class="small secondary" type="submit" name="decision" value="reject">Send back</button>
+              </form>{% endif %}</td></tr>
+          {% endfor %}
+        </table>
+        <p class="muted small" style="margin:8px 0 0">Paying to: {{ 'PayPal' if promoter.payout_method == 'paypal' else promoter.payout_method }} {{ promoter.payout_email or '—' }}{% if promoter.payout_name %}, in the name of {{ promoter.payout_name }}{% endif %}{% if promoter.payout_country %} ({{ promoter.payout_country }}){% endif %}.</p>
+      </div>
+      {% endif %}
+
       {% if is_partner and (code_requests or feedback) %}
       <div class="card">
         <h2>From their portal</h2>

@@ -1,0 +1,18 @@
+{% extends "partner_site_base.html" %}
+{% block title %}Noted — PiperStitch Partners{% endblock %}
+{% block nav_program %}{% endblock %}
+{% block body %}
+<section class="page-hero sky">
+  <div class="wrap narrow">
+    <p class="eyebrow">Partner Program</p>
+    {% if prospect %}
+    <h1>Noted &mdash; we&rsquo;ll stop.</h1>
+    <p class="lede">You won&rsquo;t hear from us about the Partner Program again. Nothing else changes: if you use PiperStitch, your account is untouched, and you&rsquo;re welcome to it either way.</p>
+    <p class="muted">Changed your mind later? <a href="{{ config.WEBSITE_BASE_URL }}/partners.html">The program is here</a> whenever you want it &mdash; no hard feelings on our side at all.</p>
+    {% else %}
+    <h1>That link has expired.</h1>
+    <p class="lede">We couldn&rsquo;t match it to anyone, which usually means it&rsquo;s an old one. Reply to any email from us and we&rsquo;ll take you off the list by hand.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

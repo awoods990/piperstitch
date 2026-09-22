@@ -9,15 +9,20 @@ status, a month count and a number (§7, §10.3).
 
 from __future__ import annotations
 
+import base64
 import csv
+import logging
 import hashlib
 import hmac
 import io
+import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from . import config, db, email_sender, promotions
+
+log = logging.getLogger("license_admin.partners")
 
 # Program constants (spec §2). The rate itself is stored per promoter and
 # per code (R2); these are the defaults an approval starts from.
@@ -203,6 +208,232 @@ def register_prospect(*, name: str, email: str, organization: str = "", platform
 def prospect_context(prospect) -> dict:
     """What the gated program page needs to know about its reader."""
     return {"prospect": prospect, "seats_left": founding_seats_left(), "program_link": program_url(prospect["id"]) if prospect else ""}
+
+
+# ------------------------------------------------- tax forms and payouts --
+
+DOCUMENT_TYPES = {"application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg", "image/heic": ".heic"}
+MAX_DOCUMENT_BYTES = 8 * 1024 * 1024
+PAYOUT_COUNTRIES_NOTE = "PayPal must be able to receive US dollars in that country."
+
+
+def store_document(promoter, *, kind: str, filename: str, content_type: str, raw: bytes) -> int:
+    """A partner's tax form, straight into the database (the durable
+    volume). An upload doesn't unlock payouts by itself -- we look at it
+    first, which is the point of having it."""
+    if kind not in ("w9", "w8ben", "other"):
+        raise PartnerError("kind", "Choose which form it is: W-9 or W-8BEN.")
+    if not raw:
+        raise PartnerError("file", "That file came through empty — try again.")
+    if len(raw) > MAX_DOCUMENT_BYTES:
+        raise PartnerError("file", f"That file is {len(raw) / 1024 / 1024:.1f} MB; the limit is {MAX_DOCUMENT_BYTES // 1024 // 1024} MB. A PDF or a photo of the signed form is plenty.")
+    if content_type not in DOCUMENT_TYPES:
+        raise PartnerError("file", "Send a PDF, or a photo as PNG, JPEG or HEIC.")
+    document_id = db.add_partner_document(promoter_id=promoter["id"], kind=kind, filename=filename or f"tax-form{DOCUMENT_TYPES[content_type]}",
+                                          content_type=content_type, data=base64.b64encode(raw).decode(), size_bytes=len(raw))
+    db.update_partner_fields(promoter["id"], tax_form_type=kind if kind != "other" else promoter["tax_form_type"])
+    try:
+        email_sender.send_plain_email(
+            to_email=config.REPLY_TO_EMAIL,
+            subject=f"Tax form from {promoter['name']} ({kind.upper()})",
+            body=f"{promoter['name']} ({promoter['email']}) uploaded a {kind.upper()} from the partner portal.\n\nAccept it here: {config.PUBLIC_BASE_URL}/admin/promoters/{promoter['id']}")
+    except email_sender.EmailSendError:
+        pass
+    return document_id
+
+
+def accept_document(document_id: int, *, by: str = "admin") -> None:
+    """Accepting the form is what unblocks payouts (§10.2)."""
+    doc = db.get_partner_document(document_id)
+    if doc is None:
+        raise PartnerError("missing", "That document isn't here.")
+    db.decide_partner_document(document_id, accepted=True, by=by)
+    db.update_partner_fields(doc["promoter_id"], tax_form_type=doc["kind"] if doc["kind"] != "other" else None, tax_form_received_at=db.now_iso())
+
+
+def reject_document(document_id: int, *, note: str) -> None:
+    doc = db.get_partner_document(document_id)
+    if doc is None:
+        raise PartnerError("missing", "That document isn't here.")
+    db.decide_partner_document(document_id, accepted=False, note=note)
+    promoter = db.get_promoter(doc["promoter_id"])
+    if promoter is not None and not any(d["accepted_at"] for d in db.list_partner_documents(promoter["id"])):
+        db.update_partner_fields(promoter["id"], tax_form_received_at=None)
+        try:
+            email_sender.send_partner_document_rejected_email(to_email=promoter["email"], partner_name=promoter["name"], note=note)
+        except email_sender.EmailSendError:
+            pass
+
+
+def save_payout_details(promoter, *, method: str, payout_email: str, payout_name: str, payout_country: str) -> None:
+    """Exactly what PayPal needs from us to send the money, and nothing
+    we don't need."""
+    method = method if method in ("paypal", "bank", "other") else "paypal"
+    payout_email = (payout_email or "").strip().lower()
+    if method == "paypal":
+        if "@" not in payout_email or "." not in payout_email.split("@")[-1]:
+            raise PartnerError("payout_email", "That doesn't look like the email address on a PayPal account.")
+        if not (payout_name or "").strip():
+            raise PartnerError("payout_name", "We need the name exactly as it appears on the PayPal account.")
+    db.update_partner_fields(promoter["id"], payout_method=method, payout_email=payout_email, payout_name=(payout_name or "").strip(), payout_country=(payout_country or "").strip())
+
+
+def payout_readiness(promoter) -> dict:
+    """What's still missing before the first payout can go out."""
+    documents = db.list_partner_documents(promoter["id"])
+    accepted = [d for d in documents if d["accepted_at"]]
+    waiting = [d for d in documents if not d["accepted_at"] and not d["rejected_at"]]
+    rejected = [d for d in documents if d["rejected_at"] and not accepted]
+    missing = []
+    if not accepted:
+        missing.append("your tax form" if not waiting else "")
+    if promoter["payout_method"] == "paypal" and not promoter["payout_email"]:
+        missing.append("your PayPal email")
+    if promoter["payout_method"] == "paypal" and not promoter["payout_name"]:
+        missing.append("the name on your PayPal account")
+    return {"documents": documents, "accepted": accepted[0] if accepted else None, "waiting": waiting[0] if waiting else None,
+            "rejected": rejected[0] if rejected else None, "missing": [m for m in missing if m], "ready": bool(accepted) and not [m for m in missing if m]}
+
+
+# ----------------------------------------------- the kit, announced (§8) --
+
+
+def announce_resource(resource_id: int) -> int:
+    """Tells every active partner about a new piece of kit, with the link
+    to it. Returns how many were told."""
+    item = db.get_partner_resource(resource_id)
+    if item is None:
+        raise PartnerError("missing", "That item isn't in the kit.")
+    sent = 0
+    for promoter in db.partners_to_notify():
+        try:
+            email_sender.send_partner_kit_email(to_email=promoter["email"], partner_name=promoter["name"], title=item["title"],
+                                                description=item["description"], url=item["url"], kind=item["kind"])
+            sent += 1
+        except email_sender.EmailSendError:
+            log.warning("Could not tell %s about kit item %s", promoter["email"], resource_id)
+    db.mark_resource_announced(resource_id)
+    return sent
+
+
+# ------------------------------------------------------ recruitment (§8) --
+# Someone we'd like in the program, approached properly: four emails over
+# a fortnight, each one shorter than the last, every one carrying their
+# own link into the details and a way to tell us to stop. It runs on the
+# scheduler that already sends the customer sequences.
+
+OUTREACH_STEPS = [
+    {"step": 1, "delay_days": 0, "key": "partner_outreach_1"},
+    {"step": 2, "delay_days": 3, "key": "partner_outreach_2"},
+    {"step": 3, "delay_days": 8, "key": "partner_outreach_3"},
+    {"step": 4, "delay_days": 16, "key": "partner_outreach_4"},
+]
+RECRUIT_LINE = re.compile(r"^\s*(?P<name>[^,<]+?)\s*(?:[,<]\s*)(?P<email>[^>,\s]+@[^>,\s]+?)>?\s*$")
+
+
+def opt_out_url(prospect_id: int) -> str:
+    return f"{config.PUBLIC_BASE_URL}/partners/no-thanks?k={program_token(prospect_id)}"
+
+
+def parse_recruits(text: str) -> tuple[list[dict], list[str]]:
+    """`Name <email>`, `Name, email`, or a CSV's `name,email` rows -- one
+    per line. Returns the people and the lines we couldn't read."""
+    people, bad = [], []
+    for raw in (text or "").splitlines():
+        line = raw.strip().strip('"')
+        if not line or line.lower().replace(" ", "").startswith(("name,email", "name;email")):
+            continue
+        m = RECRUIT_LINE.match(line)
+        if not m:
+            bad.append(raw.strip()); continue
+        name, email = m.group("name").strip().strip('"'), m.group("email").strip().lower()
+        if "@" not in email or "." not in email.split("@")[-1] or len(name) < 2:
+            bad.append(raw.strip()); continue
+        people.append({"name": name, "email": email})
+    return people, bad
+
+
+SEND_NOW_LIMIT = 10          # beyond this, the scheduler takes the first emails too
+
+
+def start_outreach(people: list[dict], *, note: str = "", send_now_limit: int = SEND_NOW_LIMIT) -> dict:
+    """Sends the first email straight away (up to a batch worth, so the
+    request doesn't sit on SMTP all afternoon) and leaves the rest to the
+    scheduler. Anyone already a partner, already applied, or who has told
+    us no is skipped."""
+    result = {"started": 0, "sent": 0, "queued": 0, "skipped": []}
+    for person in people:
+        email = person["email"]
+        promoter = db.get_promoter_by_email(email)
+        if promoter is not None and partner_exists(promoter):
+            result["skipped"].append(f"{email} (already {promoter['status']})"); continue
+        existing = db.get_partner_prospect_by_email(email)
+        if existing is not None:
+            if existing["opted_out_at"]:
+                result["skipped"].append(f"{email} (asked not to be contacted)"); continue
+            if existing["applied_at"]:
+                result["skipped"].append(f"{email} (already applied)"); continue
+            if existing["outreach_status"] == "active":
+                result["skipped"].append(f"{email} (already being contacted)"); continue
+        prospect_id = db.create_partner_prospect(name=person["name"], email=email, source="recruit", note=note)
+        db.set_prospect_outreach(prospect_id, outreach_step=0, outreach_status="active", outreach_next_at=db.now_iso(), source="recruit")
+        result["started"] += 1
+        if result["sent"] < send_now_limit and send_outreach_step(db.get_partner_prospect(prospect_id), 1):
+            result["sent"] += 1
+        else:
+            result["queued"] += 1
+    return result
+
+
+def partner_exists(promoter) -> bool:
+    return promoter is not None and promoter["status"] in ("applied", "approved", "active", "suspended")
+
+
+def send_outreach_step(prospect, step: int) -> bool:
+    """One recruitment email. Everything is logged, sent or failed."""
+    spec = next((s for s in OUTREACH_STEPS if s["step"] == step), None)
+    if spec is None:
+        return False
+    url = program_url(prospect["id"])
+    try:
+        subject = email_sender.send_partner_outreach_email(
+            to_email=prospect["email"], partner_name=prospect["name"], key=spec["key"], url=url,
+            apply_url=f"{config.PUBLIC_BASE_URL}/partners/apply?k={program_token(prospect['id'])}", opt_out_url=opt_out_url(prospect["id"]))
+    except email_sender.EmailSendError as e:
+        db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
+        return False
+    db.log_outreach(prospect_id=prospect["id"], step=step, subject=subject)
+    nxt = next((s for s in OUTREACH_STEPS if s["step"] == step + 1), None)
+    if nxt is None:
+        db.set_prospect_outreach(prospect["id"], outreach_step=step, outreach_status="done", outreach_next_at=None)
+    else:
+        due = _now() + timedelta(days=nxt["delay_days"] - next(s["delay_days"] for s in OUTREACH_STEPS if s["step"] == step))
+        db.set_prospect_outreach(prospect["id"], outreach_step=step, outreach_next_at=due.isoformat(timespec="seconds").replace("+00:00", "Z"))
+    return True
+
+
+def outreach_check(*, now: Optional[datetime] = None) -> int:
+    """The scheduler's tick for recruitment: send whatever is due."""
+    sent = 0
+    for prospect in db.due_outreach((now or _now()).isoformat(timespec="seconds").replace("+00:00", "Z")):
+        if send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
+            sent += 1
+    return sent
+
+
+def stop_outreach(prospect_id: int, *, opted_out: bool = False) -> None:
+    fields = {"outreach_status": "opted_out" if opted_out else "stopped", "outreach_next_at": None}
+    if opted_out:
+        fields["opted_out_at"] = db.now_iso()
+    db.set_prospect_outreach(prospect_id, **fields)
+
+
+def opt_out(token: str) -> Optional["db.sqlite3.Row"]:
+    prospect_id = resolve_program_token(token)
+    if prospect_id is None:
+        return None
+    stop_outreach(prospect_id, opted_out=True)
+    return db.get_partner_prospect(prospect_id)
 
 
 # ------------------------------------------------------------ application --

@@ -322,6 +322,39 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS partner_documents (
+    -- A partner's tax form (W-9 / W-8BEN). Held as base64 in this
+    -- database for the same reason the feedback images are: it is the
+    -- one thing on a durable volume. Nothing pays out until one of
+    -- these is accepted.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id INTEGER NOT NULL REFERENCES promoters(id),
+    kind TEXT NOT NULL DEFAULT 'w9',          -- w9 | w8ben | other
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'application/pdf',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    data TEXT NOT NULL,                       -- base64
+    uploaded_at TEXT NOT NULL,
+    accepted_at TEXT,
+    accepted_by TEXT,
+    rejected_at TEXT,
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_partner_documents_promoter ON partner_documents(promoter_id);
+
+CREATE TABLE IF NOT EXISTS partner_outreach_log (
+    -- Every recruitment email we sent, so the whole approach is on the
+    -- record rather than in someone's sent folder.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prospect_id INTEGER NOT NULL REFERENCES partner_prospects(id),
+    step INTEGER NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'sent',      -- sent | failed
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_partner_outreach_prospect ON partner_outreach_log(prospect_id);
+
 CREATE TABLE IF NOT EXISTS partner_code_requests (
     -- A partner asking for another code (one per channel is the usual
     -- reason). We approve them when the code fits the house rules.
@@ -550,6 +583,8 @@ def init_db() -> None:
             ("platforms", "TEXT NOT NULL DEFAULT ''"), ("application", "TEXT NOT NULL DEFAULT ''"),
             ("portal_token_hash", "TEXT NOT NULL DEFAULT ''"), ("applied_at", "TEXT"), ("approved_at", "TEXT"),
             ("handles", "TEXT NOT NULL DEFAULT ''"),               # channel links they gave us when applying
+            ("payout_name", "TEXT NOT NULL DEFAULT ''"),           # the name on the PayPal account
+            ("payout_country", "TEXT NOT NULL DEFAULT ''"),
         ):
             _add_column_if_missing(conn, "promoters", column, definition)
         _add_column_if_missing(conn, "promotions", "trial_days", "INTEGER")                          # NULL = config.TRIAL_DAYS
@@ -564,6 +599,13 @@ def init_db() -> None:
         _add_column_if_missing(conn, "promo_payouts", "reverses_payout_id", "INTEGER REFERENCES promo_payouts(id)")
         _add_column_if_missing(conn, "promo_payouts", "note", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "stripe_events", "result", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "partner_resources", "announced_at", "TEXT")          # when partners were told about it
+        for column, definition in (                                                        # recruitment (spec §8: bring partners in)
+            ("outreach_step", "INTEGER NOT NULL DEFAULT 0"), ("outreach_next_at", "TEXT"),
+            ("outreach_status", "TEXT NOT NULL DEFAULT ''"),   # '' = not being recruited; active | done | stopped | opted_out
+            ("opted_out_at", "TEXT"),
+        ):
+            _add_column_if_missing(conn, "partner_prospects", column, definition)
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1413,7 +1455,8 @@ def update_partner_fields(promoter_id: int, **fields) -> None:
     """The Partner Program's own columns on a promoter (status, tier,
     bounty window, payout and tax details), whichever are given."""
     allowed = {"status", "tier", "bounty_window_start", "bounty_window_end", "bounty_reinstated_at", "payout_method", "payout_email",
-               "tax_form_type", "tax_form_received_at", "platforms", "application", "portal_token_hash", "applied_at", "approved_at"}
+               "payout_name", "payout_country", "tax_form_type", "tax_form_received_at", "platforms", "handles", "application",
+               "portal_token_hash", "applied_at", "approved_at"}
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return
@@ -1611,8 +1654,11 @@ def touch_partner_prospect(prospect_id: int) -> None:
 
 
 def mark_prospect_applied(email: str) -> None:
+    """They applied, so the recruitment sequence has done its job and
+    stops -- nobody should be chased after saying yes."""
     with connection() as conn:
-        conn.execute("UPDATE partner_prospects SET applied_at = COALESCE(applied_at, ?) WHERE email = ?", (_now(), (email or "").strip().lower()))
+        conn.execute("UPDATE partner_prospects SET applied_at = COALESCE(applied_at, ?), outreach_status = CASE WHEN outreach_status = 'active' THEN 'done' ELSE outreach_status END, "
+                     "outreach_next_at = NULL WHERE email = ?", (_now(), (email or "").strip().lower()))
 
 
 def list_partner_prospects(limit: int = 200) -> list[sqlite3.Row]:
@@ -1625,6 +1671,114 @@ def count_partner_prospects() -> dict:
         r = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied, "
                          "SUM(CASE WHEN last_seen_at IS NULL THEN 1 ELSE 0 END) AS never_opened FROM partner_prospects").fetchone()
     return {"total": r["total"] or 0, "applied": r["applied"] or 0, "never_opened": r["never_opened"] or 0}
+
+
+# ------------------------------------------------- documents (tax forms) --
+
+
+def add_partner_document(*, promoter_id: int, kind: str, filename: str, content_type: str, data: str, size_bytes: int) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO partner_documents (promoter_id, kind, filename, content_type, size_bytes, data, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (promoter_id, kind, filename[:160], content_type, size_bytes, data, _now()))
+        return cur.lastrowid
+
+
+def get_partner_document(document_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT d.*, promoters.name AS promoter_name FROM partner_documents d JOIN promoters ON promoters.id = d.promoter_id WHERE d.id = ?", (document_id,)).fetchone()
+
+
+def list_partner_documents(promoter_id: Optional[int] = None, *, pending_only: bool = False) -> list[sqlite3.Row]:
+    """Without the file itself -- listing pages don't need megabytes."""
+    sql = ("SELECT d.id, d.promoter_id, d.kind, d.filename, d.content_type, d.size_bytes, d.uploaded_at, d.accepted_at, d.accepted_by, d.rejected_at, d.note, "
+           "promoters.name AS promoter_name FROM partner_documents d JOIN promoters ON promoters.id = d.promoter_id WHERE 1 = 1")
+    args: list = []
+    if promoter_id:
+        sql += " AND d.promoter_id = ?"; args.append(promoter_id)
+    if pending_only:
+        sql += " AND d.accepted_at IS NULL AND d.rejected_at IS NULL"
+    sql += " ORDER BY d.uploaded_at DESC"
+    with connection() as conn:
+        return conn.execute(sql, args).fetchall()
+
+
+def decide_partner_document(document_id: int, *, accepted: bool, by: str = "admin", note: str = "") -> None:
+    with connection() as conn:
+        if accepted:
+            conn.execute("UPDATE partner_documents SET accepted_at = ?, accepted_by = ?, rejected_at = NULL, note = ? WHERE id = ?", (_now(), by, note.strip(), document_id))
+        else:
+            conn.execute("UPDATE partner_documents SET rejected_at = ?, accepted_at = NULL, note = ? WHERE id = ?", (_now(), note.strip(), document_id))
+
+
+def count_pending_partner_documents() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM partner_documents WHERE accepted_at IS NULL AND rejected_at IS NULL").fetchone()[0]
+
+
+def has_document_awaiting_review(promoter_id: int) -> bool:
+    with connection() as conn:
+        return conn.execute("SELECT 1 FROM partner_documents WHERE promoter_id = ? AND accepted_at IS NULL AND rejected_at IS NULL LIMIT 1", (promoter_id,)).fetchone() is not None
+
+
+# --------------------------------------------------- recruitment (§8) --
+
+
+def set_prospect_outreach(prospect_id: int, **fields) -> None:
+    allowed = {"outreach_step", "outreach_next_at", "outreach_status", "opted_out_at", "note", "source"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    with connection() as conn:
+        conn.execute("UPDATE partner_prospects SET " + ", ".join(f"{k} = ?" for k in sets) + " WHERE id = ?", (*sets.values(), prospect_id))
+
+
+def due_outreach(now_iso: str, limit: int = 50) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT * FROM partner_prospects WHERE outreach_status = 'active' AND applied_at IS NULL AND opted_out_at IS NULL "
+            "AND outreach_next_at IS NOT NULL AND outreach_next_at <= ? ORDER BY outreach_next_at LIMIT ?", (now_iso, limit)).fetchall()
+
+
+def list_recruits(limit: int = 300) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT p.*, (SELECT COUNT(*) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.status = 'sent') AS sent_count, "
+            "(SELECT MAX(created_at) FROM partner_outreach_log l WHERE l.prospect_id = p.id AND l.status = 'sent') AS last_sent_at "
+            "FROM partner_prospects p WHERE p.outreach_status != '' ORDER BY COALESCE(p.applied_at, p.last_seen_at, p.created_at) DESC LIMIT ?", (limit,)).fetchall()
+
+
+def log_outreach(*, prospect_id: int, step: int, subject: str, status: str = "sent", error: str = "") -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_outreach_log (prospect_id, step, subject, status, error, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                           (prospect_id, step, subject[:200], status, error[:300], _now()))
+        return cur.lastrowid
+
+
+def list_outreach_log(prospect_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_outreach_log WHERE prospect_id = ? ORDER BY created_at", (prospect_id,)).fetchall()
+
+
+def recruitment_counts() -> dict:
+    with connection() as conn:
+        r = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(CASE WHEN outreach_status = 'active' THEN 1 ELSE 0 END) AS active, "
+            "SUM(CASE WHEN last_seen_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, "
+            "SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied, "
+            "SUM(CASE WHEN opted_out_at IS NOT NULL THEN 1 ELSE 0 END) AS opted_out FROM partner_prospects WHERE outreach_status != ''").fetchone()
+    return {k: (r[k] or 0) for k in ("total", "active", "opened", "applied", "opted_out")}
+
+
+def mark_resource_announced(resource_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_resources SET announced_at = ? WHERE id = ?", (_now(), resource_id))
+
+
+def partners_to_notify() -> list[sqlite3.Row]:
+    """Active partners with an address -- who hears about a new kit item."""
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promoters WHERE active = 1 AND status IN ('active', 'approved') AND email != '' ORDER BY name COLLATE NOCASE").fetchall()
 
 
 def create_partner_link(*, promoter_id: int, token_hash: str, ttl_minutes: int) -> int:
@@ -1705,7 +1859,7 @@ def payout_run_preview(*, now: Optional[str] = None) -> list[dict]:
         if totals["payable_cents"] < PAYOUT_MINIMUM_CENTS:
             reasons.append("under the $50 minimum" if totals["payable_cents"] > 0 else "nothing payable yet")
         if not p["tax_form_received_at"]:
-            reasons.append("no tax form on file")
+            reasons.append("tax form awaiting review" if has_document_awaiting_review(pid) else "no tax form on file")
         if not p["payout_email"] and p["payout_method"] == "paypal":
             reasons.append("no PayPal email")
         if p["status"] == "suspended":

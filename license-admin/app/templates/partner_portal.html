@@ -45,7 +45,7 @@
   <div class="card"><h1>Your partner account is paused.</h1><p>Your link and code aren't attributing new signups right now. If that's unexpected, reply to any of our emails and a person will look into it.</p></div>
   {% else %}
 
-  {% if tax_form_missing %}<div class="warn"><b>Before your first payout:</b> we need a W-9 (US) or W-8BEN (outside the US) on file. Email it to <a href="mailto:{{ config.REPLY_TO_EMAIL }}">{{ config.REPLY_TO_EMAIL }}</a> &mdash; payouts are held until it arrives.</div>{% endif %}
+  {% if payout.missing or payout.waiting %}<div class="warn"><b>Before your first payout:</b> {% if payout.waiting %}your {{ payout.waiting.kind|upper }} is with us and we&rsquo;ll check it shortly.{% else %}we still need {{ payout.missing|join(' and ') }}.{% endif %} <a href="#getting-paid">Sort it out below</a> &mdash; it only has to be done before the first payment, and nothing you earn is affected meanwhile.</div>{% endif %}
 
   <div class="card">
     <h2>Your link and code</h2>
@@ -111,6 +111,62 @@
       <div class="kpi-tile"><div class="kpi-value">{{ totals.paid_cents|money }}</div><div class="kpi-label">Paid to date</div><div class="kpi-sub">{{ payments|length }} payout{{ '' if payments|length == 1 else 's' }}</div></div>
     </div>
     <p class="muted small" style="margin:0">Paid monthly by {{ 'PayPal' if promoter.payout_method == 'paypal' else promoter.payout_method }}{% if promoter.payout_email %} to {{ promoter.payout_email }}{% endif %} on the last day of the month for everything that became payable in the month before, once your balance passes {{ minimum_cents|money }}. Next payout date: <b>{{ next_payout }}</b>.</p>
+  </div>
+
+  <div class="card" id="getting-paid">
+    <h2>Getting paid</h2>
+    <p class="muted small" style="margin-top:0">Two things, once each: where the money goes, and a tax form. We pay on the last day of each month for everything that became payable the month before, once your balance passes {{ minimum_cents|money }}.</p>
+
+    <div class="two-col" style="gap:20px">
+      <div>
+        <h3 style="margin-top:0">Where to send it</h3>
+        <form method="post" action="/partners/portal/payout">
+          <label>How you&rsquo;d like to be paid</label>
+          <select name="method">
+            <option value="paypal" {% if promoter.payout_method == 'paypal' %}selected{% endif %}>PayPal (what we use)</option>
+            <option value="bank" {% if promoter.payout_method == 'bank' %}selected{% endif %}>Bank transfer — tell us and we&rsquo;ll arrange it</option>
+            <option value="other" {% if promoter.payout_method == 'other' %}selected{% endif %}>Something else — tell us</option>
+          </select>
+          <label>The email address on your PayPal account</label>
+          <input type="email" name="payout_email" value="{{ promoter.payout_email }}" placeholder="you@example.com">
+          <p class="hint muted small" style="margin:4px 0 0">This is the address PayPal pays into &mdash; it must be one your PayPal account can receive at, which isn&rsquo;t always the one you email us from. Personal or business accounts both work.</p>
+          <label>The name exactly as it appears on that PayPal account</label>
+          <input type="text" name="payout_name" value="{{ promoter.payout_name }}" placeholder="Kathleen Reyes, or your business name">
+          <p class="hint muted small" style="margin:4px 0 0">If this doesn&rsquo;t match, PayPal can hold the payment.</p>
+          <label>Country the account is in</label>
+          <input type="text" name="payout_country" value="{{ promoter.payout_country }}" placeholder="United States">
+          <p class="hint muted small" style="margin:4px 0 0">{{ program.PAYOUT_COUNTRIES_NOTE }} We send US dollars; if your account is in another currency, PayPal converts it and takes its own fee for that.</p>
+          <div style="margin-top:12px"><button type="submit" class="small">Save payment details</button></div>
+        </form>
+      </div>
+
+      <div>
+        <h3 style="margin-top:0">Your tax form</h3>
+        {% if payout.accepted %}
+          <p><span class="pill yes">{{ payout.accepted.kind|upper }} on file</span> accepted {{ payout.accepted.accepted_at|short_date }}. Nothing more needed.</p>
+        {% elif payout.waiting %}
+          <p><span class="pill trialing">with us</span> You sent <strong>{{ payout.waiting.filename }}</strong> on {{ payout.waiting.uploaded_at|short_date }}. We&rsquo;ll check it and this will say so.</p>
+        {% elif payout.rejected %}
+          <div class="warn" style="margin-bottom:10px"><b>We couldn&rsquo;t accept the last one.</b> {{ payout.rejected.note }}</div>
+        {% endif %}
+        <p class="muted small">We&rsquo;re required to collect one before paying you: a <strong>W-9</strong> if you&rsquo;re a US person, or a <strong>W-8BEN</strong> (or W-8BEN-E for a company) if you&rsquo;re not. Download the blank form from the IRS, sign it, and send it back here &mdash; a PDF or a clear photo is fine.</p>
+        <ul class="muted small" style="margin:0 0 10px 18px">
+          <li><a href="https://www.irs.gov/pub/irs-pdf/fw9.pdf" target="_blank" rel="noopener">Blank W-9 (US)</a></li>
+          <li><a href="https://www.irs.gov/pub/irs-pdf/fw8ben.pdf" target="_blank" rel="noopener">Blank W-8BEN (outside the US)</a></li>
+        </ul>
+        <form method="post" action="/partners/portal/tax-form" enctype="multipart/form-data">
+          <label>Which form is it?</label>
+          <select name="kind"><option value="w9">W-9 (US person)</option><option value="w8ben">W-8BEN / W-8BEN-E (outside the US)</option><option value="other">Something else</option></select>
+          <label>The file</label>
+          <input type="file" name="document" accept=".pdf,.png,.jpg,.jpeg,.heic,application/pdf,image/*" required>
+          <p class="hint muted small" style="margin:4px 0 0">PDF or a photo, up to {{ (program.MAX_DOCUMENT_BYTES / 1024 / 1024)|int }} MB. It&rsquo;s stored privately and only we see it.</p>
+          <div style="margin-top:12px"><button type="submit" class="small">Send my tax form</button></div>
+        </form>
+        {% if payout.documents|length > 1 %}
+        <p class="muted small" style="margin-top:10px">{{ payout.documents|length }} sent in all; we use the most recent accepted one.</p>
+        {% endif %}
+      </div>
+    </div>
   </div>
 
   <div class="card">

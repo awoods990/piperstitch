@@ -109,6 +109,92 @@ Here are the full details: what you earn on every referral, for how long, the si
 
 The link is yours and works for the next {link_days} days. You can apply from the bottom of the page, or just reply to this email and ask me anything first.""",
          cta_label="Read the program details", cta_url="{url}", preheader="What you earn, for how long, and how we pay.", placeholders="first_name, name, email, url, link_days, site_url"),
+    dict(key="partner_outreach_1", name="Recruit 1: the approach", description="First recruitment email. {url} opens their own copy of the program details; {opt_out_url} stops the sequence.",
+         subject="Would you like to be paid for recommending PiperStitch, {first_name}?",
+         body="""Hi {first_name},
+
+You already get asked what software to use. I'd like to pay you for the answer, when the answer is PiperStitch.
+
+Briefly: PiperStitch digitizes embroidery in a browser — artwork in, machine-ready file out in seconds, every decision shown and editable, $24 a month instead of a thousand-dollar package. If you'd like to try it first, the trial is free and needs no card; I'd rather you formed your own view than took mine.
+
+The Partner Program pays a recurring share of everything the people you refer pay, for two years — and the people who come through you get a longer free trial and a bigger proof allowance than anyone else. The first fifty partners are on a better rate, and I'd like to keep a seat for you.
+
+Here are the full details, including the rate and how we pay:
+
+{url}
+
+If this isn't for you, no hard feelings at all — {opt_out_url} and you'll not hear from me again.""",
+         cta_label="See the program details", cta_url="{url}", preheader="A recurring share for a recommendation you already make.",
+         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+    dict(key="partner_outreach_2", name="Recruit 2: how it works", description="Second recruitment email, a few days later: the mechanics.",
+         subject="How the PiperStitch partner thing actually works",
+         body="""Hi {first_name},
+
+In case the details page was more than you wanted to read, here it is in four lines:
+
+1. You get a link and a spoken code. The code matters — it works on a Live or in a class, where nothing is clickable.
+2. Anyone who uses either gets a longer free trial and a bigger proof allowance than the public offer. They're better off coming through you.
+3. When they subscribe, you earn a share of every invoice they pay, every month, for two years. Not a one-off.
+4. Your portal shows clicks, signups, who's still on trial and what you're owed. We pay monthly by PayPal.
+
+That's the whole thing. No quota, no exclusivity, nothing to keep up with, and you only ever say what you actually found.
+
+{url}""",
+         cta_label="See the program details", cta_url="{url}", preheader="Link, code, recurring share, monthly payout.",
+         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+    dict(key="partner_outreach_3", name="Recruit 3: why it's worth your time", description="Third recruitment email: the case, and the founding seats.",
+         subject="The part most people don't expect",
+         body="""Hi {first_name},
+
+The part partners tell me they didn't expect: it keeps paying. One recommendation in a video you made months ago is still earning while you're asleep, because the share is on every invoice for two years rather than on the first one.
+
+The other part: your audience gets more than the public offer, so recommending us costs them nothing and gains them something. Nobody has to be talked into anything.
+
+There's a calculator on the details page — put your own numbers in rather than take mine:
+
+{url}
+
+Founding seats are limited to fifty and they're going. If you'd rather just get started, the application takes two minutes: {apply_url}""",
+         cta_label="Work out what it's worth", cta_url="{url}", preheader="It keeps paying — that's the part people don't expect.",
+         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+    dict(key="partner_outreach_4", name="Recruit 4: the last note", description="Final recruitment email. Nothing further is sent after this one.",
+         subject="Last note about this, {first_name}",
+         body="""Hi {first_name},
+
+This is my last note about the Partner Program — I'd rather stop than become the person who keeps emailing.
+
+The offer stands whenever you want it: a recurring share for two years on anyone who subscribes through you, a better deal for them than the public one, and a founding rate while seats last.
+
+Your link into the details, whenever you're ready: {url}
+Or apply straight away: {apply_url}
+
+Either way, thank you for what you do for this trade — it's a better trade for people having someone to ask.""",
+         cta_label="Apply to the program", cta_url="{apply_url}", preheader="The offer stands whenever you want it.",
+         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+    dict(key="partner_kit_item", name="Partner: new in the kit", description="Sent to every active partner when something new is added to the creative kit.",
+         subject="New in your partner kit: {title}",
+         body="""Hi {first_name},
+
+We've added something new to your creative kit:
+
+{title}{description_line}
+
+It's here, ready to use as it is: {url}
+
+Everything else in the kit is in your portal, along with your link, your codes and your numbers. As ever — post it whole, cut it up, or ignore it entirely.""",
+         cta_label="Open it", cta_url="{url}", preheader="{title} — ready to use as it is.",
+         placeholders="first_name, name, email, title, description_line, url, kind, site_url"),
+    dict(key="partner_document_rejected", name="Partner: tax form needs another look", description="Sent when an uploaded tax form can't be accepted.",
+         subject="About the tax form you sent",
+         body="""Hi {first_name},
+
+Thanks for sending that through. We can't accept it as it stands:
+
+{note}
+
+You can upload another from your portal whenever you like — it only has to be with us before your first payout, and nothing you've earned is affected in the meantime.""",
+         cta_label="Upload another", cta_url="{site_url}/partners/portal", preheader="We need another look at your tax form.",
+         placeholders="first_name, name, email, note, site_url"),
     dict(key="partner_applied", name="Partner: application received", description="Sent when someone applies to the Partner Program.",
          subject="We got your PiperStitch partner application",
          body="""Hi {first_name},
@@ -1050,8 +1136,8 @@ def lapsed_check(*, now: Optional[datetime] = None) -> int:
 
 def run_scheduled_work() -> dict:
     """Everything the background loop does each tick."""
-    from . import finance
-    result = {"sent": 0, "winback": 0, "proofs": 0, "lapsed": 0, "recurring": 0, "backfilled": 0}
+    from . import finance, partners
+    result = {"sent": 0, "winback": 0, "proofs": 0, "lapsed": 0, "recurring": 0, "backfilled": 0, "outreach": 0}
     try:
         result["sent"] = process_due()
     except Exception as e:  # noqa: BLE001 - the loop must survive
@@ -1072,6 +1158,10 @@ def run_scheduled_work() -> dict:
         result["backfilled"] = sum(backfill_existing_customers().values())
     except Exception as e:  # noqa: BLE001
         log.exception("Sequence backfill failed: %s", e)
+    try:
+        result["outreach"] = partners.outreach_check()
+    except Exception as e:  # noqa: BLE001
+        log.exception("Partner outreach check failed: %s", e)
     try:
         result["recurring"] = finance.materialize_recurring(through=finance.today())
     except Exception as e:  # noqa: BLE001

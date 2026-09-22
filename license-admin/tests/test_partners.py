@@ -805,3 +805,149 @@ def test_the_welcome_email_reads_as_joining_the_team_and_explains_the_ftc(isolat
     assert "feedback box in your portal" in body
     html = welcome.get_body(preferencelist=("html",)).get_content()
     assert "piper-congratulations.png" in html          # Piper's confetti, as the congratulations
+
+
+# ----------------------- tax forms, kit announcements, recruitment (§8) ---
+
+
+def test_a_partner_sends_their_tax_form_and_payout_details_and_payouts_wait_for_review(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    pid, _ = partner()
+    with TestClient(app) as client:
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        page = client.get(f"/partners/portal/open?token={token}", follow_redirects=True).text
+        assert "Getting paid" in page and "exactly as it appears on that PayPal account" in page and "W-9" in page
+        # PayPal needs both the address and the name on the account.
+        r = client.post("/partners/portal/payout", data={"method": "paypal", "payout_email": "not-an-email", "payout_name": "Kathleen Reyes"}, follow_redirects=False)
+        assert "PayPal+account" in r.headers["location"]
+        r = client.post("/partners/portal/payout", data={"method": "paypal", "payout_email": "pay@example.com", "payout_name": ""}, follow_redirects=False)
+        assert "exactly+as+it+appears" in r.headers["location"]
+        client.post("/partners/portal/payout", data={"method": "paypal", "payout_email": "Pay@Example.com", "payout_name": "Kathleen Reyes", "payout_country": "United States"})
+        p = db.get_promoter(pid)
+        assert p["payout_email"] == "pay@example.com" and p["payout_name"] == "Kathleen Reyes" and p["payout_country"] == "United States"
+
+        # The form itself: type and size are checked.
+        r = client.post("/partners/portal/tax-form", data={"kind": "w9"}, files={"document": ("form.exe", b"MZ", "application/x-msdownload")}, follow_redirects=False)
+        assert "PDF" in r.headers["location"].replace("+", " ")
+        r = client.post("/partners/portal/tax-form", data={"kind": "w9"}, files={"document": ("big.pdf", b"x" * (partners.MAX_DOCUMENT_BYTES + 1), "application/pdf")}, follow_redirects=False)
+        assert "limit+is+8+MB" in r.headers["location"]
+        client.post("/partners/portal/tax-form", data={"kind": "w9"}, files={"document": ("w9.pdf", b"%PDF-1.4 signed", "application/pdf")})
+        doc = db.list_partner_documents(pid)[0]
+        assert doc["kind"] == "w9" and doc["accepted_at"] is None and db.count_pending_partner_documents() == 1
+        assert "with us" in client.get("/partners/portal").text
+
+    # Uploading is not the same as accepted: the payout run still holds them.
+    _fill_ledger(pid)
+    row = {r["promoter"]["id"]: r for r in db.payout_run_preview()}[pid]
+    assert not row["eligible"] and "tax form awaiting review" in row["reasons"]
+
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        assert "tax form" in client.get("/admin/partners").text
+        assert client.get(f"/admin/partner-documents/{doc['id']}").content == b"%PDF-1.4 signed"
+        # Sending it back needs a reason, and tells them.
+        r = client.post(f"/admin/partner-documents/{doc['id']}", data={"decision": "reject", "note": ""}, follow_redirects=False)
+        assert "Say+what" in r.headers["location"]
+        client.post(f"/admin/partner-documents/{doc['id']}", data={"decision": "reject", "note": "Page 2 isn't signed"})
+        assert db.get_promoter(pid)["tax_form_received_at"] is None
+        assert "Page 2 isn't signed" in _body(fake_smtp.sent[-1])
+        # Accepting is what unblocks the money.
+        client.post("/partners/portal", data={"email": "kathleen@example.com"})
+        client.post(f"/admin/partner-documents/{doc['id']}", data={"decision": "accept"})
+    p = db.get_promoter(pid)
+    assert p["tax_form_received_at"] and p["tax_form_type"] == "w9"
+    assert db.payout_run_preview() and {r["promoter"]["id"]: r for r in db.payout_run_preview()}[pid]["eligible"]
+
+
+def _fill_ledger(promoter_id):
+    """Enough matured commission on the partner to be payable."""
+    with db.connection() as conn:
+        promo = db.get_promotion_by_code("KATHLEEN")
+        conn.execute("INSERT INTO promo_payouts (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, kind, created_at) "
+                     "VALUES (?, ?, NULL, NULL, 24000, 0, 24000, 30, 7200, 'recurring', ?)",
+                     (promoter_id, promo["id"], (datetime.utcnow() - timedelta(days=70)).isoformat(timespec="seconds") + "Z"))
+
+
+def test_a_new_kit_item_tells_every_partner_with_a_link_to_it(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    a_id, _ = partner()
+    b_id, _ = partner(name="Mia", email="mia@example.com", code="MIA")
+    partner(name="Gone", email="gone@example.com", code="GONE", status="closed")
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        fake_smtp.sent.clear()
+        client.post("/admin/partners/resources", data={"title": "Digitizing a cap logo", "url": "https://youtu.be/abc123", "kind": "video",
+                                                       "description": "Two minutes, start to finished file", "sort_order": "1", "announce": "1"})
+        told = {m["To"] for m in fake_smtp.sent}
+        assert told == {"kathleen@example.com", "mia@example.com"}          # not the closed one
+        note = fake_smtp.sent[-1]
+        assert note["Subject"] == "New in your partner kit: Digitizing a cap logo"
+        assert "https://youtu.be/abc123" in _body(note) and "Two minutes, start to finished file" in _body(note)
+        item = db.list_partner_resources()[0]
+        assert item["announced_at"]
+        # Adding quietly is possible, and telling them later is a button.
+        fake_smtp.sent.clear()
+        client.post("/admin/partners/resources", data={"title": "Quiet one", "url": "https://youtu.be/quiet", "kind": "video", "sort_order": "2"})
+        assert fake_smtp.sent == []
+        quiet = [r for r in db.list_partner_resources() if r["title"] == "Quiet one"][0]
+        assert quiet["announced_at"] is None
+        client.post(f"/admin/partners/resources/{quiet['id']}/announce")
+        assert len(fake_smtp.sent) == 2 and db.get_partner_resource(quiet["id"])["announced_at"]
+
+
+def test_recruitment_runs_itself_from_a_pasted_list_and_tracks_everything(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    partner(name="Already In", email="already@example.com", code="ALREADY")
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post("/admin/partners/recruit", data={"people": "nonsense", "note": ""}, follow_redirects=False)
+        assert "Nothing+to+send+to" in r.headers["location"]
+        fake_smtp.sent.clear()
+        r = client.post("/admin/partners/recruit", data={
+            "people": "Kathleen Reyes <kathleen@example.com>\nDev Patel, dev@example.com\nAlready In, already@example.com\nrubbish",
+            "note": "Speaks at the guild"}, follow_redirects=False)
+        loc = r.headers["location"]
+        assert "Started+2+approaches" in loc and "already%40example.com" in loc and "already+active" in loc and "Couldn%27t+read+1" in loc
+    # The first email goes at once; the rest are queued.
+    assert {m["To"] for m in fake_smtp.sent} == {"kathleen@example.com", "dev@example.com"}
+    first = [m for m in fake_smtp.sent if m["To"] == "kathleen@example.com"][0]
+    assert "Kathleen" in first["Subject"] and "/partners/program?k=" in _body(first) and "/partners/no-thanks?k=" in _body(first)
+    kath = db.get_partner_prospect_by_email("kathleen@example.com")
+    assert kath["source"] == "recruit" and kath["outreach_status"] == "active" and kath["outreach_step"] == 1 and kath["note"] == "Speaks at the guild"
+    assert db.list_outreach_log(kath["id"])[0]["status"] == "sent"
+
+    # Nothing more is due yet; when it is, the next step goes.
+    assert partners.outreach_check() == 0
+    assert partners.outreach_check(now=datetime.now(timezone.utc) + timedelta(days=4)) == 2
+    assert db.get_partner_prospect_by_email("kathleen@example.com")["outreach_step"] == 2
+
+    # Their link opens the gated details, and that counts as tracking.
+    link = _body(first).split("/partners/program?k=")[1].split()[0].rstrip(".")
+    with TestClient(app) as guest:
+        assert "30% of every invoice" in guest.get(f"/partners/program?k={link}", follow_redirects=True).text
+    kath = db.get_partner_prospect_by_email("kathleen@example.com")
+    assert kath["views"] == 1 and kath["last_seen_at"]
+
+    # Applying stops the sequence.
+    with TestClient(app) as guest:
+        guest.get(f"/partners/program?k={link}")
+        guest.post("/partners/apply", data={"name": "Kathleen Reyes", "email": "kathleen@example.com", "application": "A 40k-subscriber embroidery channel.", "agree": "1"})
+    kath = db.get_partner_prospect_by_email("kathleen@example.com")
+    assert kath["applied_at"] and kath["outreach_status"] == "done"
+    assert partners.outreach_check(now=datetime.now(timezone.utc) + timedelta(days=30)) == 1     # only Dev is left
+
+    # One click says no, and we stop for good.
+    dev = db.get_partner_prospect_by_email("dev@example.com")
+    with TestClient(app) as guest:
+        r = guest.get(f"/partners/no-thanks?k={partners.program_token(dev['id'])}")
+        assert r.status_code == 200 and "we&rsquo;ll stop" in r.text
+    dev = db.get_partner_prospect_by_email("dev@example.com")
+    assert dev["outreach_status"] == "opted_out" and dev["opted_out_at"]
+    assert partners.outreach_check(now=datetime.now(timezone.utc) + timedelta(days=60)) == 0
+    # ...and a second attempt to recruit them is refused.
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post("/admin/partners/recruit", data={"people": "Dev Patel, dev@example.com"}, follow_redirects=False)
+        assert "asked+not+to+be+contacted" in r.headers["location"]
+        page = client.get("/admin/partners").text
+        assert "Recruit partners" in page and "Dev Patel" in page and "said no" in page

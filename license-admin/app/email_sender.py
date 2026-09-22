@@ -185,6 +185,32 @@ def send_partner_program_email(*, to_email: str, partner_name: str, url: str, in
                           vars=_partner_vars(partner_name, to_email, url=url, link_days=partners.PROGRAM_TOKEN_DAYS))
 
 
+def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, url: str, apply_url: str, opt_out_url: str) -> str:
+    """One step of the recruitment sequence. Returns the subject line, for
+    the outreach log. Cold mail, so the opt-out rides in the footer as
+    well as the body."""
+    from . import db
+    e = _emails()
+    vars = _partner_vars(partner_name, to_email, url=url, apply_url=apply_url, opt_out_url=opt_out_url)
+    row = db.get_email_template(key)
+    if row is None:
+        e.seed(); row = db.get_email_template(key)
+    subject = e.fill(row["subject"], vars)
+    e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
+                  footer_note=f"You're getting this because we think you'd be a good PiperStitch partner. To hear no more: {opt_out_url}")
+    return subject
+
+
+def send_partner_kit_email(*, to_email: str, partner_name: str, title: str, description: str, url: str, kind: str = "video") -> None:
+    _emails().send_system("partner_kit_item", to_email=to_email, customer_id=None,
+                          vars=_partner_vars(partner_name, to_email, title=title, url=url, kind=kind,
+                                             description_line=("\n\n" + description) if description else ""))
+
+
+def send_partner_document_rejected_email(*, to_email: str, partner_name: str, note: str) -> None:
+    _emails().send_system("partner_document_rejected", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email, note=note or "It wasn't readable."))
+
+
 def send_partner_applied_email(*, to_email: str, partner_name: str) -> None:
     _emails().send_system("partner_applied", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email))
 
