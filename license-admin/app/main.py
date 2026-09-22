@@ -44,6 +44,7 @@ log = logging.getLogger("license_admin")
 async def _lifespan(app: FastAPI):
     db.init_db()
     emails.seed()
+    partners.seed_kit()
     missing = config.require_for_serving()
     if missing:
         log.warning("License Admin is running with missing configuration: %s — see .env.example", ", ".join(missing))
@@ -1135,6 +1136,19 @@ def partner_program(request: Request, k: str = "", welcome: str = ""):
     return templates.TemplateResponse(request, "partner_program.html", {
         **partners.prospect_context(prospect), "program": partners, "welcome": bool(welcome),
         "trial_days": partners.OFFER_TRIAL_DAYS, "proofs": partners.OFFER_PROOFS,
+    })
+
+
+@app.get("/partners/video", response_class=HTMLResponse)
+def partner_video(request: Request, k: str = ""):
+    """The two-minute introduction, straight from a recruitment email:
+    one click, nothing to fill in, and it counts as having opened
+    something so the approach can be judged."""
+    prospect, _ = _program_reader(request)
+    if prospect is not None:
+        db.touch_partner_prospect(prospect["id"])
+    return templates.TemplateResponse(request, "partner_watch.html", {
+        "p": prospect, "details_url": "/partners/program", "program": partners,
     })
 
 

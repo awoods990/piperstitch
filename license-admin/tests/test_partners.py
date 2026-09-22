@@ -801,15 +801,16 @@ def test_the_kit_shows_the_videos_the_admin_publishes(isolated_db, test_keypair,
         client.post("/admin/partners/resources", data={"title": "Digitizing a cap logo", "url": "https://youtu.be/abc123", "kind": "video",
                                                        "description": "Two minutes, start to finished file", "sort_order": "1"})
         client.post("/admin/partners/resources", data={"title": "Old cut", "url": "https://youtu.be/old", "kind": "video", "sort_order": "2"})
-        resources = db.list_partner_resources()
-        assert [r["title"] for r in resources] == ["Digitizing a cap logo", "Old cut"]
-        client.post(f"/admin/partners/resources/{resources[1]['id']}", data={"title": "Old cut", "url": "https://youtu.be/old", "kind": "video", "sort_order": "2", "active": ""})
+        mine = [r for r in db.list_partner_resources() if "youtu.be" in r["url"]]
+        assert [r["title"] for r in mine] == ["Digitizing a cap logo", "Old cut"]       # our own films are seeded alongside
+        client.post(f"/admin/partners/resources/{mine[1]['id']}", data={"title": "Old cut", "url": "https://youtu.be/old", "kind": "video", "sort_order": "2", "active": ""})
     with TestClient(app) as portal:
         portal.post("/partners/portal", data={"email": "kathleen@example.com"})
         token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
         page = portal.get(f"/partners/portal/open?token={token}", follow_redirects=True).text
         assert "Videos and downloads" in page and "Digitizing a cap logo" in page and "youtu.be/abc123" in page
         assert "Old cut" not in page                      # unticked, so not shown to partners
+        assert "The Partner Program, in two minutes" in page                # ...and ours sit alongside it
 
 
 def test_the_welcome_email_reads_as_joining_the_team_and_explains_the_ftc(isolated_db, test_keypair, fake_smtp, admin_password_configured):
@@ -1061,3 +1062,41 @@ def test_a_recruits_page_shows_the_sequence_resends_any_email_and_keeps_their_re
     assert db.count_outreach_replies(prospect_id) == 2
     assert db.get_partner_prospect(prospect_id)["outreach_status"] == "replied"
     assert "Go on then" in [e["body"] for e in partners.recruit_timeline(db.get_partner_prospect(prospect_id))][-1]
+
+
+def test_the_first_recruitment_email_leads_with_seeing_it_and_the_video_opens_without_a_form(isolated_db, test_keypair, fake_smtp):
+    from app import partners
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    note = fake_smtp.sent[-1]
+    body = _body(note)
+    # It opens on seeing and trying it, not on the money.
+    assert "two minutes" in note["Subject"]
+    assert body.index("/partners/video?k=") < body.index("/partners/program?k=")
+    assert f"{config.WEB_APP_URL}/?trial=1" in body and "no card" in body
+    assert "/partners/no-thanks?k=" in body
+    # The film itself plays without registering, and counts as a look.
+    link = body.split("/partners/video?k=")[1].split()[0]
+    with TestClient(app) as guest:
+        r = guest.get(f"/partners/video?k={link}")
+        assert r.status_code == 200 and "Dev, here it is in two minutes" in r.text
+        assert "Show me the details" not in r.text
+        assert "/assets/video/piperstitch-partner-program.mp4" in r.text
+        # ...and the details are one click on from there, still no form.
+        assert "30% of every invoice" in guest.get("/partners/program", follow_redirects=True).text
+    assert db.get_partner_prospect(prospect_id)["views"] >= 1
+
+
+def test_the_films_are_in_every_partner_kit(isolated_db, test_keypair, fake_smtp):
+    from app import partners
+    partner()
+    partners.seed_kit()
+    partners.seed_kit()                                   # seeding twice must not double them
+    videos = [r for r in db.list_partner_resources() if r["kind"] == "video"]
+    assert len(videos) == 3 and all(r["url"].endswith(".mp4") for r in videos)
+    assert [r["title"] for r in videos] == [v["title"] for v in partners.KIT_VIDEOS]
+    with TestClient(app) as portal:
+        portal.post("/partners/portal", data={"email": "kathleen@example.com"})
+        token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
+        page = portal.get(f"/partners/portal/open?token={token}", follow_redirects=True).text
+        assert "The Partner Program, in two minutes" in page and "piperstitch-animated-introduction.mp4" in page

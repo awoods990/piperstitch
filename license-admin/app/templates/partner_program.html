@@ -15,13 +15,29 @@
     </p>
     <div class="cta-row" style="margin-top:28px">
       <a class="btn btn-primary" href="#apply">Apply to the program</a>
-      <a class="btn btn-secondary" href="#calculator">What it adds up to</a>
+      <a class="btn btn-secondary" href="#watch">Watch the two-minute version</a>
     </div>
     <p class="muted" style="margin-top:14px; font-size:.95rem">Founding partners &mdash; the first 50 &mdash; keep the 30% rate. After that, open enrolment is 25%.</p>
   </div>
 </section>
 
-<section class="bg-white">
+<section class="bg-white" id="watch">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">Two minutes</p>
+      <h2>Rather watch than read?</h2>
+    </div>
+    <div class="video-frame">
+      <video controls preload="none" playsinline poster="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program-poster.jpg" width="1920" height="1080">
+        <source src="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program.mp4" type="video/mp4">
+        Your browser can&rsquo;t play this video. <a href="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program.mp4">Download it instead</a>.
+      </video>
+    </div>
+    <p class="video-caption">The numbers below are the part the video leaves out.</p>
+  </div>
+</section>
+
+<section class="bg-line-top">
   <div class="wrap">
     <div class="grid grid-3">
       <div class="card"><div class="card-num">Recurring</div><h3>30% of every invoice</h3><p>Not a one-off. Each referral pays you every month they stay, for 24 months from their first payment. At $24 a month that&rsquo;s $7.20 a month per person &mdash; $14.40 if they add Proofs. Computed from the actual invoice, so an upgrade pays you more and a price change never pays you less.</p></div>

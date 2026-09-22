@@ -1093,3 +1093,15 @@ section { padding: 92px 0; }
 .apply-check { display: flex !important; gap: 10px; align-items: flex-start; font-weight: 500 !important; margin-top: 18px !important; }
 .apply-check input { margin-top: 4px; }
 @media (max-width: 640px) { .apply-grid { grid-template-columns: 1fr; } .apply-grid div + div label { margin-top: 16px; } }
+
+/* ---------- video ---------- */
+.video-frame {
+  position: relative; width: 100%; max-width: 940px; margin: 0 auto;
+  border-radius: var(--r); overflow: hidden;
+  border: 1px solid var(--line); background: #eaf1fb;
+  box-shadow: 0 10px 30px rgba(31,63,99,.10), 0 2px 8px rgba(31,63,99,.06);
+}
+.video-frame video { display: block; width: 100%; height: auto; background: #eaf1fb; }
+.video-frame.narrow { max-width: 760px; }
+.video-caption { text-align: center; color: var(--muted); font-size: .92rem; margin: 12px 0 0; }
+.video-caption a { color: var(--blue-500); }

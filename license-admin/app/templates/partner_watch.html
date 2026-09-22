@@ -1,0 +1,32 @@
+{% extends "partner_site_base.html" %}
+{% block title %}The PiperStitch Partner Program, in two minutes{% endblock %}
+{% block nav_program %}{% endblock %}
+{% block body %}
+<section class="page-hero sky">
+  <div class="wrap narrow center">
+    <p class="eyebrow">Partner Program</p>
+    <h1>{% if p %}{{ p.name.split(' ')[0] }}, here it is in two minutes.{% else %}Here it is in two minutes.{% endif %}</h1>
+    <p class="lede">What the program is, what the people you send get, and why we keep it small. No sign-up to watch, and the full details are one click below.</p>
+  </div>
+</section>
+
+<section class="bg-white">
+  <div class="wrap">
+    <div class="video-frame">
+      <video controls autoplay muted playsinline poster="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program-poster.jpg" width="1920" height="1080">
+        <source src="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program.mp4" type="video/mp4">
+        Your browser can&rsquo;t play this video. <a href="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program.mp4">Download it instead</a>.
+      </video>
+    </div>
+    <p class="video-caption">Unmute for the sound &mdash; or <a href="{{ config.WEBSITE_BASE_URL }}/assets/video/piperstitch-partner-program.mp4" download>download it</a> to watch later.</p>
+    <div class="cta-row" style="justify-content:center; margin-top:30px">
+      <a class="btn btn-primary" href="{{ details_url }}">See the full details</a>
+      <a class="btn btn-secondary" href="{{ config.WEB_APP_URL }}/?trial=1">Try PiperStitch free</a>
+    </div>
+    <p class="video-caption" style="margin-top:18px">
+      The details page has the rate, the term and a calculator. Or start with the product itself &mdash; the trial is free, needs no card,
+      and partners only ever talk about what they&rsquo;ve actually used.
+    </p>
+  </div>
+</section>
+{% endblock %}

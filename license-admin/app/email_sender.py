@@ -185,13 +185,14 @@ def send_partner_program_email(*, to_email: str, partner_name: str, url: str, in
                           vars=_partner_vars(partner_name, to_email, url=url, link_days=partners.PROGRAM_TOKEN_DAYS))
 
 
-def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, url: str, apply_url: str, opt_out_url: str) -> str:
+def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, url: str, apply_url: str, opt_out_url: str, video_url: str = "", trial_url: str = "") -> str:
     """One step of the recruitment sequence. Returns the subject line, for
     the outreach log. Cold mail, so the opt-out rides in the footer as
     well as the body."""
     from . import db
     e = _emails()
-    vars = _partner_vars(partner_name, to_email, url=url, apply_url=apply_url, opt_out_url=opt_out_url)
+    vars = _partner_vars(partner_name, to_email, url=url, apply_url=apply_url, opt_out_url=opt_out_url,
+                         video_url=video_url, trial_url=trial_url or f"{config.WEB_APP_URL}/?trial=1")
     row = db.get_email_template(key)
     if row is None:
         e.seed(); row = db.get_email_template(key)

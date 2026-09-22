@@ -109,28 +109,32 @@ Here are the full details: what you earn on every referral, for how long, the si
 
 The link is yours and works for the next {link_days} days. You can apply from the bottom of the page, or just reply to this email and ask me anything first.""",
          cta_label="Read the program details", cta_url="{url}", preheader="What you earn, for how long, and how we pay.", placeholders="first_name, name, email, url, link_days, site_url"),
-    dict(key="partner_outreach_1", name="Recruit 1: the approach", description="First recruitment email. {url} opens their own copy of the program details; {opt_out_url} stops the sequence.",
-         subject="Would you like to be paid for recommending PiperStitch, {first_name}?",
+    dict(key="partner_outreach_1", name="Recruit 1: see it or try it", description="First recruitment email. {video_url} is the two-minute film, {trial_url} the free trial, {url} their own copy of the program details, {opt_out_url} stops the sequence.",
+         subject="{first_name} — worth two minutes of your time?",
          body="""Hi {first_name},
 
-You already get asked what software to use. I'd like to pay you for the answer, when the answer is PiperStitch.
+I'd like you to look at PiperStitch, and if it earns it, to be paid for telling people about it.
 
-Briefly: PiperStitch digitizes embroidery in a browser — artwork in, machine-ready file out in seconds, every decision shown and editable, $24 a month instead of a thousand-dollar package. If you'd like to try it first, the trial is free and needs no card; I'd rather you formed your own view than took mine.
+Easiest thing first: see it work. Drop in a customer's logo and you get a machine-ready stitch file in seconds — the stitch type, underlay, density and sew order all chosen the way a digitizer would choose them, every one of those decisions shown and editable, and the file rendered as real stitches before you hoop anything.
 
-The Partner Program pays a recurring share of everything the people you refer pay, for two years — and the people who come through you get a longer free trial and a bigger proof allowance than anyone else. The first fifty partners are on a better rate, and I'd like to keep a seat for you.
+Watch it happen (two minutes, no sign-up): {video_url}
 
-Here are the full details, including the rate and how we pay. The link is yours — it opens the page directly, with nothing to fill in:
+Or skip me entirely and put your own artwork through it — the trial is free, needs no card, and takes about a minute to start: {trial_url}
 
-{url}
+If it holds up on your work, the Partner Program pays you a recurring share of everything the people you refer pay, for two years, and gives them a longer free trial and a bigger proof allowance than anyone else gets. The first fifty partners are on a better rate and I'd like to hold one of those seats for you.
 
-If this isn't for you, no hard feelings at all — {opt_out_url} and you'll not hear from me again.""",
-         cta_label="See the program details", cta_url="{url}", preheader="A recurring share for a recommendation you already make.",
-         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+The full terms, including the rate: {url}
+
+I'd rather you formed your own view than took mine — so look first, and tell me what's wrong with it. If it's not for you, {opt_out_url} and you'll not hear from me again.""",
+         cta_label="Watch the two-minute introduction", cta_url="{video_url}", preheader="See it work, or put your own artwork through it.",
+         placeholders="first_name, name, email, video_url, trial_url, url, apply_url, opt_out_url, site_url"),
     dict(key="partner_outreach_2", name="Recruit 2: how it works", description="Second recruitment email, a few days later: the mechanics.",
          subject="How the PiperStitch partner thing actually works",
          body="""Hi {first_name},
 
 In case the details page was more than you wanted to read, here it is in four lines:
+
+If you haven't looked yet, the two-minute version is here: {video_url}
 
 1. You get a link and a spoken code. The code matters — it works on a Live or in a class, where nothing is clickable.
 2. Anyone who uses either gets a longer free trial and a bigger proof allowance than the public offer. They're better off coming through you.
@@ -141,7 +145,7 @@ That's the whole thing. No quota, no exclusivity, nothing to keep up with, and y
 
 {url}""",
          cta_label="See the program details", cta_url="{url}", preheader="Link, code, recurring share, monthly payout.",
-         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+         placeholders="first_name, name, email, video_url, trial_url, url, apply_url, opt_out_url, site_url"),
     dict(key="partner_outreach_3", name="Recruit 3: why it's worth your time", description="Third recruitment email: the case, and the founding seats.",
          subject="The part most people don't expect",
          body="""Hi {first_name},
@@ -156,7 +160,7 @@ There's a calculator on the details page — put your own numbers in rather than
 
 Founding seats are limited to fifty and they're going. If you'd rather just get started, the application takes two minutes and already knows who you are: {apply_url}""",
          cta_label="Work out what it's worth", cta_url="{url}", preheader="It keeps paying — that's the part people don't expect.",
-         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+         placeholders="first_name, name, email, video_url, trial_url, url, apply_url, opt_out_url, site_url"),
     dict(key="partner_outreach_4", name="Recruit 4: the last note", description="Final recruitment email. Nothing further is sent after this one.",
          subject="Last note about this, {first_name}",
          body="""Hi {first_name},
@@ -170,7 +174,7 @@ Or apply straight away: {apply_url}
 
 Either way, thank you for what you do for this trade — it's a better trade for people having someone to ask.""",
          cta_label="Apply to the program", cta_url="{apply_url}", preheader="The offer stands whenever you want it.",
-         placeholders="first_name, name, email, url, apply_url, opt_out_url, site_url"),
+         placeholders="first_name, name, email, video_url, trial_url, url, apply_url, opt_out_url, site_url"),
     dict(key="partner_kit_item", name="Partner: new in the kit", description="Sent to every active partner when something new is added to the creative kit.",
          subject="New in your partner kit: {title}",
          body="""Hi {first_name},

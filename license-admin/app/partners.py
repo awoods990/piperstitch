@@ -193,6 +193,12 @@ def resolve_program_token(token: str) -> Optional[int]:
     return prospect["id"] if prospect is not None else None
 
 
+def video_url(prospect_id: int) -> str:
+    """The two-minute introduction, with their token so the click counts
+    and the details are one step away rather than behind a form."""
+    return f"{config.PUBLIC_BASE_URL}/partners/video?k={quote(program_token(prospect_id), safe='')}"
+
+
 def program_url(prospect_id: int) -> str:
     """Straight into the full program details -- no registration, nothing
     to fill in again. The token is escaped so the link survives the trip
@@ -329,6 +335,27 @@ def announce_resource(resource_id: int) -> int:
     return sent
 
 
+KIT_VIDEOS = [
+    {"title": "PiperStitch in a minute (animated)", "file": "piperstitch-animated-introduction.mp4", "sort_order": 10,
+     "description": "The short one. Good for a post, a Story, or the top of a video."},
+    {"title": "The full introduction", "file": "piperstitch-introduction.mp4", "sort_order": 20,
+     "description": "Artwork to machine file, start to finish — for when you want to show rather than tell."},
+    {"title": "The Partner Program, in two minutes", "file": "piperstitch-partner-program.mp4", "sort_order": 30,
+     "description": "What the program is. Send it to anyone you think should be a partner; we'll send them their own link."},
+]
+
+
+def seed_kit() -> None:
+    """The films we make, in every partner's kit from the day they join.
+    Added once; an admin can rename, reorder, hide or remove them after
+    that, and this will not put them back."""
+    have = {r["url"] for r in db.list_partner_resources()}
+    for video in KIT_VIDEOS:
+        url = f"{config.WEBSITE_BASE_URL}/assets/video/{video['file']}"
+        if url not in have:
+            db.add_partner_resource(title=video["title"], url=url, kind="video", description=video["description"], sort_order=video["sort_order"])
+
+
 # ------------------------------------------------------ recruitment (§8) --
 # Someone we'd like in the program, approached properly: four emails over
 # a fortnight, each one shorter than the last, every one carrying their
@@ -413,7 +440,7 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
     try:
         subject = email_sender.send_partner_outreach_email(
             to_email=prospect["email"], partner_name=prospect["name"], key=spec["key"], url=url,
-            apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]))
+            apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]), video_url=video_url(prospect["id"]))
     except email_sender.EmailSendError as e:
         db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
         return False
