@@ -136,7 +136,11 @@ def verify_code(*, email: str, code: str, user_agent: str = "", promo_code: str 
     # Partner attribution at trial start (spec §9): a typed code beats the
     # link cookie (R8); the perks (longer trial, extra proofs) apply now,
     # the commission attribution is provisional until first payment.
-    promo, source = referrals.resolve_for_signup(typed_code=promo_code, cookie=ref_cookie, email=email)
+    try:
+        promo, source = referrals.resolve_for_signup(typed_code=promo_code, cookie=ref_cookie, email=email)
+    except promotions.PromoError:
+        # A remembered code that is no longer valid must not stop a sign-in.
+        promo, source = referrals.resolve_for_signup(cookie=ref_cookie, email=email)
     trial_subscription_id = _start_trial_if_first_visit(customer, promo)
     if promo is not None:
         referrals.attribute_customer(customer["id"], promo, source=source, subscription_id=trial_subscription_id)

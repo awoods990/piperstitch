@@ -40,7 +40,11 @@ export const api = {
   me: async (refresh = false): Promise<MeResponse> => (await check(await fetch(`${BASE}/auth/me${refresh ? "?refresh=1" : ""}`))).json(),
   /** `flow: "trial"` gets the sign-up email (its link returns to guided setup). */
   requestCode: (email: string, flow: "signin" | "trial" = "signin") => postJSON<{ sent: boolean }>("/auth/request", { email, flow }),
-  verifyCode: (email: string, code: string) => postJSON<MeResponse>("/auth/verify", { email, code }),
+  verifyCode: (email: string, code: string) => {
+    let promoCode = "";
+    try { promoCode = localStorage.getItem("piperstitch.promo") ?? ""; } catch { /* ignore */ }
+    return postJSON<MeResponse>("/auth/verify", { email, code, promoCode });
+  },
   signOut: () => postJSON<void>("/auth/signout", {}),
   updateName: (name: string) => postJSON<MeResponse>("/auth/profile", { name }),
   sendFile: (document: StitchDocument, format: string, toEmail: string, message: string) => postJSON<{ sent: boolean }>("/auth/send", { document, format, toEmail, message }),

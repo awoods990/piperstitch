@@ -62,13 +62,17 @@ func authRoutes(_ api: RoutesBuilder) {
 
     auth.post("verify") { req -> Response in
         try requireEnabled(req)
-        struct In: Content { var email: String; var code: String; var user_agent: String }
-        struct Body: Content { var email: String; var code: String }
+        // A partner code (typed, or remembered from ?ref=) and the partner
+        // link's ps_ref cookie both go to License Admin, which attributes
+        // the signup and applies the code's perks at trial start.
+        struct In: Content { var email: String; var code: String; var user_agent: String; var promo_code: String; var ref_cookie: String }
+        struct Body: Content { var email: String; var code: String; var promoCode: String? }
         let body = try req.content.decode(Body.self)
         let userAgent = req.headers.first(name: .userAgent) ?? ""
         struct Out: Decodable { var token: String }
         let raw = try await req.licenseAdmin.post("/api/web/signin/verify",
-                                                  In(email: body.email.trimmingCharacters(in: .whitespaces), code: body.code.trimmingCharacters(in: .whitespaces), user_agent: userAgent),
+                                                  In(email: body.email.trimmingCharacters(in: .whitespaces), code: body.code.trimmingCharacters(in: .whitespaces), user_agent: userAgent,
+                                                     promo_code: body.promoCode ?? "", ref_cookie: req.cookies["ps_ref"]?.string ?? ""),
                                                   as: VerifyOut.self)
         let payload = SessionPayload(token: raw.token, account: raw.account, checkedAt: Int(Date().timeIntervalSince1970))
         let response = try await MeResponse(authEnabled: true, signedIn: true, account: raw.account, proofsURL: req.application.auth.proofsURL).encodeResponse(for: req)

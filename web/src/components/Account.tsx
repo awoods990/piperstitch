@@ -37,7 +37,10 @@ const PROMO_KEY = "piperstitch.promo";
 
 /** A code from a promoter's link (?promo=CODE) is remembered until it's used. */
 export function capturePromoFromURL() {
-  const code = new URLSearchParams(window.location.search).get("promo")?.trim().toUpperCase();
+  // ?promo= (a discount code) and ?ref= (a partner's code, from their
+  // link or landing page) are the same thing to the account service.
+  const params = new URLSearchParams(window.location.search);
+  const code = (params.get("promo") || params.get("ref"))?.trim().toUpperCase();
   if (code) { try { localStorage.setItem(PROMO_KEY, code); } catch { /* ignore */ } }
 }
 export const rememberedPromo = () => { try { return localStorage.getItem(PROMO_KEY) ?? ""; } catch { return ""; } };

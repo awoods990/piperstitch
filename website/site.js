@@ -18,6 +18,16 @@
     });
   }
 
+  // A partner's ?ref=CODE on any page: bounce through the account
+  // service's /r/<CODE> so the click is logged and the signed referral
+  // cookie is set, then come straight back to this page.
+  var ref = new URLSearchParams(window.location.search).get("ref");
+  if (ref && /^[A-Za-z0-9][A-Za-z0-9-]{2,29}$/.test(ref)) {
+    var here = window.location.pathname.replace(/^\/+/, "/");
+    window.location.replace("https://admin.piperstitch.com/r/" + encodeURIComponent(ref.toUpperCase()) + "?to=" + encodeURIComponent(here === "/" ? "/index.html" : here));
+    return;
+  }
+
   // Current year in the footer
   var year = document.getElementById("year");
   if (year) { year.textContent = new Date().getFullYear(); }

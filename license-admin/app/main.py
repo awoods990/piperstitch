@@ -601,8 +601,6 @@ def api_web_signin_verify(body: WebVerifyIn, x_api_key: Optional[str] = Header(N
     _require_web_key(x_api_key)
     try:
         session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent, promo_code=body.promo_code, ref_cookie=body.ref_cookie)
-    except promotions.PromoError as e:
-        return JSONResponse({"error": e.code, "message": e.message}, status_code=400)
     except activation.ActivationError as e:
         return _activation_error(e, status=400)
     return {"token": session.token, **web_access.state(token=session.token)}
