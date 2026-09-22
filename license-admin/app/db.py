@@ -1394,6 +1394,14 @@ def redemption_for_subscription(subscription_id: int) -> Optional[sqlite3.Row]:
         return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE r.subscription_id = ? ORDER BY r.redeemed_at DESC LIMIT 1", (subscription_id,)).fetchone()
 
 
+def redemption_for_customer(customer_id: int) -> Optional[sqlite3.Row]:
+    """The redemption that attributes this *customer* -- every subscription
+    they hold (the app and Proofs are separate rows) earns on it. A
+    promoter's code wins over a direct discount; otherwise the latest."""
+    with connection() as conn:
+        return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE r.customer_id = ? ORDER BY (promotions.kind = 'promoter') DESC, r.redeemed_at DESC LIMIT 1", (customer_id,)).fetchone()
+
+
 def record_promo_payout(*, promoter_id: int, promotion_id: int, customer_id: Optional[int], payment_id: Optional[int], gross_cents: int, fee_cents: int,
                         net_cents: int, share_pct: float, share_cents: int, fee_source: str) -> Optional[int]:
     with connection() as conn:

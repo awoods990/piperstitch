@@ -14,7 +14,7 @@
 
   <div class="card" id="promoters">
     <div class="toolbar"><h2 style="margin:0">Promoters</h2></div>
-    <p class="muted small" style="margin-top:0">A person or organization who promotes PiperStitch. Each gets one or more codes; their audience gets the code's discount and they earn the code's share of net revenue (what the customer paid minus Stripe's fee).</p>
+    <p class="muted small" style="margin-top:0">A person or organization who promotes PiperStitch. Each gets one or more codes; their audience gets the code's discount and they earn the code's share of what their customers pay (gross, before Stripe's fee) on every subscription those customers hold, PiperStitch and Proofs alike.</p>
     <table>
       <tr><th>Promoter</th><th>Codes</th><th>Referred</th><th>Active subs</th><th>Gross</th><th>Earned</th><th>Paid</th><th>Owed</th></tr>
       {% for p in promoters %}

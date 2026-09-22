@@ -7,9 +7,10 @@ behind the scenes so billing is right without anyone opening Stripe.
 Attribution: a code is validated and applied by us at checkout (never
 typed on Stripe's page), the subscription is tagged with our promotion
 id, and the subscription webhook records the redemption. Revenue share
-is computed per paid invoice from the net (amount paid minus Stripe's
-fee) at the code's share percentage; what the admin has actually paid a
-promoter is a separate ledger, so "owed" is always earned minus paid."""
+is computed per paid invoice as the code's share percentage of the
+invoice's gross ("30% of what they pay"); Stripe's fee is recorded on
+the row for the books. What the admin has actually paid a promoter is a
+separate ledger, so "owed" is always earned minus paid."""
 
 from __future__ import annotations
 
@@ -192,11 +193,22 @@ def estimate_fee_cents(gross_cents: int) -> int:
 
 
 def record_share_for_payment(*, payment_id: int, subscription_row, customer_id: Optional[int], gross_cents: int, invoice: Optional[dict] = None) -> Optional[int]:
-    """After a paid invoice: if the subscription came through a promoter's
-    code, book the promoter's share of the net."""
-    if subscription_row is None:
+    """After a paid invoice: if the *customer* came through a promoter's
+    code, book the promoter's share. Attribution is per customer, not per
+    subscription (R9): the app and Proofs are separate subscriptions and
+    the Proofs one carries no promotion of its own, so looking the
+    redemption up by subscription paid nothing on Proofs at all. The
+    per-subscription lookup stays as the fallback for rows recorded
+    before customer_id was reliable.
+
+    The share is a percentage of the invoice's gross -- "30% of what they
+    pay" (13.1) -- so proration, upgrades and price changes are right by
+    construction. Stripe's fee is still recorded on the row for the books."""
+    if subscription_row is None and customer_id is None:
         return None
-    redemption = db.redemption_for_subscription(subscription_row["id"])
+    redemption = db.redemption_for_customer(customer_id) if customer_id is not None else None
+    if (redemption is None or redemption["kind"] != "promoter") and subscription_row is not None:
+        redemption = db.redemption_for_subscription(subscription_row["id"])
     if redemption is None or redemption["kind"] != "promoter" or not redemption["promoter_id"]:
         return None
     share_pct = float(redemption["share_pct"] or 0)
@@ -205,12 +217,12 @@ def record_share_for_payment(*, payment_id: int, subscription_row, customer_id: 
     if fee is None:
         fee = estimate_fee_cents(gross_cents)
     net = max(0, gross_cents - fee)
-    share = round(net * share_pct / 100)
+    share = round(gross_cents * share_pct / 100)
     payout_id = db.record_promo_payout(promoter_id=redemption["promoter_id"], promotion_id=redemption["promotion_id"], customer_id=customer_id, payment_id=payment_id,
                                        gross_cents=gross_cents, fee_cents=fee, net_cents=net, share_pct=share_pct, share_cents=share, fee_source=fee_source)
     if payout_id is not None and customer_id is not None:
-        db.add_event(customer_id=customer_id, subscription_id=subscription_row["id"], kind="promo_share",
-                     detail=f"${share / 100:.2f} share to {redemption['promoter_name']} ({share_pct:g}% of ${net / 100:.2f} net) for code {redemption['code']}.")
+        db.add_event(customer_id=customer_id, subscription_id=subscription_row["id"] if subscription_row is not None else None, kind="promo_share",
+                     detail=f"${share / 100:.2f} share to {redemption['promoter_name']} ({share_pct:g}% of ${gross_cents / 100:.2f}) for code {redemption['code']}.")
     return payout_id
 
 

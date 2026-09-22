@@ -75,26 +75,27 @@ def test_subscription_webhook_attributes_redemption_and_pays_promoter(isolated_d
     subscriptions.sync_from_stripe(sub)
     assert db.count_redemptions(promo_id) == 1
 
-    # a $9.50 invoice (50% off) -> estimated fee 2.9% + 30c = 58c -> net $8.92 -> 30% = $2.68
+    # a $9.50 invoice (50% off): the share is 30% of the gross = $2.85; the
+    # estimated fee (2.9% + 30c = 58c, net $8.92) is recorded, not deducted
     invoice = {"id": "in_1", "subscription": sub["id"], "amount_paid": 950, "currency": "usd", "created": 1_800_000_000, "customer": "cus_123"}
     subscriptions.record_invoice(invoice, paid=True)
     totals = db.promoter_totals(pid)
-    assert totals["gross_cents"] == 950 and totals["net_cents"] == 892 and totals["earned_cents"] == 268 and totals["owed_cents"] == 268
+    assert totals["gross_cents"] == 950 and totals["net_cents"] == 892 and totals["earned_cents"] == 285 and totals["owed_cents"] == 285
     # the same invoice again (Stripe retry) books nothing more
     subscriptions.record_invoice(invoice, paid=True)
-    assert db.promoter_totals(pid)["earned_cents"] == 268
+    assert db.promoter_totals(pid)["earned_cents"] == 285
     # record a payout; owed drops
     db.record_promoter_payment(promoter_id=pid, amount_cents=200, paid_at="2026-09-13", note="PayPal")
-    assert db.promoter_totals(pid)["owed_cents"] == 68
+    assert db.promoter_totals(pid)["owed_cents"] == 85
     overview = db.promotions_overview()
-    assert overview["redemptions"] == 1 and overview["earned_cents"] == 268 and overview["owed_cents"] == 68
+    assert overview["redemptions"] == 1 and overview["earned_cents"] == 285 and overview["owed_cents"] == 85
     # direct codes never generate a share
     direct = promotions.create_promotion(code="FRIEND", kind="direct", promoter_id=None, percent_off=100, duration_months=2)
     cid2 = db.upsert_customer(name="Two", email="two@example.com")
     sub2 = stripe_subscription(sub_id="sub_2", customer="cus_2", customer_id=cid2, email="two@example.com"); sub2["metadata"]["promotion_id"] = str(direct)
     subscriptions.sync_from_stripe(sub2)
     subscriptions.record_invoice({"id": "in_2", "subscription": "sub_2", "amount_paid": 0, "currency": "usd", "created": 1_800_000_000}, paid=True)
-    assert db.promotions_overview()["earned_cents"] == 268
+    assert db.promotions_overview()["earned_cents"] == 285
     assert promotions.cycles_remaining(db.list_redemptions_for_customer(cid2)[0]) == 2
 
 
@@ -142,3 +143,34 @@ def test_init_db_migrates_an_older_database(tmp_path, monkeypatch):
         assert "promotion_id" in {r[1] for r in c.execute("PRAGMA table_info(checkout_sessions)")}
         assert "fee_cents" in {r[1] for r in c.execute("PRAGMA table_info(payments)")}
     db.init_db()  # idempotent
+
+
+def test_share_accrues_on_every_subscription_the_referred_customer_holds(isolated_db, test_keypair, fake_stripe):
+    """§3.1 / R9: Proofs is a second subscription on the same customer with
+    no promotion metadata of its own. The partner's share must follow the
+    customer, not the one subscription the code was typed against."""
+    pid = db.create_promoter(name="Kathleen", default_share_pct=30)
+    promo_id = promotions.create_promotion(code="KATHLEEN", kind="promoter", promoter_id=pid, percent_off=10, duration_months=None, share_pct=30)
+    cid = db.upsert_customer(name="Ref", email="ref@example.com")
+    core = stripe_subscription(sub_id="sub_core", customer="cus_ref", customer_id=cid, email="ref@example.com", amount=2400)
+    core["metadata"]["promotion_id"] = str(promo_id)
+    subscriptions.sync_from_stripe(core)
+    subscriptions.record_invoice({"id": "in_core", "subscription": "sub_core", "amount_paid": 2400, "currency": "usd", "created": 1_800_000_000, "customer": "cus_ref"}, paid=True)
+    # Proofs arrives later as its own subscription: same customer, product='proofs', no promotion metadata.
+    proofs = stripe_subscription(sub_id="sub_proofs", customer="cus_ref", customer_id=cid, email="ref@example.com", amount=2400)
+    proofs["metadata"]["product"] = "proofs"
+    subscriptions.sync_from_stripe(proofs)
+    subscriptions.record_invoice({"id": "in_proofs", "subscription": "sub_proofs", "amount_paid": 2400, "currency": "usd", "created": 1_800_000_100, "customer": "cus_ref"}, paid=True)
+    totals = db.promoter_totals(pid)
+    # R1 + 13.1: 30% of the gross of BOTH invoices -- $7.20 each.
+    assert totals["payouts"] == 2 and totals["gross_cents"] == 4800 and totals["earned_cents"] == 1440
+    assert db.count_redemptions(promo_id) == 1   # still one redemption: attribution is per customer
+    # A legacy redemption row that only knows its subscription still resolves (test 9).
+    pid2 = db.create_promoter(name="Legacy", default_share_pct=20)
+    legacy_promo = promotions.create_promotion(code="LEGACY", kind="promoter", promoter_id=pid2, percent_off=10, duration_months=None, share_pct=20)
+    cid2 = db.upsert_customer(name="Old", email="old@example.com")
+    old = stripe_subscription(sub_id="sub_old", customer="cus_old", customer_id=cid2, email="old@example.com", amount=2400)
+    old["metadata"]["promotion_id"] = str(legacy_promo)
+    subscriptions.sync_from_stripe(old)
+    assert db.redemption_for_customer(cid2)["code"] == "LEGACY"
+    assert db.redemption_for_subscription(db.get_subscription_by_stripe_id("sub_old")["id"])["code"] == "LEGACY"
