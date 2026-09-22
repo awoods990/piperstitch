@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import stripe
@@ -256,6 +256,7 @@ def record_share_for_payment(*, payment_id: int, subscription_row, customer_id: 
         ends = _iso(_add_months(paid_at, int(months))) if months else None
         db.lock_attribution(redemption["id"], first_payment_at=_iso(paid_at), term_ends_at=ends)
         redemption = db.redemption_for_customer(customer_id) if customer_id is not None else db.redemption_for_subscription(subscription_row["id"])
+        maybe_award_bounty(redemption, paid_at=paid_at)
     if redemption["term_ends_at"] and paid_at > datetime.fromisoformat(redemption["term_ends_at"].replace("Z", "+00:00")):
         # R3/R4: past the term. Invoices keep arriving and are simply ignored.
         return None
@@ -271,7 +272,115 @@ def record_share_for_payment(*, payment_id: int, subscription_row, customer_id: 
     if payout_id is not None and customer_id is not None:
         db.add_event(customer_id=customer_id, subscription_id=subscription_row["id"] if subscription_row is not None else None, kind="promo_share",
                      detail=f"${share / 100:.2f} share to {redemption['promoter_name']} ({share_pct:g}% of ${gross_cents / 100:.2f}) for code {redemption['code']}.")
+    recheck_reinstatement(redemption["promoter_id"])
     return payout_id
+
+
+# --------------------------------------------------- partner program ---
+
+BOUNTY_CENTS = 15_00
+REINSTATE_AT = 25
+CLAWBACK_DAYS = 60
+
+
+def maybe_award_bounty(redemption, *, paid_at: datetime) -> Optional[int]:
+    """R5: $15 once per referred customer, on first successful payment,
+    when that date is inside the partner's bounty window or the partner
+    has been reinstated. Never on a trial."""
+    if redemption["bounty_payout_id"] is not None or not redemption["promoter_id"]:
+        return None
+    p = db.get_promoter(redemption["promoter_id"])
+    if p is None:
+        return None
+    day = paid_at.date().isoformat()
+    in_window = bool(p["bounty_window_start"] and p["bounty_window_end"] and p["bounty_window_start"][:10] <= day <= p["bounty_window_end"][:10])
+    reinstated = bool(p["bounty_reinstated_at"] and p["bounty_reinstated_at"] <= _iso(paid_at))
+    if not (in_window or reinstated):
+        return None
+    payout_id = db.record_promo_payout(promoter_id=p["id"], promotion_id=redemption["promotion_id"], customer_id=redemption["customer_id"], payment_id=None,
+                                       gross_cents=0, fee_cents=0, net_cents=0, share_pct=0, share_cents=BOUNTY_CENTS, fee_source="none",
+                                       kind="bounty", note="Signup bounty" + (" (reinstated)" if reinstated and not in_window else ""))
+    if payout_id is not None:
+        db.set_bounty_payout(redemption["id"], payout_id)
+        db.add_event(customer_id=redemption["customer_id"], subscription_id=None, kind="promo_bounty", detail=f"$15.00 signup bounty to {p['name']} for code {redemption['code']}.")
+    return payout_id
+
+
+def recheck_reinstatement(promoter_id: Optional[int]) -> bool:
+    """R7: at 25 active referrals the bounty comes back, permanently."""
+    if not promoter_id:
+        return False
+    p = db.get_promoter(promoter_id)
+    if p is None or p["bounty_reinstated_at"]:
+        return False
+    if db.count_active_referrals(promoter_id) < REINSTATE_AT:
+        return False
+    if not db.set_bounty_reinstated(promoter_id, _iso(_now())):
+        return False
+    from . import email_sender
+    if p["email"]:
+        try:
+            email_sender.send_partner_reinstated_email(to_email=p["email"], partner_name=p["name"])
+        except email_sender.EmailSendError as e:
+            log.error("Reinstatement email to %s failed: %s", p["email"], e)
+    return True
+
+
+def reverse_for_refund(*, stripe_invoice_id: Optional[str], refunded_cents: int, at: datetime, reason: str, event_ref: str) -> list[int]:
+    """R6: a refund or chargeback reverses the recurring share in
+    proportion, and the bounty too when it lands within 60 days of the
+    customer's first payment. New rows, negative amounts; the originals
+    are never touched (R11). Returns the reversal row ids."""
+    if not stripe_invoice_id:
+        return []
+    payment = db.get_payment_by_invoice(stripe_invoice_id)
+    if payment is None:
+        return []
+    out = []
+    for row in db.promo_payouts_for_payment(payment["id"]):
+        if row["kind"] != "recurring" or row["gross_cents"] <= 0:
+            continue
+        portion = min(refunded_cents, row["gross_cents"]) / row["gross_cents"]
+        already = db.reversed_cents_for(row["id"])
+        amount = min(round(row["share_cents"] * portion), max(0, row["share_cents"] - already))
+        if amount <= 0:
+            continue
+        rid = db.record_promo_payout(promoter_id=row["promoter_id"], promotion_id=row["promotion_id"], customer_id=row["customer_id"], payment_id=None,
+                                     gross_cents=0, fee_cents=0, net_cents=0, share_pct=row["share_pct"], share_cents=-amount, fee_source="none",
+                                     kind="reversal", reverses_payout_id=row["id"], note=f"{reason} {event_ref}".strip())
+        if rid is not None:
+            out.append(rid)
+        if row["customer_id"] is not None:
+            out += reverse_bounty_if_early(row["customer_id"], at=at, reason=reason, event_ref=event_ref)
+    return out
+
+
+def reverse_bounty_if_early(customer_id: int, *, at: datetime, reason: str, event_ref: str) -> list[int]:
+    """The bounty comes back if the customer cancels, refunds or disputes
+    within 60 days of first payment (R6)."""
+    red = db.redemption_for_customer(customer_id)
+    if red is None or red["bounty_payout_id"] is None or not red["first_payment_at"]:
+        return []
+    first = datetime.fromisoformat(red["first_payment_at"].replace("Z", "+00:00"))
+    if at > first + timedelta(days=CLAWBACK_DAYS):
+        return []
+    bounty = db.get_promo_payout(red["bounty_payout_id"])
+    if bounty is None or db.reversed_cents_for(bounty["id"]) >= bounty["share_cents"]:
+        return []
+    rid = db.record_promo_payout(promoter_id=bounty["promoter_id"], promotion_id=bounty["promotion_id"], customer_id=customer_id, payment_id=None,
+                                 gross_cents=0, fee_cents=0, net_cents=0, share_pct=0, share_cents=-bounty["share_cents"], fee_source="none",
+                                 kind="reversal", reverses_payout_id=bounty["id"], note=f"Bounty clawback: {reason}")
+    return [rid] if rid is not None else []
+
+
+def on_subscription_ended(customer_id: int, *, at: datetime, stripe_event_id: str = "") -> None:
+    """customer.subscription.deleted: an early cancellation claws the
+    bounty back; the promoter's active count is re-checked either way.
+    first_payment_at and term_ends_at are never touched (R4)."""
+    reverse_bounty_if_early(customer_id, at=at, reason="cancelled", event_ref=stripe_event_id)
+    red = db.redemption_for_customer(customer_id)
+    if red is not None:
+        recheck_reinstatement(red["promoter_id"])
 
 
 def _invoice_paid_at(invoice: Optional[dict]) -> datetime:

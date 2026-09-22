@@ -162,6 +162,12 @@ def send_comp_email(*, to_email: str, customer_name: str, until: str, note: str 
     e.send_system("comp_granted", to_email=to_email, customer_id=cid, vars=e.variables({"name": customer_name, "email": to_email, "id": cid or 0}, until=until, note=(chr(10) + note + chr(10)) if note else ""))
 
 
+def send_partner_reinstated_email(*, to_email: str, partner_name: str) -> None:
+    """R7: the signup bounty is back for good."""
+    e = _emails()
+    e.send_system("partner_reinstated", to_email=to_email, customer_id=None, vars=e.variables({"name": partner_name, "email": to_email, "id": 0}))
+
+
 def send_feedback_received_email(*, to_email: str, customer_name: str) -> None:
     e = _emails()
     cid = _customer_id(to_email)

@@ -65,6 +65,16 @@ To keep sending, add PiperStitch Proofs for {proofs_price} a month on the same a
 
 If Proofs hasn't earned it yet, I'd like to know why — reply and tell me.""",
          cta_label="Add PiperStitch Proofs", cta_url="{proofs_url}", preheader="Your included proofs are used up — add Proofs to keep sending.", placeholders=COMMON_PLACEHOLDERS + ", free_proofs, proofs_price, proofs_url"),
+    dict(key="partner_reinstated", name="Partner: bounty reinstated", description="Sent automatically when a partner reaches 25 active referrals and the $15 signup bounty is restored permanently.",
+         subject="You're an Established Partner — the $15 signup bounty is back",
+         body="""Hi {first_name},
+
+Twenty-five people you referred are active PiperStitch subscribers. Thank you.
+
+That makes you an Established Partner: from now on, every new customer who subscribes through your link or code earns you the $15 signup bounty again, on top of your recurring commission — permanently, whatever the count does from here.
+
+Your portal has the details and your creative kit.""",
+         cta_label="Open the partner portal", cta_url="{site_url}/partners/portal", preheader="25 active referrals — the signup bounty is restored for good.", placeholders=COMMON_PLACEHOLDERS),
     dict(key="sign_in_code", name="Sign-in code", description="The six-digit code, sent every time someone signs in. Keep {code} in it.",
          subject="{code} is your PiperStitch sign-in code",
          body="""Your PiperStitch sign-in code:

@@ -1513,16 +1513,67 @@ def redemption_for_customer(customer_id: int) -> Optional[sqlite3.Row]:
 
 
 def record_promo_payout(*, promoter_id: int, promotion_id: int, customer_id: Optional[int], payment_id: Optional[int], gross_cents: int, fee_cents: int,
-                        net_cents: int, share_pct: float, share_cents: int, fee_source: str) -> Optional[int]:
+                        net_cents: int, share_pct: float, share_cents: int, fee_source: str, kind: str = "recurring",
+                        reverses_payout_id: Optional[int] = None, note: str = "") -> Optional[int]:
+    """One ledger row. Append-only (R11): a reversal is a new row with a
+    negative share_cents pointing at the original. One *recurring* row per
+    payment; one reversal per (original, note) so a replayed refund event
+    can't reverse twice."""
     with connection() as conn:
-        if payment_id is not None and conn.execute("SELECT 1 FROM promo_payouts WHERE payment_id = ?", (payment_id,)).fetchone():
+        if kind == "recurring" and payment_id is not None and conn.execute("SELECT 1 FROM promo_payouts WHERE payment_id = ? AND kind = 'recurring'", (payment_id,)).fetchone():
+            return None
+        if kind == "reversal" and reverses_payout_id is not None and conn.execute(
+                "SELECT 1 FROM promo_payouts WHERE reverses_payout_id = ? AND note = ?", (reverses_payout_id, note)).fetchone():
             return None
         cur = conn.execute(
-            "INSERT INTO promo_payouts (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, fee_source, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, fee_source, _now()),
+            "INSERT INTO promo_payouts (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, fee_source, kind, reverses_payout_id, note, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (promoter_id, promotion_id, customer_id, payment_id, gross_cents, fee_cents, net_cents, share_pct, share_cents, fee_source, kind, reverses_payout_id, note.strip(), _now()),
         )
         return cur.lastrowid
+
+
+def get_promo_payout(payout_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promo_payouts WHERE id = ?", (payout_id,)).fetchone()
+
+
+def promo_payouts_for_payment(payment_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM promo_payouts WHERE payment_id = ? ORDER BY id", (payment_id,)).fetchall()
+
+
+def reversed_cents_for(payout_id: int) -> int:
+    """How much of a row has already been reversed (a positive number)."""
+    with connection() as conn:
+        return -(conn.execute("SELECT COALESCE(SUM(share_cents), 0) FROM promo_payouts WHERE reverses_payout_id = ?", (payout_id,)).fetchone()[0])
+
+
+def set_bounty_payout(redemption_id: int, payout_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE promo_redemptions SET bounty_payout_id = ? WHERE id = ? AND bounty_payout_id IS NULL", (payout_id, redemption_id))
+
+
+def count_active_referrals(promoter_id: int) -> int:
+    """R7's 'active': referred customers who have paid at least once and
+    hold an active or trialing subscription right now."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT COUNT(DISTINCT r.customer_id) FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id "
+            "WHERE promotions.promoter_id = ? AND r.first_payment_at IS NOT NULL AND EXISTS ("
+            "  SELECT 1 FROM subscriptions s WHERE s.customer_id = r.customer_id AND s.status IN ('active','trialing','past_due'))",
+            (promoter_id,)).fetchone()[0]
+
+
+def set_bounty_reinstated(promoter_id: int, at: str) -> bool:
+    with connection() as conn:
+        cur = conn.execute("UPDATE promoters SET bounty_reinstated_at = ?, updated_at = ? WHERE id = ? AND bounty_reinstated_at IS NULL", (at, _now(), promoter_id))
+        return cur.rowcount > 0
+
+
+def get_payment_by_invoice(stripe_invoice_id: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM payments WHERE stripe_invoice_id = ?", (stripe_invoice_id,)).fetchone()
 
 
 def list_promo_payouts_for_promoter(promoter_id: int) -> list[sqlite3.Row]:
@@ -1558,19 +1609,34 @@ def list_promoter_payments(promoter_id: int) -> list[sqlite3.Row]:
         return conn.execute("SELECT * FROM promoter_payments WHERE promoter_id = ? ORDER BY paid_at DESC, id DESC", (promoter_id,)).fetchall()
 
 
-def promoter_totals(promoter_id: int) -> dict:
-    """The promoter's ledger in one row: what their codes brought in, what
-    they earned, what they've been paid, what's owed."""
+CLAWBACK_DAYS = 60
+
+
+def promoter_totals(promoter_id: int, *, now: Optional[str] = None) -> dict:
+    """The promoter's ledger in one row. Every SUM here is signed --
+    reversal rows carry a negative share_cents -- so earned is the net of
+    the whole ledger, and owed is earned minus paid. A row becomes
+    *payable* 60 days after it was booked (the clawback window, §6.6);
+    reversals count at once. Computed on read, no scheduler."""
+    cutoff = ((datetime.fromisoformat((now or _now()).rstrip("Z")) - timedelta(days=CLAWBACK_DAYS)).isoformat(timespec="seconds") + "Z")
     with connection() as conn:
-        p = conn.execute("SELECT COUNT(*) AS payouts, COALESCE(SUM(gross_cents), 0) AS gross, COALESCE(SUM(net_cents), 0) AS net, COALESCE(SUM(share_cents), 0) AS earned FROM promo_payouts WHERE promoter_id = ?", (promoter_id,)).fetchone()
+        p = conn.execute(
+            "SELECT SUM(CASE WHEN kind = 'recurring' THEN 1 ELSE 0 END) AS payouts, "
+            "COALESCE(SUM(CASE WHEN kind = 'recurring' THEN gross_cents ELSE 0 END), 0) AS gross, COALESCE(SUM(CASE WHEN kind = 'recurring' THEN net_cents ELSE 0 END), 0) AS net, "
+            "COALESCE(SUM(share_cents), 0) AS earned, "
+            "COALESCE(SUM(CASE WHEN kind = 'reversal' THEN share_cents ELSE 0 END), 0) AS reversed, "
+            "COALESCE(SUM(CASE WHEN kind = 'bounty' THEN share_cents ELSE 0 END), 0) AS bounties, "
+            "COALESCE(SUM(CASE WHEN kind = 'reversal' OR created_at <= ? THEN share_cents ELSE 0 END), 0) AS matured "
+            "FROM promo_payouts WHERE promoter_id = ?", (cutoff, promoter_id)).fetchone()
         paid = conn.execute("SELECT COALESCE(SUM(amount_cents), 0) FROM promoter_payments WHERE promoter_id = ?", (promoter_id,)).fetchone()[0]
         referred = conn.execute("SELECT COUNT(DISTINCT r.customer_id) FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id WHERE promotions.promoter_id = ?", (promoter_id,)).fetchone()[0]
-        active = conn.execute(
-            "SELECT COUNT(DISTINCT r.customer_id) FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id JOIN subscriptions s ON s.id = r.subscription_id "
-            "WHERE promotions.promoter_id = ? AND s.status IN ('active','trialing','past_due')", (promoter_id,)).fetchone()[0]
         codes = conn.execute("SELECT COUNT(*) FROM promotions WHERE promoter_id = ?", (promoter_id,)).fetchone()[0]
-    return {"referred": referred, "active": active, "codes": codes, "payouts": p["payouts"], "gross_cents": p["gross"], "net_cents": p["net"],
-            "earned_cents": p["earned"], "paid_cents": paid, "owed_cents": p["earned"] - paid}
+    active = count_active_referrals(promoter_id)
+    earned = p["earned"]; owed = earned - paid
+    payable = max(0, min(owed, p["matured"] - paid))
+    return {"referred": referred, "active": active, "codes": codes, "payouts": p["payouts"] or 0, "gross_cents": p["gross"], "net_cents": p["net"],
+            "earned_cents": earned, "reversed_cents": -p["reversed"], "bounty_cents": p["bounties"], "paid_cents": paid, "owed_cents": owed,
+            "payable_cents": payable, "held_cents": max(0, owed - payable)}
 
 
 def promotions_overview() -> dict:

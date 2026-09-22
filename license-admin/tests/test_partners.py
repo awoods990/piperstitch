@@ -174,3 +174,151 @@ def test_commission_runs_24_months_from_first_payment_and_does_not_restart(isola
     # Changing a promoter's default rate never touches an existing code's share (test 14).
     db.update_promoter(pid, name="Kathleen", email="kathleen@example.com", organization="", default_share_pct=10, notes="", active=True)
     assert db.get_promotion(promo_id)["share_pct"] == 30
+
+
+def _referred(promo_id, n, *, email_domain="ref.example"):
+    """n referred customers, each with an active subscription that has paid once (long ago, so the rows are payable)."""
+    out = []
+    for i in range(n):
+        cid = db.upsert_customer(name=f"R{i}", email=f"r{i}@{email_domain}")
+        sub = stripe_subscription(sub_id=f"sub_{email_domain}_{i}", customer=f"cus_{email_domain}_{i}", customer_id=cid, email=f"r{i}@{email_domain}", amount=2400)
+        sub["metadata"]["promotion_id"] = str(promo_id)
+        subscriptions.sync_from_stripe(sub)
+        subscriptions.record_invoice(_invoice(sub["id"], f"in_{email_domain}_{i}", datetime(2026, 1, 15, tzinfo=timezone.utc), customer=sub["customer"]), paid=True)
+        out.append((cid, sub))
+    return out
+
+
+def _window(pid, start, end):
+    with db.connection() as conn:
+        conn.execute("UPDATE promoters SET bounty_window_start = ?, bounty_window_end = ? WHERE id = ?", (start, end, pid))
+
+
+def test_bounty_fires_once_per_customer_on_first_payment_inside_the_window(isolated_db, test_keypair, fake_smtp):
+    pid, promo_id = partner()
+    _window(pid, "2026-01-01", "2026-04-30")     # 120 days from 1 Jan
+    cid = db.upsert_customer(name="B", email="b@example.com")
+    sub = stripe_subscription(sub_id="sub_b", customer="cus_b", customer_id=cid, email="b@example.com", amount=2400)
+    sub["metadata"]["promotion_id"] = str(promo_id)
+    subscriptions.sync_from_stripe(sub)
+    # Trial started in the window; first payment on day 119 -> awarded (tests 15/16).
+    subscriptions.record_invoice(_invoice("sub_b", "in_b1", datetime(2026, 4, 29, 12, tzinfo=timezone.utc), customer="cus_b"), paid=True)
+    t = db.promoter_totals(pid)
+    assert t["bounty_cents"] == 1500 and t["earned_cents"] == 720 + 1500
+    assert db.redemption_for_customer(cid)["bounty_payout_id"] is not None
+    # A second invoice from the same customer: no second bounty (test 17).
+    subscriptions.record_invoice(_invoice("sub_b", "in_b2", datetime(2026, 5, 29, 12, tzinfo=timezone.utc), customer="cus_b"), paid=True)
+    assert db.promoter_totals(pid)["bounty_cents"] == 1500
+    # Another customer whose first payment lands on day 121 -> no bounty (test 15).
+    cid2 = db.upsert_customer(name="C", email="c@example.com")
+    sub2 = stripe_subscription(sub_id="sub_c", customer="cus_c", customer_id=cid2, email="c@example.com", amount=2400)
+    sub2["metadata"]["promotion_id"] = str(promo_id)
+    subscriptions.sync_from_stripe(sub2)
+    subscriptions.record_invoice(_invoice("sub_c", "in_c1", datetime(2026, 5, 1, 12, tzinfo=timezone.utc), customer="cus_c"), paid=True)
+    assert db.promoter_totals(pid)["bounty_cents"] == 1500
+    # Two customers in the window -> two bounties.
+    cid3 = db.upsert_customer(name="D", email="d@example.com")
+    sub3 = stripe_subscription(sub_id="sub_d", customer="cus_d", customer_id=cid3, email="d@example.com", amount=2400)
+    sub3["metadata"]["promotion_id"] = str(promo_id)
+    subscriptions.sync_from_stripe(sub3)
+    subscriptions.record_invoice(_invoice("sub_d", "in_d1", datetime(2026, 2, 1, 12, tzinfo=timezone.utc), customer="cus_d"), paid=True)
+    assert db.promoter_totals(pid)["bounty_cents"] == 3000
+
+
+def test_reinstatement_at_25_active_is_permanent_and_shows_as_established(isolated_db, test_keypair, fake_smtp):
+    pid, promo_id = partner()
+    _window(pid, "2025-01-01", "2025-04-30")     # window long closed
+    referred = _referred(promo_id, 24)
+    assert db.get_promoter(pid)["bounty_reinstated_at"] is None and db.promoter_totals(pid)["bounty_cents"] == 0
+    fake_smtp.sent.clear()
+    _referred(promo_id, 1, email_domain="last.example")
+    p = db.get_promoter(pid)
+    assert p["bounty_reinstated_at"] and p["tier"] == "founding"                      # test 18/19a: derived, not stored
+    assert any("Established Partner" in (m["Subject"] or "") for m in fake_smtp.sent)
+    assert db.get_promotion(promo_id)["share_pct"] == 30
+    # The next conversion earns the bounty although the window is closed (test 18).
+    cid = db.upsert_customer(name="N", email="n@example.com")
+    sub = stripe_subscription(sub_id="sub_n", customer="cus_n", customer_id=cid, email="n@example.com", amount=2400)
+    sub["metadata"]["promotion_id"] = str(promo_id)
+    subscriptions.sync_from_stripe(sub)
+    subscriptions.record_invoice(_invoice("sub_n", "in_n", datetime.now(timezone.utc) + timedelta(days=1), customer="cus_n"), paid=True)
+    assert db.promoter_totals(pid)["bounty_cents"] == 1500
+    # Active count falls to 23 -> the flag persists (test 19).
+    for cid_, sub_ in referred[:3]:
+        subscriptions.sync_from_stripe(dict(sub_, status="canceled", ended_at=int(datetime(2026, 7, 1, tzinfo=timezone.utc).timestamp())))
+    assert db.count_active_referrals(pid) == 23 and db.get_promoter(pid)["bounty_reinstated_at"]
+
+
+def test_refunds_and_early_cancellation_reverse_without_touching_the_original_rows(isolated_db, test_keypair, fake_smtp):
+    pid, promo_id = partner()
+    _window(pid, "2026-01-01", "2026-04-30")
+    def convert(tag, first: datetime):
+        cid = db.upsert_customer(name=tag, email=f"{tag}@example.com")
+        sub = stripe_subscription(sub_id=f"sub_{tag}", customer=f"cus_{tag}", customer_id=cid, email=f"{tag}@example.com", amount=2400)
+        sub["metadata"]["promotion_id"] = str(promo_id)
+        subscriptions.sync_from_stripe(sub)
+        subscriptions.record_invoice(_invoice(f"sub_{tag}", f"in_{tag}", first, customer=f"cus_{tag}"), paid=True)
+        return cid, sub
+    first = datetime(2026, 2, 1, 12, tzinfo=timezone.utc)
+    # Full refund on day 45: recurring reversed in full AND the bounty (test 20).
+    cid_a, _ = convert("a", first)
+    subscriptions.record_refund({"id": "ch_a", "invoice": "in_a", "amount": 2400, "amount_refunded": 2400, "created": int((first + timedelta(days=45)).timestamp())}, stripe_event_id="evt_ra")
+    rows = db.list_promo_payouts_for_customer(cid_a)
+    kinds = sorted((r["kind"], r["share_cents"]) for r in rows)
+    assert kinds == [("bounty", 1500), ("recurring", 720), ("reversal", -1500), ("reversal", -720)]
+    assert all(r["share_cents"] > 0 for r in rows if r["kind"] != "reversal")          # originals untouched (test 24)
+    assert all(r["reverses_payout_id"] for r in rows if r["kind"] == "reversal")
+    # Replaying the refund event reverses nothing more (test 30's shape).
+    subscriptions.record_refund({"id": "ch_a", "invoice": "in_a", "amount": 2400, "amount_refunded": 2400, "created": int((first + timedelta(days=45)).timestamp())}, stripe_event_id="evt_ra")
+    assert len(db.list_promo_payouts_for_customer(cid_a)) == 4
+    # Full refund on day 75: recurring reversed, bounty retained (test 21).
+    cid_b, _ = convert("b", first)
+    subscriptions.record_refund({"id": "ch_b", "invoice": "in_b", "amount": 2400, "amount_refunded": 2400, "created": int((first + timedelta(days=75)).timestamp())}, stripe_event_id="evt_rb")
+    assert sorted((r["kind"], r["share_cents"]) for r in db.list_promo_payouts_for_customer(cid_b)) == [("bounty", 1500), ("recurring", 720), ("reversal", -720)]
+    # 50% partial refund -> half the share back (test 22); a chargeback is the same as a refund (test 23).
+    cid_c, _ = convert("c", first)
+    subscriptions.record_refund({"id": "ch_c", "invoice": "in_c", "amount": 2400, "amount_refunded": 1200, "created": int((first + timedelta(days=80)).timestamp())}, stripe_event_id="evt_rc")
+    assert [r["share_cents"] for r in db.list_promo_payouts_for_customer(cid_c) if r["kind"] == "reversal"] == [-360]
+    cid_d, _ = convert("d", first)
+    subscriptions.record_refund({"id": "ch_d", "invoice": "in_d", "amount": 2400, "created": int((first + timedelta(days=10)).timestamp())}, stripe_event_id="evt_dd", dispute=True)
+    assert sorted((r["kind"], r["share_cents"]) for r in db.list_promo_payouts_for_customer(cid_d)) == [("bounty", 1500), ("recurring", 720), ("reversal", -1500), ("reversal", -720)]
+    # Early cancellation (day 30): the bounty is clawed back; the clock is untouched (R4).
+    cid_e, sub_e = convert("e", first)
+    subscriptions.sync_from_stripe(dict(sub_e, status="canceled", ended_at=int((first + timedelta(days=30)).timestamp())))
+    red = db.redemption_for_customer(cid_e)
+    assert red["first_payment_at"] == "2026-02-01T12:00:00Z" and red["term_ends_at"] == "2028-02-01T12:00:00Z"
+    assert sorted((r["kind"], r["share_cents"]) for r in db.list_promo_payouts_for_customer(cid_e)) == [("bounty", 1500), ("recurring", 720), ("reversal", -1500)]
+    # The ledger nets correctly (test 24): 5 × (720 + 1500) − (1500+720) − 720 − 360 − (1500+720) − 1500
+    t = db.promoter_totals(pid)
+    assert t["earned_cents"] == 5 * 2220 - 2220 - 720 - 360 - 2220 - 1500 and t["reversed_cents"] == 2220 + 720 + 360 + 2220 + 1500
+    assert t["owed_cents"] == t["earned_cents"] and t["payable_cents"] + t["held_cents"] == t["owed_cents"]
+
+
+def test_payable_waits_60_days_and_the_same_invoice_event_pays_once(isolated_db, test_keypair, fake_smtp):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import app.main as main_mod
+    pid, promo_id = partner()
+    cid = db.upsert_customer(name="P", email="p@example.com")
+    sub = stripe_subscription(sub_id="sub_p", customer="cus_p", customer_id=cid, email="p@example.com", amount=2400)
+    sub["metadata"]["promotion_id"] = str(promo_id)
+    subscriptions.sync_from_stripe(sub)
+    invoice = _invoice("sub_p", "in_p", datetime.now(timezone.utc), customer="cus_p")
+    # The webhook, the same event three times (test 30): one payout row.
+    event = {"id": "evt_p1", "type": "invoice.paid", "data": {"object": invoice}}
+    main_mod.stripe_client.construct_webhook_event = lambda payload, sig: event
+    client = TestClient(app)
+    for _ in range(3):
+        assert client.post("/webhooks/stripe", content=b"{}", headers={"stripe-signature": "t"}).status_code == 200
+    assert db.promoter_totals(pid)["payouts"] == 1
+    # Booked today -> owed but held; after the clawback window -> payable (test 32's split).
+    t = db.promoter_totals(pid)
+    assert t["owed_cents"] == 720 and t["held_cents"] == 720 and t["payable_cents"] == 0
+    later = (datetime.now(timezone.utc) + timedelta(days=61)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    t = db.promoter_totals(pid, now=later)
+    assert t["payable_cents"] == 720 and t["held_cents"] == 0
+    # An invalid signature: 400, nothing written (test 31).
+    import stripe as stripe_lib
+    def bad(payload, sig): raise stripe_lib.error.SignatureVerificationError("bad", sig)
+    main_mod.stripe_client.construct_webhook_event = bad
+    assert client.post("/webhooks/stripe", content=b"{}", headers={"stripe-signature": "x"}).status_code == 400

@@ -14,8 +14,8 @@
     <div class="kpi-grid">
       <div class="kpi-tile"><div class="kpi-value">{{ totals.referred }}</div><div class="kpi-label">Customers referred</div><div class="kpi-sub">{{ totals.active }} currently subscribed</div></div>
       <div class="kpi-tile"><div class="kpi-value">{{ totals.gross_cents|money }}</div><div class="kpi-label">Revenue from their customers</div><div class="kpi-sub">{{ totals.net_cents|money }} net of Stripe fees</div></div>
-      <div class="kpi-tile"><div class="kpi-value">{{ totals.earned_cents|money }}</div><div class="kpi-label">Share earned</div><div class="kpi-sub">across {{ totals.payouts }} payment{{ '' if totals.payouts == 1 else 's' }}</div></div>
-      <div class="kpi-tile"><div class="kpi-value">{{ totals.owed_cents|money }}</div><div class="kpi-label">Owed now</div><div class="kpi-sub">{{ totals.paid_cents|money }} paid out</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.earned_cents|money }}</div><div class="kpi-label">Earned (net of reversals)</div><div class="kpi-sub">{{ totals.payouts }} payment{{ '' if totals.payouts == 1 else 's' }}{% if totals.bounty_cents %} &middot; {{ totals.bounty_cents|money }} bounties{% endif %}{% if totals.reversed_cents %} &middot; {{ totals.reversed_cents|money }} reversed{% endif %}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ totals.payable_cents|money }}</div><div class="kpi-label">Payable now</div><div class="kpi-sub">{{ totals.held_cents|money }} held (under 60 days) &middot; {{ totals.paid_cents|money }} paid out &middot; {{ totals.owed_cents|money }} owed in all</div></div>
     </div>
   </div>
 
@@ -66,7 +66,7 @@
         <table>
           <tr><th>When</th><th>Customer</th><th>Paid</th><th>Fee</th><th>Net</th><th>Share</th></tr>
           {% for p in payouts %}
-          <tr><td class="muted">{{ p.created_at|short_date }}</td><td><a href="/admin/customers/{{ p.customer_id }}">{{ p.customer_name or p.customer_email }}</a></td><td>{{ p.gross_cents|money }}</td><td class="muted">{{ p.fee_cents|money }}{% if p.fee_source == 'estimate' %}<span title="Stripe's exact fee wasn't available; estimated at the standard card rate">*</span>{% endif %}</td><td>{{ p.net_cents|money }}</td><td><strong>{{ p.share_cents|money }}</strong> <span class="muted small">({{ p.share_pct|round(1) }}%)</span></td></tr>
+          <tr><td class="muted">{{ p.created_at|short_date }}</td><td><a href="/admin/customers/{{ p.customer_id }}">{{ p.customer_name or p.customer_email }}</a>{% if p.kind != 'recurring' %} <span class="pill {{ 'ended' if p.kind == 'reversal' else 'comp' }}">{{ p.kind }}</span>{% endif %}{% if p.note %} <span class="muted small">{{ p.note }}</span>{% endif %}</td><td>{% if p.kind == 'recurring' %}{{ p.gross_cents|money }}{% else %}&mdash;{% endif %}</td><td class="muted">{% if p.kind == 'recurring' %}{{ p.fee_cents|money }}{% if p.fee_source == 'estimate' %}<span title="Stripe's exact fee wasn't available; estimated at the standard card rate">*</span>{% endif %}{% endif %}</td><td>{% if p.kind == 'recurring' %}{{ p.net_cents|money }}{% endif %}</td><td><strong{% if p.share_cents < 0 %} style="color:#a3312a"{% endif %}>{{ p.share_cents|money }}</strong>{% if p.kind == 'recurring' %} <span class="muted small">({{ p.share_pct|round(1) }}%)</span>{% endif %}</td></tr>
           {% else %}<tr><td colspan="6" class="muted">Nothing earned yet.</td></tr>{% endfor %}
         </table>
         <h3>Payments to {{ promoter.name }}</h3>

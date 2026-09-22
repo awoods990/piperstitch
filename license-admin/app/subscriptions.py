@@ -200,6 +200,10 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
                 db.add_event(customer_id=customer_id, subscription_id=subscription_id, kind="ended", detail="Access ended.", stripe_event_id=stripe_event_id)
                 if product == "core":
                     emails.skip_pending(customer_id, "subscriber", "subscription ended")
+                ended_at = db.iso_from_timestamp(sub.get("ended_at") or sub.get("canceled_at"))
+                promotions.on_subscription_ended(customer_id, at=_aware(ended_at) or _utcnow(), stripe_event_id=stripe_event_id or "")
+            else:
+                promotions.recheck_reinstatement((db.redemption_for_customer(customer_id) or {"promoter_id": None})["promoter_id"])
                 _try_sequences(emails.place_in_proofs_sequence, customer_id)
         now_cancelling = bool(sub.get("cancel_at_period_end"))
         if now_cancelling != bool(previous["cancel_at_period_end"]):
@@ -217,6 +221,16 @@ def sync_from_stripe(sub: dict, *, stripe_event_id: Optional[str] = None, email_
                     emails.skip_pending(customer_id, "cancelled", "cancellation reversed")
 
     return SyncResult(subscription_id=subscription_id, customer_id=customer_id, created=previous is None, kinds=tuple(kinds))
+
+
+def record_refund(charge: dict, *, stripe_event_id: Optional[str] = None, dispute: bool = False) -> list[int]:
+    """charge.refunded / charge.dispute.created: reverse the promoter's
+    share for the refunded portion of that charge's invoice (R6)."""
+    invoice_id = charge.get("invoice") if isinstance(charge.get("invoice"), str) else (charge.get("invoice") or {}).get("id")
+    amount = int(charge.get("amount_refunded") or charge.get("amount") or 0) if not dispute else int(charge.get("amount") or 0)
+    when = db.iso_from_timestamp(charge.get("created"))
+    return promotions.reverse_for_refund(stripe_invoice_id=invoice_id, refunded_cents=amount, at=_aware(when) or _utcnow(),
+                                         reason="chargeback" if dispute else "refund", event_ref=stripe_event_id or "")
 
 
 def record_invoice(invoice: dict, *, paid: bool, stripe_event_id: Optional[str] = None) -> None:

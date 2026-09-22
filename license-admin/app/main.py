@@ -873,6 +873,17 @@ async def stripe_webhook(request: Request):
             subscriptions.record_invoice(dict(obj), paid=True, stripe_event_id=event["id"])
         elif kind == "invoice.payment_failed":
             subscriptions.record_invoice(dict(obj), paid=False, stripe_event_id=event["id"])
+        elif kind == "charge.refunded":
+            subscriptions.record_refund(dict(obj), stripe_event_id=event["id"])
+        elif kind == "charge.dispute.created":
+            charge = obj.get("charge")
+            charge_obj = dict(charge) if isinstance(charge, dict) else {"id": charge, "invoice": None, "amount": obj.get("amount"), "created": obj.get("created")}
+            if not charge_obj.get("invoice") and charge_obj.get("id"):
+                try:
+                    charge_obj = dict(stripe.Charge.retrieve(charge_obj["id"]))
+                except stripe.error.StripeError as e:
+                    log.error("Dispute %s: could not fetch charge %s: %s", event["id"], charge_obj["id"], e)
+            subscriptions.record_refund(charge_obj, stripe_event_id=event["id"], dispute=True)
     except ValueError as e:
         # A subscription we can't tie to any customer — log loudly, but
         # ack so Stripe doesn't retry forever; the admin's "Sync from
