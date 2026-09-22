@@ -912,6 +912,11 @@ def test_recruitment_runs_itself_from_a_pasted_list_and_tracks_everything(isolat
     assert {m["To"] for m in fake_smtp.sent} == {"kathleen@example.com", "dev@example.com"}
     first = [m for m in fake_smtp.sent if m["To"] == "kathleen@example.com"][0]
     assert "Kathleen" in first["Subject"] and "/partners/program?k=" in _body(first) and "/partners/no-thanks?k=" in _body(first)
+    # Cold mail: who we are and where we are, in both parts (CAN-SPAM).
+    html = first.get_body(preferencelist=("html",)).get_content()
+    for part in (_body(first), html):
+        assert config.LEGAL_NAME in part and config.POSTAL_ADDRESS in part and config.REPLY_TO_EMAIL in part
+    assert "/partners/no-thanks?k=" in html
     kath = db.get_partner_prospect_by_email("kathleen@example.com")
     assert kath["source"] == "recruit" and kath["outreach_status"] == "active" and kath["outreach_step"] == 1 and kath["note"] == "Speaks at the guild"
     assert db.list_outreach_log(kath["id"])[0]["status"] == "sent"

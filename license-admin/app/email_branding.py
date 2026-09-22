@@ -121,6 +121,10 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
       PiperStitch turns any image into a machine-ready embroidery file, right in your browser.<br>
       <a href="{config.WEBSITE_BASE_URL}" style="color:{BLUE};text-decoration:none;">{config.WEBSITE_BASE_URL.replace('https://', '')}</a>
     </p>
+    <p style="margin:12px 0 0 0;color:{MUTED};font-size:12px;line-height:18px;font-family:{FONT};">
+      {html.escape(config.LEGAL_NAME)}, {html.escape(config.POSTAL_ADDRESS)}<br>
+      <a href="mailto:{config.REPLY_TO_EMAIL}" style="color:{BLUE};text-decoration:none;">{config.REPLY_TO_EMAIL}</a>
+    </p>
   </td></tr>
 </table>
 

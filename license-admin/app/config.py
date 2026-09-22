@@ -101,6 +101,11 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "PiperStitch <hello@piperstitch.com>")
 # should go there instead. Left empty, no Reply-To header is set and mail
 # clients reply to SMTP_FROM (hello@) instead, which bounces.
 REPLY_TO_EMAIL = os.environ.get("REPLY_TO_EMAIL", "contact@piperstitch.com")
+# Who we are, in the footer of every email we send. A physical postal
+# address is required on commercial email (CAN-SPAM §7704(a)(5)) and the
+# recruitment sequence is exactly that; it does no harm on the rest.
+LEGAL_NAME = os.environ.get("LEGAL_NAME", "Piperstitch LLC")
+POSTAL_ADDRESS = os.environ.get("POSTAL_ADDRESS", "1680 Fruitville Road, Sarasota, Florida 34236")
 
 # Optional: route ALL outgoing email through Postmark's HTTP API instead
 # of SMTP — the same service Amerus uses for its sequence mail. Dormant

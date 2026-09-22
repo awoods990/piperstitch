@@ -840,6 +840,8 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
     if marketing and vars.get("unsubscribe_url"):
         footer_note = footer_note or f"You're getting this because you have a PiperStitch account. Unsubscribe from tips: {vars['unsubscribe_url']}"
         body = body.rstrip() + f"\n\n—\nDon't want these tips? Unsubscribe: {vars['unsubscribe_url']}"
+    # Who sent it, in the plain-text part as well as the HTML one.
+    body = body.rstrip() + f"\n\n{config.LEGAL_NAME}, {config.POSTAL_ADDRESS}\n{config.REPLY_TO_EMAIL}"
     html = email_branding.render(body_text=body, cta_label=cta_label, cta_url=cta_url, preheader=preheader, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt)
     return subject, body, html
 
