@@ -1542,8 +1542,21 @@ def admin_email_test(key: str, to_email: str = Form(...)):
     sample = {"id": 0, "name": "Jane Example", "email": to_email, "marketing_opt_out": 0}
     extra = {"code": "123456", "code_minutes": config.ACTIVATION_CODE_TTL_MINUTES, "device": "", "link_line": "", "url": f"{config.PUBLIC_BASE_URL}/account", "link_minutes": config.ACCOUNT_LINK_TTL_MINUTES,
              "grace_days": config.ENTITLEMENT_GRACE_DAYS, "ends_on": "2026-12-31", "until": "2026-12-31", "note": "", "sender_name": "Jane Example", "sender_email": to_email, "filename": "logo.dst", "note_block": ""}
+    hero, hero_alt = "", ""
+    if key.startswith("partner_"):
+        # The partner emails have placeholders of their own; a test that
+        # shows "{code}" tells you nothing about how the real one reads.
+        extra.update({"code": "JANE", "link": partners.link_url("JANE"), "portal_link": f"{config.PUBLIC_BASE_URL}/partners/portal",
+                      "tier": "Founding partner", "share_pct": f"{partners.FOUNDING_SHARE:g}", "amount": "$186.40", "paid_at": date.today().isoformat(),
+                      "method": "PayPal", "payout_email": to_email, "title": "Digitizing a cap logo, start to finish",
+                      "description_line": "\n\nTwo minutes: artwork in, machine file out.", "kind": "video", "reason": "My YouTube channel",
+                      "note": "Page 2 isn't signed.", "link_days": partners.PROGRAM_TOKEN_DAYS,
+                      "url": f"{config.PUBLIC_BASE_URL}/partners/program?k=sample", "apply_url": f"{config.PUBLIC_BASE_URL}/partners/apply?k=sample",
+                      "opt_out_url": f"{config.PUBLIC_BASE_URL}/partners/no-thanks?k=sample"})
+        if key == "partner_welcome":
+            hero, hero_alt = f"{config.WEBSITE_BASE_URL}{email_sender.PIPER_CONGRATULATIONS}", "Piper the sandpiper, mid-hop, with confetti"
     try:
-        emails.send_system(key, to_email=to_email, vars=emails.variables(sample, **extra))
+        emails.send_system(key, to_email=to_email, vars=emails.variables(sample, **extra), hero_image=hero, hero_alt=hero_alt)
     except email_sender.EmailSendError as e:
         return RedirectResponse(f"/admin/emails/system/{key}?error=" + quote_plus(f"Test not sent: {e}"), status_code=303)
     return RedirectResponse(f"/admin/emails/system/{key}?message=" + quote_plus(f"Test sent to {to_email}."), status_code=303)
