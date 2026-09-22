@@ -85,6 +85,7 @@
           <tr><td class="muted">{{ p.created_at|short_date }}</td><td><a href="/admin/customers/{{ p.customer_id }}">{{ p.customer_name or p.customer_email }}</a>{% if p.kind != 'recurring' %} <span class="pill {{ 'ended' if p.kind == 'reversal' else 'comp' }}">{{ p.kind }}</span>{% endif %}{% if p.note %} <span class="muted small">{{ p.note }}</span>{% endif %}</td><td>{% if p.kind == 'recurring' %}{{ p.gross_cents|money }}{% else %}&mdash;{% endif %}</td><td class="muted">{% if p.kind == 'recurring' %}{{ p.fee_cents|money }}{% if p.fee_source == 'estimate' %}<span title="Stripe's exact fee wasn't available; estimated at the standard card rate">*</span>{% endif %}{% endif %}</td><td>{% if p.kind == 'recurring' %}{{ p.net_cents|money }}{% endif %}</td><td><strong{% if p.share_cents < 0 %} style="color:#a3312a"{% endif %}>{{ p.share_cents|money }}</strong>{% if p.kind == 'recurring' %} <span class="muted small">({{ p.share_pct|round(1) }}%)</span>{% endif %}</td></tr>
           {% else %}<tr><td colspan="6" class="muted">Nothing earned yet.</td></tr>{% endfor %}
         </table>
+        <p class="muted small"><a href="/admin/partners/ledger?promoter_id={{ promoter.id }}">Full ledger with invoices &rarr;</a></p>
         <h3>Payments to {{ promoter.name }}</h3>
         <table>
           <tr><th>Date</th><th>Amount</th><th>Note</th></tr>
@@ -100,6 +101,32 @@
           <div style="margin-top:12px"><button type="submit" class="small">Record payout</button></div>
         </form>
       </div>
+
+      {% if is_partner %}
+      <div class="card">
+        <h2>Content log</h2>
+        <p class="muted small" style="margin-top:0">Where they've posted and whether the disclosure was there when we checked — the record that we monitored (FTC §10.1).</p>
+        <table>
+          <tr><th>Posted</th><th>Where</th><th>Disclosure</th><th></th></tr>
+          {% for c in content %}
+          <tr><td class="muted small">{{ (c.posted_at or c.created_at)|short_date }}</td><td><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.platform or c.url[:40] }}</a>{% if c.note %}<br><span class="muted small">{{ c.note }}</span>{% endif %}</td>
+            <td>{% if c.disclosure_present == 1 %}<span class="pill yes">present</span>{% elif c.disclosure_present == 0 %}<span class="pill no">missing</span>{% else %}<span class="pill not-yet">not checked</span>{% endif %}</td>
+            <td><form method="post" action="/admin/promoters/{{ promoter.id }}/content/{{ c.id }}" style="display:flex; gap:4px; align-items:center">
+              <select name="disclosure" style="width:auto; padding:4px 6px"><option value="" {% if c.disclosure_present is none %}selected{% endif %}>not checked</option><option value="yes" {% if c.disclosure_present == 1 %}selected{% endif %}>present</option><option value="no" {% if c.disclosure_present == 0 %}selected{% endif %}>missing</option></select>
+              <input type="hidden" name="note" value="{{ c.note }}"><button class="small secondary" type="submit">Save</button><button class="small secondary" type="submit" name="delete" value="1" onclick="return confirm('Remove this entry?')">&times;</button></form></td></tr>
+          {% else %}<tr><td colspan="4" class="muted">Nothing logged yet.</td></tr>{% endfor %}
+        </table>
+        <form method="post" action="/admin/promoters/{{ promoter.id }}/content" style="margin-top:10px">
+          <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap:8px">
+            <div><label>URL</label><input type="url" name="url" required placeholder="https://…"></div>
+            <div><label>Platform</label><input type="text" name="platform" placeholder="YouTube, FB Live…"></div>
+            <div><label>Posted</label><input type="date" name="posted_at"></div>
+            <div><label>Disclosure</label><select name="disclosure"><option value="">not checked</option><option value="yes">present</option><option value="no">missing</option></select></div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; margin-top:8px"><input type="text" name="note" placeholder="Note (optional)"><button type="submit" class="small">Log content</button></div>
+        </form>
+      </div>
+      {% endif %}
 
       <div class="card">
         <h2>Details</h2>

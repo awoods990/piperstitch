@@ -186,6 +186,11 @@ def send_partner_welcome_email(*, to_email: str, partner_name: str, code: str, l
                           vars=_partner_vars(partner_name, to_email, code=code, link=link, portal_link=portal_link, tier=tier, share_pct=f"{share_pct:g}"))
 
 
+def send_partner_paid_email(*, to_email: str, partner_name: str, amount: str, paid_at: str, method: str, payout_email: str, attachments=None) -> None:
+    _emails().send_system("partner_paid", to_email=to_email, customer_id=None, attachments=attachments,
+                          vars=_partner_vars(partner_name, to_email, amount=amount, paid_at=paid_at, method=("PayPal" if method == "paypal" else method), payout_email=payout_email or "your account"))
+
+
 def send_partner_declined_email(*, to_email: str, partner_name: str) -> None:
     _emails().send_system("partner_declined", to_email=to_email, customer_id=None, vars=_partner_vars(partner_name, to_email))
 

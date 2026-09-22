@@ -1,0 +1,39 @@
+{% extends "admin_base.html" %}
+{% block title %}Payout run — Partners — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted small"><a href="/admin/partners">&larr; Partners</a></p>
+  <div class="toolbar">
+    <div><h1 style="margin:0">Payout run</h1><div class="muted small">Monthly, net-30: everything that became payable (60 days after its invoice) goes out at month end. Under $50, no tax form, no PayPal email or suspended is excluded automatically, ticked or not.</div></div>
+  </div>
+  <div class="kpi-grid">
+    <div class="kpi-tile"><div class="kpi-value">{{ eligible_total|money }}</div><div class="kpi-label">Payable in this run</div><div class="kpi-sub">{{ eligible_count }} partner{{ '' if eligible_count == 1 else 's' }}</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ rows|length - eligible_count }}</div><div class="kpi-label">Excluded</div><div class="kpi-sub">held over to a later run</div></div>
+  </div>
+  <div class="card">
+    <form method="post" action="/admin/partners/payouts" onsubmit="return confirm('Record these payouts and email the partners? Send the money by PayPal first.')">
+      <table>
+        <tr><th><input type="checkbox" checked onclick="document.querySelectorAll('input[name=promoter_ids]:not([disabled])').forEach(c=>c.checked=this.checked)" style="width:auto"></th><th>Partner</th><th>Pay to</th><th>Owed in all</th><th>Payable now</th><th>Held (under 60 days)</th><th>Tax form</th><th>Status</th></tr>
+        {% for r in rows %}
+        <tr{% if not r.eligible %} style="opacity:.6"{% endif %}>
+          <td><input type="checkbox" name="promoter_ids" value="{{ r.promoter.id }}" style="width:auto" {% if r.eligible %}checked{% else %}disabled{% endif %}></td>
+          <td><a href="/admin/promoters/{{ r.promoter.id }}"><strong>{{ r.promoter.name }}</strong></a></td>
+          <td class="small">{{ 'PayPal' if r.promoter.payout_method == 'paypal' else r.promoter.payout_method }} {{ r.promoter.payout_email or '—' }}</td>
+          <td>{{ r.totals.owed_cents|money }}</td><td><strong>{{ r.totals.payable_cents|money }}</strong></td><td class="muted">{{ r.totals.held_cents|money }}</td>
+          <td>{% if r.promoter.tax_form_received_at %}<span class="pill yes">{{ r.promoter.tax_form_type|upper }}</span>{% else %}<span class="pill no">missing</span>{% endif %}</td>
+          <td>{% if r.eligible %}<span class="pill active">pay</span>{% else %}<span class="pill past_due">hold</span> <span class="small muted">{{ r.reasons|join(', ') }}</span>{% endif %}</td>
+        </tr>
+        {% else %}<tr><td colspan="8" class="muted">Nothing is owed to anyone.</td></tr>{% endfor %}
+      </table>
+      <div style="display:flex; gap:10px; align-items:flex-end; margin-top:14px; flex-wrap:wrap">
+        <div><label>Paid on</label><input type="date" name="paid_at" value="{{ today }}"></div>
+        <div style="flex:1; min-width:220px"><label>Note on each payment</label><input type="text" name="note" placeholder="Payout run {{ today[:7] }}"></div>
+        <button type="submit" {% if not eligible_count %}disabled{% endif %}>Record payouts &amp; email statements</button>
+      </div>
+      <p class="muted small" style="margin:10px 0 0">This records what you sent (it lands in Financials as a Promoter payouts expense) and emails each partner a receipt with the month's statement. It doesn't move money — send the PayPal payments first.</p>
+    </form>
+  </div>
+</main>
+{% endblock %}

@@ -299,6 +299,75 @@ def dashboard(promoter) -> dict:
     }
 
 
+def run_payouts(promoter_ids: list[int], *, paid_at: str, note: str = "", now: Optional[str] = None) -> list[dict]:
+    """A payout run (spec §8): pays each ticked partner their payable
+    balance, skipping anyone the preview excludes (under $50, no tax
+    form, no PayPal email, suspended) even if ticked -- the exclusions
+    are hard rules, not suggestions. Records the payment through the
+    existing ledger (it lands on the P&L too) and emails a receipt with
+    the month's statement attached. Returns what happened per partner."""
+    preview = {row["promoter"]["id"]: row for row in db.payout_run_preview(now=now)}
+    period = paid_at[:7]
+    results = []
+    for pid in promoter_ids:
+        row = preview.get(pid)
+        if row is None:
+            continue
+        if not row["eligible"]:
+            results.append({"promoter": row["promoter"], "paid_cents": 0, "skipped": ", ".join(row["reasons"])})
+            continue
+        amount = row["totals"]["payable_cents"]
+        label = note.strip() or f"Payout run {period}"
+        db.record_promoter_payment(promoter_id=pid, amount_cents=amount, paid_at=paid_at, note=label)
+        p = row["promoter"]
+        try:
+            email_sender.send_partner_paid_email(to_email=p["email"], partner_name=p["name"], amount=f"${amount / 100:,.2f}", paid_at=paid_at, method=p["payout_method"],
+                                                 payout_email=p["payout_email"], attachments=[(f"piperstitch-partner-statement-{period}.csv", statement_csv(p, period).encode(), "text/csv")])
+        except email_sender.EmailSendError:
+            pass
+        results.append({"promoter": p, "paid_cents": amount, "skipped": ""})
+    return results
+
+
+def ledger_csv(rows) -> str:
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Date", "Partner", "Kind", "Code", "Customer", "Invoice", "Invoice paid", "Base (gross)", "Fee", "Net", "Rate", "Amount", "Reverses", "Note"])
+    for r in rows:
+        w.writerow([r["created_at"][:19], r["promoter_name"], r["kind"], r["code"], r["customer_email"] or "", r["stripe_invoice_id"] or "", (r["invoice_paid_at"] or "")[:10],
+                    f"{r['gross_cents'] / 100:.2f}" if r["kind"] == "recurring" else "", f"{r['fee_cents'] / 100:.2f}" if r["kind"] == "recurring" else "",
+                    f"{r['net_cents'] / 100:.2f}" if r["kind"] == "recurring" else "", f"{r['share_pct']:g}%" if r["kind"] == "recurring" else "",
+                    f"{r['share_cents'] / 100:.2f}", r["reverses_payout_id"] or "", r["note"] or ""])
+    return out.getvalue()
+
+
+NEC_THRESHOLD_CENTS = 600_00
+
+
+def tax_report(year: int) -> list[dict]:
+    """Per partner, what was paid in the year and whether a 1099-NEC is
+    due: US persons (W-9) paid $600 or more (§10.2)."""
+    out = []
+    for r in db.payments_by_promoter_for_year(year):
+        us = (r["tax_form_type"] or "") == "w9"
+        out.append({**dict(r), "us": us, "nec_due": us and r["paid_cents"] >= NEC_THRESHOLD_CENTS, "over_threshold": r["paid_cents"] >= NEC_THRESHOLD_CENTS})
+    return out
+
+
+def tax_report_csv(year: int) -> str:
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Year", "Partner", "Email", "Payout email", "Tax form", "Form received", "Paid", "Payments", "1099-NEC due"])
+    for r in tax_report(year):
+        w.writerow([year, r["name"], r["email"], r["payout_email"], (r["tax_form_type"] or "").upper(), (r["tax_form_received_at"] or "")[:10], f"{r['paid_cents'] / 100:.2f}", r["payments"],
+                    "yes" if r["nec_due"] else ("non-US" if r["over_threshold"] and not r["us"] else "no")])
+    return out.getvalue()
+
+
+def alerts() -> dict:
+    return {"events": db.partner_alert_events(), "webhooks": db.list_failed_stripe_events(), "spikes": db.conversion_spikes(), "unchecked_content": db.count_unchecked_content()}
+
+
 def statement_csv(promoter, period: str) -> str:
     """A month's ledger as CSV: kind, date, code, base, rate, share. Rows
     carry no customer identity."""

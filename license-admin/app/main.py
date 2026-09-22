@@ -889,7 +889,11 @@ async def stripe_webhook(request: Request):
         # A subscription we can't tie to any customer — log loudly, but
         # ack so Stripe doesn't retry forever; the admin's "Sync from
         # Stripe" button can repair it once the customer record exists.
+        # The failure is kept on the event row so the Partners page can
+        # list it (§8 alerts).
         log.error("Webhook %s (%s) could not be applied: %s", event["id"], kind, e)
+        db.record_stripe_event(event["id"], kind, result=str(e) or "could not be applied")
+        return {"received": True, "error": str(e)}
     db.record_stripe_event(event["id"], kind)
     return {"received": True}
 
@@ -1636,11 +1640,90 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
     for p in db.list_partners(status or None):
         totals = db.promoter_totals(p["id"])
         rows.append(dict(p, totals=totals, tier_label=partners.tier_label(p), bounty=partners.bounty_state(p)))
+    year = datetime.now(timezone.utc).year
     return templates.TemplateResponse(request, "partners.html", {
         "active_nav": "partners", "rows": rows, "status": status, "counts": db.count_partners_by_status(),
         "seats_left": partners.founding_seats_left(), "program": partners, "today": datetime.now(timezone.utc).date().isoformat(),
+        "alerts": partners.alerts(), "tax": partners.tax_report(year), "year": year,
+        "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
     })
+
+
+@app.get("/admin/partners/payouts", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_partner_payouts(request: Request, message: str = "", error: str = ""):
+    """The payout run (spec §8): who is payable this month, who is
+    excluded and why, and one button to record it all."""
+    rows = db.payout_run_preview()
+    return templates.TemplateResponse(request, "partner_payouts.html", {
+        "active_nav": "partners", "rows": rows, "today": datetime.now(timezone.utc).date().isoformat(), "program": partners,
+        "eligible_total": sum(r["totals"]["payable_cents"] for r in rows if r["eligible"]), "eligible_count": sum(1 for r in rows if r["eligible"]),
+        "message": message or None, "error": error or None,
+    })
+
+
+@app.post("/admin/partners/payouts", dependencies=[Depends(auth.require_admin)])
+def admin_partner_payouts_run(promoter_ids: list[str] = Form([]), paid_at: str = Form(""), note: str = Form("")):
+    when = paid_at.strip() or datetime.now(timezone.utc).date().isoformat()
+    try:
+        datetime.fromisoformat(when)
+    except ValueError:
+        return RedirectResponse("/admin/partners/payouts?error=" + quote_plus("The date must look like 2026-12-31."), status_code=303)
+    ids = [int(x) for x in promoter_ids if x.strip().isdigit()]
+    if not ids:
+        return RedirectResponse("/admin/partners/payouts?error=" + quote_plus("Tick at least one partner."), status_code=303)
+    results = partners.run_payouts(ids, paid_at=when, note=note)
+    paid = [r for r in results if r["paid_cents"]]
+    skipped = [r for r in results if r["skipped"]]
+    msg = f"Paid {len(paid)} partner{'' if len(paid) == 1 else 's'} — ${sum(r['paid_cents'] for r in paid) / 100:,.2f} in all."
+    if skipped:
+        msg += " Skipped: " + "; ".join(f"{r['promoter']['name']} ({r['skipped']})" for r in skipped) + "."
+    return RedirectResponse("/admin/partners/payouts?message=" + quote_plus(msg), status_code=303)
+
+
+@app.get("/admin/partners/ledger", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_partner_ledger(request: Request, promoter_id: str = "", kind: str = "", month: str = "", format: str = ""):
+    pid = int(promoter_id) if promoter_id.strip().isdigit() else None
+    kind = kind if kind in ("recurring", "bounty", "reversal") else ""
+    month = month if re.match(r"^\d{4}-\d{2}$", month or "") else ""
+    rows = db.list_ledger(promoter_id=pid, kind=kind, month=month)
+    if format == "csv":
+        return Response(partners.ledger_csv(rows), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="partner-ledger{"-" + month if month else ""}.csv"'})
+    return templates.TemplateResponse(request, "partner_ledger.html", {
+        "active_nav": "partners", "rows": rows, "promoters": db.list_partners(), "promoter_id": pid, "kind": kind, "month": month,
+        "total_cents": sum(r["share_cents"] for r in rows),
+    })
+
+
+@app.get("/admin/partners/1099.csv", dependencies=[Depends(auth.require_admin)])
+def admin_partner_tax_report(year: str = ""):
+    y = int(year) if year.strip().isdigit() else datetime.now(timezone.utc).year
+    return Response(partners.tax_report_csv(y), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="partner-1099-nec-{y}.csv"'})
+
+
+@app.post("/admin/promoters/{promoter_id}/content", dependencies=[Depends(auth.require_admin)])
+def admin_partner_content_add(promoter_id: int, url: str = Form(...), platform: str = Form(""), posted_at: str = Form(""), disclosure: str = Form(""), note: str = Form("")):
+    """The FTC monitoring log (spec §10.1): where they posted and whether
+    the disclosure was there when we looked."""
+    if db.get_promoter(promoter_id) is None:
+        return _partners_redirect(error="That partner doesn't exist.")
+    if not url.strip().lower().startswith(("http://", "https://")):
+        return _promoter_redirect(promoter_id, error="The content URL should start with http:// or https://.")
+    present = {"yes": True, "no": False}.get(disclosure)
+    db.add_partner_content(promoter_id=promoter_id, url=url, platform=platform, posted_at=posted_at.strip() or None, disclosure_present=present, note=note)
+    return _promoter_redirect(promoter_id, message="Content logged.")
+
+
+@app.post("/admin/promoters/{promoter_id}/content/{content_id}", dependencies=[Depends(auth.require_admin)])
+def admin_partner_content_update(promoter_id: int, content_id: int, disclosure: str = Form(""), note: str = Form(""), delete: str = Form("")):
+    row = db.get_partner_content(content_id)
+    if row is None or row["promoter_id"] != promoter_id:
+        return _promoter_redirect(promoter_id, error="That content entry doesn't exist.")
+    if delete:
+        db.delete_partner_content(content_id)
+        return _promoter_redirect(promoter_id, message="Content entry removed.")
+    db.update_partner_content(content_id, disclosure_present={"yes": True, "no": False}.get(disclosure), note=note)
+    return _promoter_redirect(promoter_id, message="Content entry updated.")
 
 
 @app.post("/admin/partners/{promoter_id}/approve", dependencies=[Depends(auth.require_admin)])
@@ -1735,6 +1818,7 @@ def admin_promoter_detail(request: Request, promoter_id: int, message: str = "",
         "payouts": db.list_promo_payouts_for_promoter(promoter_id),
         "payments": db.list_promoter_payments(promoter_id),
         "referrals_by_id": {r["id"]: r for r in partners.referral_rows(promoter_id)},
+        "content": db.list_partner_content(promoter_id),
         "bounty": partners.bounty_state(promoter),
         "tier_label": partners.tier_label(promoter),
         "is_partner": partners.is_partner(promoter),

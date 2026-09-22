@@ -7,8 +7,19 @@
 
   <div class="toolbar">
     <div><h1 style="margin:0">Partner Program</h1><div class="muted small">{{ program.FOUNDING_SHARE|int }}% founding / {{ program.STANDARD_SHARE|int }}% standard of the gross for {{ program.COMMISSION_MONTHS }} months &middot; ${{ program.BOUNTY_DOLLARS }} bounty in the first {{ program.BOUNTY_WINDOW_DAYS }} days, back for good at {{ program.REINSTATE_AT }} active &middot; {{ seats_left }} of {{ program.FOUNDING_LIMIT }} founding seats left</div></div>
-    <div class="muted small">Portal: <a href="/partners/portal" target="_blank" rel="noopener">{{ config.PUBLIC_BASE_URL }}/partners/portal</a> &middot; Apply: <a href="/partners/apply" target="_blank" rel="noopener">/partners/apply</a></div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap"><a class="button small" href="/admin/partners/payouts">Payout run</a><a class="button small secondary" href="/admin/partners/ledger">Ledger</a><a class="button small secondary" href="/admin/partners/1099.csv?year={{ year }}">1099-NEC report {{ year }}</a></div>
   </div>
+  <p class="muted small" style="margin-top:-6px">Portal: <a href="/partners/portal" target="_blank" rel="noopener">{{ config.PUBLIC_BASE_URL }}/partners/portal</a> &middot; Apply: <a href="/partners/apply" target="_blank" rel="noopener">/partners/apply</a> &middot; {{ payable_total|money }} payable now, {{ owed_total|money }} owed in all.</p>
+
+  {% if alerts.events or alerts.webhooks or alerts.spikes or alerts.unchecked_content %}
+  <div class="card" style="border-color:#f0cabe; background:#fdf6f4">
+    <h2>Needs a look</h2>
+    {% for a in alerts.spikes %}<p style="margin:4px 0"><span class="pill past_due">spike</span> <a href="/admin/promoters/{{ a.id }}">{{ a.name }}</a>: {{ a.recent }} signups in {{ a.days }} days against a weekly average of {{ a.weekly_avg }} — check them before the bounties mature.</p>{% endfor %}
+    {% for e in alerts.events %}<p style="margin:4px 0"><span class="pill {{ 'ended' if e.kind == 'promo_self_referral' else 'past_due' }}">{{ 'self-referral' if e.kind == 'promo_self_referral' else 'inactive promoter' }}</span> <span class="muted small">{{ e.created_at|short_date }}</span> {% if e.customer_id %}<a href="/admin/customers/{{ e.customer_id }}">{{ e.customer_email }}</a>{% endif %} — {{ e.detail }}</p>{% endfor %}
+    {% for w in alerts.webhooks %}<p style="margin:4px 0"><span class="pill incomplete">webhook</span> <span class="muted small">{{ w.processed_at|short_date }}</span> <span class="mono">{{ w.id }}</span> {{ w.type }} — {{ w.result }}</p>{% endfor %}
+    {% if alerts.unchecked_content %}<p style="margin:4px 0"><span class="pill trialing">content</span> {{ alerts.unchecked_content }} logged post{{ '' if alerts.unchecked_content == 1 else 's' }} not yet checked for the disclosure.</p>{% endif %}
+  </div>
+  {% endif %}
 
   <div class="kpi-grid">
     <div class="kpi-tile{% if counts.get('applied') %} warn{% endif %}"><div class="kpi-value">{{ counts.get('applied', 0) }}</div><div class="kpi-label">Applications waiting</div></div>
@@ -75,6 +86,18 @@
       <button type="submit" class="small secondary">Set window on the ticked partners</button>
     </div>
     </form>
+  </div>
+
+  <div class="card">
+    <div class="toolbar"><h2 style="margin:0">Paid in {{ year }} — 1099-NEC</h2><a class="button small secondary" href="/admin/partners/1099.csv?year={{ year }}">Download CSV</a></div>
+    <p class="muted small" style="margin-top:0">US partners (W-9) paid ${{ (program.NEC_THRESHOLD_CENTS / 100)|int }} or more in a calendar year get a 1099-NEC. Non-US partners over the line are listed so nothing is missed.</p>
+    <table>
+      <tr><th>Partner</th><th>Tax form</th><th>Paid {{ year }}</th><th>Payments</th><th>1099-NEC</th></tr>
+      {% for t in tax %}
+      <tr><td><a href="/admin/promoters/{{ t.id }}">{{ t.name }}</a></td><td>{% if t.tax_form_received_at %}<span class="pill yes">{{ t.tax_form_type|upper }}</span>{% else %}<span class="pill no">missing</span>{% endif %}</td><td>{{ t.paid_cents|money }}</td><td>{{ t.payments }}</td>
+        <td>{% if t.nec_due %}<span class="pill past_due">due</span>{% elif t.over_threshold %}<span class="pill comp">over $600, non-US</span>{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted">No payouts recorded in {{ year }} yet.</td></tr>{% endfor %}
+    </table>
   </div>
 </main>
 {% endblock %}

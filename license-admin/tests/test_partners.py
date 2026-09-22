@@ -451,3 +451,132 @@ def test_portal_shows_link_code_window_earnings_and_referrals_without_identity(i
         assert client.get(f"/partners/portal/open?token={token}", follow_redirects=False).status_code == 400
         client.post("/partners/portal/logout")
         assert "Email me a link" in client.get("/partners/portal").text
+
+
+# ------------------------------------------------ Phase 3: payout runs ---
+
+
+def _pay(session, sub_id, n, *, first_days_ago, amount=2400):
+    """n monthly invoices for a referred customer, the first `first_days_ago` days back."""
+    sub_row = db.get_subscription_by_stripe_id(sub_id)
+    first = datetime.now(timezone.utc) - timedelta(days=first_days_ago)
+    for i in range(n):
+        when = first + timedelta(days=30 * i)
+        payment_id = db.record_payment(customer_id=session.customer_id, subscription_id=sub_row["id"], stripe_invoice_id=f"in_{sub_id}_{i}", stripe_payment_intent=None,
+                                       amount_cents=amount, currency="usd", status="paid", paid_at=when.isoformat(timespec="seconds").replace("+00:00", "Z"))
+        promotions.record_share_for_payment(payment_id=payment_id, subscription_row=sub_row, customer_id=session.customer_id, gross_cents=amount,
+                                            invoice={"status_transitions": {"paid_at": int(when.timestamp())}})
+
+
+def _mature(promoter_id):
+    """Backdate the ledger so everything has cleared the 60-day window."""
+    with db.connection() as conn:
+        conn.execute("UPDATE promo_payouts SET created_at = ? WHERE promoter_id = ?", ((datetime.utcnow() - timedelta(days=70)).isoformat(timespec="seconds") + "Z", promoter_id))
+
+
+def test_payout_run_excludes_under_minimum_and_missing_tax_form_then_pays_the_rest(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    # Kathleen: $57.60 matured (8 invoices), W-9 on file -> paid.
+    k_id, _ = partner()
+    db.update_partner_fields(k_id, payout_email="k@pay.example", tax_form_type="w9", tax_form_received_at="2026-09-01")
+    s = sign_up(fake_smtp, "jane@example.com", promo_code="KATHLEEN")
+    subscriptions.sync_from_stripe(stripe_subscription(sub_id="sub_j", customer="cus_j", customer_id=s.customer_id, email="jane@example.com", amount=2400))
+    _pay(s, "sub_j", 8, first_days_ago=300)
+    _mature(k_id)
+    # Mia: $14.40 matured -> under the $50 minimum (test 32).
+    m_id, _ = partner(name="Mia", email="mia@example.com", code="MIA")
+    db.update_partner_fields(m_id, payout_email="m@pay.example", tax_form_type="w9", tax_form_received_at="2026-09-01")
+    s2 = sign_up(fake_smtp, "bob@example.com", promo_code="MIA")
+    subscriptions.sync_from_stripe(stripe_subscription(sub_id="sub_b", customer="cus_b", customer_id=s2.customer_id, email="bob@example.com", amount=2400))
+    _pay(s2, "sub_b", 2, first_days_ago=300)
+    _mature(m_id)
+    # Noor: $72 matured but no tax form -> held (test 33).
+    n_id, _ = partner(name="Noor", email="noor@example.com", code="NOOR")
+    db.update_partner_fields(n_id, payout_email="n@pay.example")
+    s3 = sign_up(fake_smtp, "cy@example.com", promo_code="NOOR")
+    subscriptions.sync_from_stripe(stripe_subscription(sub_id="sub_c", customer="cus_c", customer_id=s3.customer_id, email="cy@example.com", amount=2400))
+    _pay(s3, "sub_c", 10, first_days_ago=300)
+    _mature(n_id)
+
+    preview = {r["promoter"]["name"]: r for r in db.payout_run_preview()}
+    assert preview["Kathleen"]["eligible"] and preview["Kathleen"]["totals"]["payable_cents"] == 5760
+    assert not preview["Mia"]["eligible"] and "under the $50 minimum" in preview["Mia"]["reasons"]
+    assert not preview["Noor"]["eligible"] and "no tax form on file" in preview["Noor"]["reasons"]
+
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        page = client.get("/admin/partners/payouts").text
+        assert "$57.60" in page and "under the $50 minimum" in page and "no tax form on file" in page
+        fake_smtp.sent.clear()
+        # Ticking everyone still only pays Kathleen: the exclusions are rules.
+        r = client.post("/admin/partners/payouts", data={"promoter_ids": [str(k_id), str(m_id), str(n_id)], "paid_at": "2026-09-30", "note": ""}, follow_redirects=False)
+        assert r.status_code == 303 and "Paid+1+partner" in r.headers["location"] and "Mia" in r.headers["location"] and "Noor" in r.headers["location"]
+    assert db.promoter_totals(k_id)["paid_cents"] == 5760 and db.promoter_totals(k_id)["payable_cents"] == 0
+    assert db.promoter_totals(m_id)["paid_cents"] == 0 and db.promoter_totals(n_id)["paid_cents"] == 0
+    payment = db.list_promoter_payments(k_id)[0]
+    assert payment["amount_cents"] == 5760 and payment["note"] == "Payout run 2026-09" and payment["paid_at"] == "2026-09-30"
+    receipt = fake_smtp.sent[-1]
+    assert receipt["To"] == "kathleen@example.com" and "$57.60" in receipt["Subject"]
+    assert any(part.get_filename() == "piperstitch-partner-statement-2026-09.csv" for part in receipt.iter_attachments())
+    # The 1099 report: Kathleen is US and under $600; the CSV lists her with 'no'.
+    from app import partners as p
+    report = {r["name"]: r for r in p.tax_report(2026)}
+    assert report["Kathleen"]["paid_cents"] == 5760 and report["Kathleen"]["us"] and not report["Kathleen"]["nec_due"]
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        csv_text = client.get("/admin/partners/1099.csv?year=2026").text
+        assert "Kathleen" in csv_text and ",57.60,1,no" in csv_text
+        ledger = client.get("/admin/partners/ledger?promoter_id=%d&kind=recurring" % k_id).text
+        assert "in_sub_j_0" in ledger and "$57.60" in ledger
+        csv_text = client.get("/admin/partners/ledger?format=csv&kind=recurring&month=" + (datetime.utcnow() - timedelta(days=70)).strftime("%Y-%m")).text
+        assert csv_text.count("\n") == 21 and "in_sub_c_9" in csv_text   # header + 8 + 2 + 10 rows
+
+
+def test_1099_threshold_marks_us_partners_paid_600_or_more(isolated_db, test_keypair, fake_smtp):
+    from app import partners
+    k_id, _ = partner()
+    db.update_partner_fields(k_id, tax_form_type="w9", tax_form_received_at="2026-01-05")
+    db.record_promoter_payment(promoter_id=k_id, amount_cents=350_00, paid_at="2026-03-31", note="")
+    db.record_promoter_payment(promoter_id=k_id, amount_cents=250_00, paid_at="2026-06-30", note="")
+    db.record_promoter_payment(promoter_id=k_id, amount_cents=999_00, paid_at="2025-12-31", note="last year")
+    f_id, _ = partner(name="Freya", email="freya@example.com", code="FREYA")
+    db.update_partner_fields(f_id, tax_form_type="w8ben", tax_form_received_at="2026-01-05")
+    db.record_promoter_payment(promoter_id=f_id, amount_cents=700_00, paid_at="2026-05-31", note="")
+    report = {r["name"]: r for r in partners.tax_report(2026)}
+    assert report["Kathleen"]["paid_cents"] == 600_00 and report["Kathleen"]["nec_due"]
+    assert report["Freya"]["paid_cents"] == 700_00 and report["Freya"]["over_threshold"] and not report["Freya"]["nec_due"]
+    csv_text = partners.tax_report_csv(2026)
+    assert ",600.00,2,yes" in csv_text and ",700.00,1,non-US" in csv_text
+
+
+def test_content_log_and_alerts(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
+    k_id, promo_id = partner()
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post(f"/admin/promoters/{k_id}/content", data={"url": "https://youtube.com/watch?v=abc", "platform": "YouTube", "posted_at": "2026-09-20", "disclosure": "", "note": "launch video"}, follow_redirects=False)
+        assert r.status_code == 303
+        row = db.list_partner_content(k_id)[0]
+        assert row["disclosure_present"] is None and row["checked_at"] is None
+        assert partners.alerts()["unchecked_content"] == 1
+        assert "not checked" in client.get(f"/admin/promoters/{k_id}").text
+        r = client.post(f"/admin/promoters/{k_id}/content/{row['id']}", data={"disclosure": "no", "note": "asked to add #ad"}, follow_redirects=False)
+        row = db.get_partner_content(row["id"])
+        assert row["disclosure_present"] == 0 and row["checked_at"] and row["note"] == "asked to add #ad"
+        assert partners.alerts()["unchecked_content"] == 0
+        r = client.post(f"/admin/promoters/{k_id}/content", data={"url": "javascript:alert(1)"}, follow_redirects=False)
+        assert "should+start+with" in r.headers["location"] and len(db.list_partner_content(k_id)) == 1
+    # Self-referral and inactive-promoter attributions surface as alerts.
+    sign_up(fake_smtp, "kathleen@example.com", promo_code="KATHLEEN")
+    with db.connection() as conn:
+        conn.execute("UPDATE promoters SET status = 'suspended' WHERE id = ?", (k_id,))
+    sign_up(fake_smtp, "someone@example.com", promo_code="KATHLEEN")
+    kinds = sorted(e["kind"] for e in partners.alerts()["events"])
+    assert kinds == ["promo_inactive_promoter", "promo_self_referral"]
+    # A failed webhook is kept with its reason.
+    db.record_stripe_event("evt_bad", "invoice.paid", result="no customer for cus_x")
+    assert partners.alerts()["webhooks"][0]["result"] == "no customer for cus_x"
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        page = client.get("/admin/partners").text
+        assert "Needs a look" in page and "self-referral" in page and "inactive promoter" in page and "evt_bad" in page

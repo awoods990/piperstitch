@@ -112,6 +112,14 @@ Two things before you post. First, the FTC needs a plain disclosure next to your
 
 Thank you for this. Reply to this email any time; a person reads it.""",
          cta_label="Open the partner portal", cta_url="{portal_link}", preheader="Your code, your link, your rate — and the portal.", placeholders="first_name, name, email, tier, code, link, share_pct, portal_link, site_url"),
+    dict(key="partner_paid", name="Partner: payout sent", description="Sent by a payout run, with the month's statement attached.",
+         subject="Your PiperStitch partner payout: {amount}",
+         body="""Hi {first_name},
+
+We've sent {amount} by {method} to {payout_email} on {paid_at}. The statement for the period is attached, and your portal has the running ledger.
+
+Thank you for every one of these referrals.""",
+         cta_label="Open the partner portal", cta_url="{site_url}/partners/portal", preheader="{amount} is on its way.", placeholders="first_name, name, email, amount, paid_at, method, payout_email, site_url"),
     dict(key="partner_declined", name="Partner: application declined", description="Sent when an application is declined.",
          subject="About your PiperStitch partner application",
          body="""Hi {first_name},

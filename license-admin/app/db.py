@@ -931,9 +931,16 @@ def stripe_event_already_processed(event_id: str) -> bool:
         return conn.execute("SELECT 1 FROM stripe_events WHERE id = ?", (event_id,)).fetchone() is not None
 
 
-def record_stripe_event(event_id: str, event_type: str) -> None:
+def record_stripe_event(event_id: str, event_type: str, result: str = "") -> None:
+    """`result` is empty when the event applied cleanly; otherwise the
+    error, so the Partners page can list webhooks that need a look."""
     with connection() as conn:
-        conn.execute("INSERT OR IGNORE INTO stripe_events (id, type, processed_at) VALUES (?, ?, ?)", (event_id, event_type, _now()))
+        conn.execute("INSERT OR IGNORE INTO stripe_events (id, type, processed_at, result) VALUES (?, ?, ?, ?)", (event_id, event_type, _now(), (result or "")[:500]))
+
+
+def list_failed_stripe_events(limit: int = 20) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM stripe_events WHERE result != '' ORDER BY processed_at DESC LIMIT ?", (limit,)).fetchall()
 
 
 # ------------------------------------------------------------------ payments --
@@ -1465,6 +1472,138 @@ def partner_statement_rows(promoter_id: int, period: str) -> list[sqlite3.Row]:
         return conn.execute(
             "SELECT p.*, promotions.code FROM promo_payouts p JOIN promotions ON promotions.id = p.promotion_id "
             "WHERE p.promoter_id = ? AND substr(p.created_at, 1, 7) = ? ORDER BY p.created_at, p.id", (promoter_id, period)).fetchall()
+
+
+# ---------------------------------------------------- payout runs (§8, §10.2) --
+
+
+PAYOUT_MINIMUM_CENTS = 50_00
+
+
+def payout_run_preview(*, now: Optional[str] = None) -> list[dict]:
+    """Every partner with anything owed, what's payable now, and whether
+    this run may pay them: under the $50 minimum or no tax form on file
+    is an automatic exclusion (spec §6.6, §10.2)."""
+    rows = []
+    with connection() as conn:
+        ids = [r["id"] for r in conn.execute("SELECT id FROM promoters WHERE active = 1 AND status IN ('active','approved','suspended') ORDER BY name COLLATE NOCASE").fetchall()]
+    for pid in ids:
+        p = get_promoter(pid)
+        totals = promoter_totals(pid, now=now)
+        if totals["owed_cents"] <= 0:
+            continue
+        reasons = []
+        if totals["payable_cents"] < PAYOUT_MINIMUM_CENTS:
+            reasons.append("under the $50 minimum" if totals["payable_cents"] > 0 else "nothing payable yet")
+        if not p["tax_form_received_at"]:
+            reasons.append("no tax form on file")
+        if not p["payout_email"] and p["payout_method"] == "paypal":
+            reasons.append("no PayPal email")
+        if p["status"] == "suspended":
+            reasons.append("suspended")
+        rows.append({"promoter": p, "totals": totals, "eligible": not reasons, "reasons": reasons})
+    return rows
+
+
+def payments_by_promoter_for_year(year: int) -> list[sqlite3.Row]:
+    """What each partner was actually paid in a calendar year, with their
+    tax details -- the 1099-NEC threshold report (§10.2)."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT p.id, p.name, p.email, p.payout_email, p.tax_form_type, p.tax_form_received_at, p.tier, "
+            "COALESCE(SUM(pp.amount_cents), 0) AS paid_cents, COUNT(pp.id) AS payments "
+            "FROM promoters p JOIN promoter_payments pp ON pp.promoter_id = p.id WHERE substr(pp.paid_at, 1, 4) = ? "
+            "GROUP BY p.id ORDER BY paid_cents DESC", (str(year),)).fetchall()
+
+
+def list_ledger(*, promoter_id: Optional[int] = None, kind: str = "", month: str = "", limit: int = 2000) -> list[sqlite3.Row]:
+    """The full promo_payouts ledger with the partner, the code and the
+    source invoice, filterable (§8 ledger view)."""
+    sql = ("SELECT pp.*, promoters.name AS promoter_name, promotions.code, payments.stripe_invoice_id, payments.paid_at AS invoice_paid_at, "
+           "customers.email AS customer_email FROM promo_payouts pp JOIN promoters ON promoters.id = pp.promoter_id JOIN promotions ON promotions.id = pp.promotion_id "
+           "LEFT JOIN payments ON payments.id = pp.payment_id LEFT JOIN customers ON customers.id = pp.customer_id WHERE 1 = 1")
+    args: list = []
+    if promoter_id:
+        sql += " AND pp.promoter_id = ?"; args.append(promoter_id)
+    if kind:
+        sql += " AND pp.kind = ?"; args.append(kind)
+    if month:
+        sql += " AND substr(pp.created_at, 1, 7) = ?"; args.append(month)
+    sql += " ORDER BY pp.created_at DESC, pp.id DESC LIMIT ?"; args.append(limit)
+    with connection() as conn:
+        return conn.execute(sql, args).fetchall()
+
+
+# ------------------------------------------------ compliance log (§10.1) --
+
+
+def add_partner_content(*, promoter_id: int, url: str, platform: str, posted_at: Optional[str], disclosure_present: Optional[bool], note: str) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO partner_content (promoter_id, url, platform, posted_at, disclosure_present, checked_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (promoter_id, url.strip(), platform.strip(), posted_at or None, None if disclosure_present is None else (1 if disclosure_present else 0),
+             _now() if disclosure_present is not None else None, note.strip(), _now()))
+        return cur.lastrowid
+
+
+def update_partner_content(content_id: int, *, disclosure_present: Optional[bool], note: str) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_content SET disclosure_present = ?, checked_at = ?, note = ? WHERE id = ?",
+                     (None if disclosure_present is None else (1 if disclosure_present else 0), _now() if disclosure_present is not None else None, note.strip(), content_id))
+
+
+def delete_partner_content(content_id: int) -> None:
+    with connection() as conn:
+        conn.execute("DELETE FROM partner_content WHERE id = ?", (content_id,))
+
+
+def get_partner_content(content_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_content WHERE id = ?", (content_id,)).fetchone()
+
+
+def list_partner_content(promoter_id: int) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_content WHERE promoter_id = ? ORDER BY COALESCE(posted_at, created_at) DESC, id DESC", (promoter_id,)).fetchall()
+
+
+def count_unchecked_content() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM partner_content WHERE disclosure_present IS NULL").fetchone()[0]
+
+
+# --------------------------------------------------------------- alerts (§8) --
+
+
+def partner_alert_events(limit: int = 30) -> list[sqlite3.Row]:
+    """Self-referral attempts and attributions to inactive promoters,
+    as the attribution path logged them."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT e.*, customers.email AS customer_email FROM subscription_events e LEFT JOIN customers ON customers.id = e.customer_id "
+            "WHERE e.kind IN ('promo_self_referral', 'promo_inactive_promoter') ORDER BY e.created_at DESC LIMIT ?", (limit,)).fetchall()
+
+
+def conversion_spikes(*, days: int = 7, factor: float = 3.0, floor: int = 10) -> list[dict]:
+    """Partners whose signups in the last `days` days are at least
+    `floor` and more than `factor` times their weekly average over the
+    prior 8 weeks -- worth a look before the bounties pay out."""
+    now = datetime.utcnow()
+    recent_from = (now - timedelta(days=days)).isoformat(timespec="seconds") + "Z"
+    base_from = (now - timedelta(days=days + 56)).isoformat(timespec="seconds") + "Z"
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT promoters.id, promoters.name, "
+            "SUM(CASE WHEN r.redeemed_at >= ? THEN 1 ELSE 0 END) AS recent, "
+            "SUM(CASE WHEN r.redeemed_at >= ? AND r.redeemed_at < ? THEN 1 ELSE 0 END) AS prior "
+            "FROM promo_redemptions r JOIN promotions ON promotions.id = r.promotion_id JOIN promoters ON promoters.id = promotions.promoter_id "
+            "WHERE r.redeemed_at >= ? GROUP BY promoters.id", (recent_from, base_from, recent_from, base_from)).fetchall()
+    out = []
+    for r in rows:
+        weekly_avg = (r["prior"] or 0) / 8.0
+        if r["recent"] >= floor and r["recent"] > factor * max(weekly_avg, 1.0):
+            out.append({"id": r["id"], "name": r["name"], "recent": r["recent"], "weekly_avg": round(weekly_avg, 1), "days": days})
+    return out
 
 
 def count_partners_by_status() -> dict:

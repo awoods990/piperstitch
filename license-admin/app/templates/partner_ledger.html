@@ -1,0 +1,32 @@
+{% extends "admin_base.html" %}
+{% block title %}Ledger — Partners — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  <p class="muted small"><a href="/admin/partners">&larr; Partners</a></p>
+  <div class="toolbar">
+    <div><h1 style="margin:0">Partner ledger</h1><div class="muted small">Every commission, bounty and reversal, with the invoice it came from. Append-only: reversals are new rows pointing at the original.</div></div>
+    <a class="button small secondary" href="/admin/partners/ledger?format=csv&promoter_id={{ promoter_id or '' }}&kind={{ kind }}&month={{ month }}">Download CSV</a>
+  </div>
+  <div class="card">
+    <form method="get" action="/admin/partners/ledger" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px">
+      <div><label>Partner</label><select name="promoter_id"><option value="">All</option>{% for p in promoters %}<option value="{{ p.id }}" {% if p.id == promoter_id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></div>
+      <div><label>Kind</label><select name="kind"><option value="">All</option>{% for k in ['recurring','bounty','reversal'] %}<option value="{{ k }}" {% if kind == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select></div>
+      <div><label>Month</label><input type="month" name="month" value="{{ month }}"></div>
+      <button type="submit" class="small">Filter</button>
+    </form>
+    <table>
+      <tr><th>When</th><th>Partner</th><th>Kind</th><th>Code</th><th>Customer</th><th>Invoice</th><th>Base</th><th>Rate</th><th>Amount</th><th>Note</th></tr>
+      {% for r in rows %}
+      <tr><td class="muted">{{ r.created_at|short_date }}</td><td><a href="/admin/promoters/{{ r.promoter_id }}">{{ r.promoter_name }}</a></td>
+        <td><span class="pill {{ 'active' if r.kind == 'recurring' else 'comp' if r.kind == 'bounty' else 'ended' }}">{{ r.kind }}</span></td><td class="mono">{{ r.code }}</td>
+        <td>{% if r.customer_id %}<a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_email }}</a>{% else %}—{% endif %}</td>
+        <td class="mono small">{{ r.stripe_invoice_id or '—' }}{% if r.invoice_paid_at %}<br><span class="muted">{{ r.invoice_paid_at|short_date }}</span>{% endif %}</td>
+        <td>{% if r.kind == 'recurring' %}{{ r.gross_cents|money }}{% endif %}</td><td>{% if r.kind == 'recurring' %}{{ r.share_pct|round(1) }}%{% endif %}</td>
+        <td><strong{% if r.share_cents < 0 %} style="color:#a3312a"{% endif %}>{{ r.share_cents|money }}</strong></td>
+        <td class="muted small">{{ r.note }}{% if r.reverses_payout_id %} (reverses #{{ r.reverses_payout_id }}){% endif %}</td></tr>
+      {% else %}<tr><td colspan="10" class="muted">No ledger rows match.</td></tr>{% endfor %}
+      <tr><td colspan="8" style="text-align:right"><strong>Total</strong></td><td><strong>{{ total_cents|money }}</strong></td><td></td></tr>
+    </table>
+  </div>
+</main>
+{% endblock %}
