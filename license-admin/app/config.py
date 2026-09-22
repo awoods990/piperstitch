@@ -152,6 +152,11 @@ WEB_API_KEY = os.environ.get("WEB_API_KEY", "")
 # Where the web app lives, for Stripe's return URLs after checkout and
 # the billing portal.
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:5173").rstrip("/")
+# Partner links (/r/<CODE>): the cookie's signing secret (SESSION_SECRET when
+# unset) and the domain it is set for (derived from PUBLIC_BASE_URL when unset:
+# `.piperstitch.com`, so www, app, proofs and admin all see it).
+REFERRAL_SECRET = os.environ.get("REFERRAL_SECRET", "")
+REFERRAL_COOKIE_DOMAIN = os.environ.get("REFERRAL_COOKIE_DOMAIN", "")
 # The app server's own address for server-to-server calls (re-digitizing a
 # saved project for the admin's project view). Usually the same as
 # WEB_APP_URL; set separately when the app is on a private hostname.

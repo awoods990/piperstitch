@@ -245,6 +245,20 @@ def record_share_for_payment(*, payment_id: int, subscription_row, customer_id: 
         redemption = db.redemption_for_subscription(subscription_row["id"])
     if redemption is None or redemption["kind"] != "promoter" or not redemption["promoter_id"]:
         return None
+    if redemption["promoter_status"] not in ("active", "approved"):
+        log.info("No share for payment %s: promoter %s is %s", payment_id, redemption["promoter_id"], redemption["promoter_status"])
+        return None
+    paid_at = _invoice_paid_at(invoice)
+    if not redemption["first_payment_at"]:
+        # R3: the commission clock starts at the first successful payment,
+        # written once; from here the attribution is locked (R8/R9).
+        months = redemption["commission_months"]
+        ends = _iso(_add_months(paid_at, int(months))) if months else None
+        db.lock_attribution(redemption["id"], first_payment_at=_iso(paid_at), term_ends_at=ends)
+        redemption = db.redemption_for_customer(customer_id) if customer_id is not None else db.redemption_for_subscription(subscription_row["id"])
+    if redemption["term_ends_at"] and paid_at > datetime.fromisoformat(redemption["term_ends_at"].replace("Z", "+00:00")):
+        # R3/R4: past the term. Invoices keep arriving and are simply ignored.
+        return None
     share_pct = float(redemption["share_pct"] or 0)
     fee = stripe_client.charge_fee_cents(invoice) if invoice else None
     fee_source = "stripe" if fee is not None else "estimate"
@@ -258,6 +272,31 @@ def record_share_for_payment(*, payment_id: int, subscription_row, customer_id: 
         db.add_event(customer_id=customer_id, subscription_id=subscription_row["id"] if subscription_row is not None else None, kind="promo_share",
                      detail=f"${share / 100:.2f} share to {redemption['promoter_name']} ({share_pct:g}% of ${gross_cents / 100:.2f}) for code {redemption['code']}.")
     return payout_id
+
+
+def _invoice_paid_at(invoice: Optional[dict]) -> datetime:
+    if invoice:
+        ts = ((invoice.get("status_transitions") or {}).get("paid_at")) or invoice.get("created")
+        if ts:
+            return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    return _now()
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    """The same day-of-month `months` later (clamped to the shorter month)."""
+    import calendar
+    y, m = dt.year + (dt.month - 1 + months) // 12, (dt.month - 1 + months) % 12 + 1
+    return dt.replace(year=y, month=m, day=min(dt.day, calendar.monthrange(y, m)[1]))
+
+
+def term_month(redemption, now: Optional[datetime] = None) -> Optional[int]:
+    """Which month of the commission term a referral is in (1-based), or
+    None before first payment. Month 24 arrives without surprise."""
+    if not redemption["first_payment_at"]:
+        return None
+    start = datetime.fromisoformat(redemption["first_payment_at"].replace("Z", "+00:00"))
+    now = now or _now()
+    return max(1, (now.year - start.year) * 12 + (now.month - start.month) + 1 - (1 if now.day < start.day else 0))
 
 
 def cycles_remaining(redemption) -> Optional[int]:

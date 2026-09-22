@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, emails, finance, project_view, promotions, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, emails, finance, project_view, promotions, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -207,6 +207,8 @@ class WebVerifyIn(BaseModel):
     email: str
     code: str
     user_agent: str = ""
+    promo_code: str = ""      # a partner code typed at signup (beats the cookie, R8)
+    ref_cookie: str = ""      # the ps_ref cookie the app server saw, if any
 
 
 class WebTokenIn(BaseModel):
@@ -598,7 +600,9 @@ def api_web_signin_request(body: WebEmailIn, x_api_key: Optional[str] = Header(N
 def api_web_signin_verify(body: WebVerifyIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
     try:
-        session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent)
+        session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent, promo_code=body.promo_code, ref_cookie=body.ref_cookie)
+    except promotions.PromoError as e:
+        return JSONResponse({"error": e.code, "message": e.message}, status_code=400)
     except activation.ActivationError as e:
         return _activation_error(e, status=400)
     return {"token": session.token, **web_access.state(token=session.token)}
@@ -902,6 +906,36 @@ def _fulfill_checkout(session: dict, *, stripe_event_id: Optional[str]) -> None:
     name_hint = metadata.get("customer_name") or (session.get("customer_details") or {}).get("name") or ""
     subscriptions.sync_from_stripe(dict(sub), stripe_event_id=stripe_event_id, email_hint=email_hint, name_hint=name_hint)
     db.mark_checkout_completed(session_id)
+
+
+# ------------------------------------------------------- partner links ---
+
+
+@app.get("/r/{code}", response_class=HTMLResponse)
+def referral_link(request: Request, code: str, to: str = ""):
+    """A partner's link (Partner Program §5.2): log the click, set the
+    signed 90-day cookie for the whole piperstitch.com family, and show
+    the partner's landing page -- or pass the visitor on to a marketing
+    page with ?to=/path. An unknown or inactive code just goes home."""
+    try:
+        promo = promotions.validate(code)
+    except promotions.PromoError:
+        return RedirectResponse(config.WEBSITE_BASE_URL + "/", status_code=302)
+    promoter = db.get_promoter(promo["promoter_id"]) if promo["promoter_id"] else None
+    if promo["promoter_id"] and (promoter is None or promoter["status"] not in ("active", "approved") or not promoter["active"]):
+        return RedirectResponse(config.WEBSITE_BASE_URL + "/", status_code=302)
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = (forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")) or ""
+    referrals.record_click(promo["id"], ip=ip, user_agent=request.headers.get("user-agent", ""), landing_path=to or f"/r/{promo['code']}")
+    path = referrals.safe_path(to)
+    if path:
+        response: Response = RedirectResponse(config.WEBSITE_BASE_URL + path, status_code=302)
+    else:
+        response = templates.TemplateResponse(request, "referral_landing.html", {**referrals.landing_context(promo), "config": config})
+    domain = referrals.cookie_domain()
+    response.set_cookie(referrals.COOKIE_NAME, referrals.cookie_value(promo["id"]), max_age=referrals.COOKIE_DAYS * 86400,
+                        domain=domain or None, path="/", secure=config.PUBLIC_BASE_URL.startswith("https"), httponly=False, samesite="lax")
+    return response
 
 
 # ---------------------------------------------------------------- admin ---

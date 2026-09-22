@@ -1448,6 +1448,62 @@ def redemption_for_subscription(subscription_id: int) -> Optional[sqlite3.Row]:
         return conn.execute(_REDEMPTIONS_WITH_CONTEXT + " WHERE r.subscription_id = ? ORDER BY r.redeemed_at DESC LIMIT 1", (subscription_id,)).fetchone()
 
 
+def attribute_customer(*, promotion_id: int, customer_id: int, subscription_id: Optional[int], source: str) -> Optional[int]:
+    """A provisional redemption (Partner Program §5.3): one promotion per
+    customer; while unlocked the latest touch replaces the earlier one;
+    once first payment locks it nothing moves. Returns the redemption's
+    id, or None when a locked attribution already stands."""
+    with connection() as conn:
+        rows = conn.execute("SELECT * FROM promo_redemptions WHERE customer_id = ? ORDER BY attribution_locked DESC, redeemed_at DESC", (customer_id,)).fetchall()
+        locked = [r for r in rows if r["attribution_locked"]]
+        if locked:
+            if locked[0]["promotion_id"] == promotion_id:
+                conn.execute("UPDATE promo_redemptions SET subscription_id = COALESCE(?, subscription_id) WHERE id = ?", (subscription_id, locked[0]["id"]))
+                return locked[0]["id"]
+            return None
+        if rows:
+            conn.execute("UPDATE promo_redemptions SET promotion_id = ?, subscription_id = COALESCE(?, subscription_id), attribution_source = ?, redeemed_at = ? WHERE id = ?",
+                         (promotion_id, subscription_id, source, _now(), rows[0]["id"]))
+            for extra in rows[1:]:
+                conn.execute("DELETE FROM promo_redemptions WHERE id = ? AND attribution_locked = 0 AND first_payment_at IS NULL", (extra["id"],))
+            return rows[0]["id"]
+        cur = conn.execute(
+            "INSERT INTO promo_redemptions (promotion_id, customer_id, subscription_id, stripe_subscription_id, redeemed_at, attribution_source) VALUES (?, ?, ?, NULL, ?, ?)",
+            (promotion_id, customer_id, subscription_id, _now(), source),
+        )
+        return cur.lastrowid
+
+
+def lock_attribution(redemption_id: int, *, first_payment_at: str, term_ends_at: Optional[str]) -> bool:
+    """Writes the commission clock once (R3); False when it was already set."""
+    with connection() as conn:
+        cur = conn.execute("UPDATE promo_redemptions SET first_payment_at = ?, term_ends_at = ?, attribution_locked = 1 WHERE id = ? AND first_payment_at IS NULL",
+                           (first_payment_at, term_ends_at, redemption_id))
+        return cur.rowcount > 0
+
+
+def set_proofs_free_extra(customer_id: int, count: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE customers SET proofs_free_extra = ?, updated_at = ? WHERE id = ?", (int(count), _now(), customer_id))
+
+
+def record_referral_click(*, promotion_id: int, ip_hash: str, user_agent: str, landing_path: str) -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO referral_clicks (promotion_id, clicked_at, ip_hash, user_agent, landing_path) VALUES (?, ?, ?, ?, ?)",
+                           (promotion_id, _now(), ip_hash, user_agent, landing_path))
+        return cur.lastrowid
+
+
+def list_referral_clicks(promotion_id: int, limit: int = 500) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM referral_clicks WHERE promotion_id = ? ORDER BY clicked_at DESC LIMIT ?", (promotion_id, limit)).fetchall()
+
+
+def count_referral_clicks(promotion_id: int) -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM referral_clicks WHERE promotion_id = ?", (promotion_id,)).fetchone()[0]
+
+
 def redemption_for_customer(customer_id: int) -> Optional[sqlite3.Row]:
     """The redemption that attributes this *customer* -- every subscription
     they hold (the app and Proofs are separate rows) earns on it. A

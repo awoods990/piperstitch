@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ promoter.name if promoter else 'A friend' }} sent you — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <p class="muted small" style="margin:0 0 6px; letter-spacing:.08em; text-transform:uppercase">{{ promoter.name if promoter else 'A partner' }} sent you</p>
+    <h1>{% if trial_days != config.TRIAL_DAYS or proofs != config.PROOFS_FREE_PROOFS %}Your {{ trial_days }}-day free trial{% if proofs > config.PROOFS_FREE_PROOFS %} and {{ proofs }} proofs{% endif %}.{% else %}Your free trial.{% endif %}</h1>
+    <p>PiperStitch turns any image into embroidery: drop in artwork, click once, get a machine-ready file &mdash; and send a stitch-accurate proof whoever it&rsquo;s for can approve from their phone.</p>
+    <p>{% if description %}Through {{ promoter.name if promoter else 'this link' }} you get <strong>{{ description }}</strong>.{% endif %} No card, nothing to install.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:18px">
+      <a class="button" href="{{ app_url }}">Start your free trial</a>
+      <a class="button secondary" href="{{ config.WEBSITE_BASE_URL }}/how-it-works.html">See how it works</a>
+    </div>
+    <p class="muted small" style="margin-top:18px">If you sign up another way, type the code <strong style="font-family:ui-monospace,monospace">{{ code }}</strong> when you start &mdash; that&rsquo;s how {{ promoter.name if promoter else 'your partner' }} gets credit.</p>
+  </div>
+</main>
+{% endblock %}

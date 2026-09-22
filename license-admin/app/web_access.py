@@ -25,7 +25,7 @@ from urllib.parse import quote
 
 import logging
 
-from . import config, db, email_sender, emails, promotions, stripe_client, subscriptions
+from . import config, db, email_sender, emails, promotions, referrals, stripe_client, subscriptions
 
 log = logging.getLogger("license_admin")
 from .activation import MAX_CODES_PER_HOUR, MAX_VERIFY_ATTEMPTS, ActivationError
@@ -115,7 +115,7 @@ class WebSession:
     session_row_id: int
 
 
-def verify_code(*, email: str, code: str, user_agent: str = "") -> WebSession:
+def verify_code(*, email: str, code: str, user_agent: str = "", promo_code: str = "", ref_cookie: str = "") -> WebSession:
     email = email.strip().lower()
     row = db.latest_activation_code(email, WEB_DEVICE_ID)
     if row is None or _expired(row["expires_at"]):
@@ -133,7 +133,13 @@ def verify_code(*, email: str, code: str, user_agent: str = "") -> WebSession:
         # at checkout; Stripe's name then flows back through the webhook.
         customer_id = db.upsert_customer(name=email.split("@", 1)[0].replace(".", " ").title(), email=email, source="web_trial")
         customer = db.get_customer(customer_id)
-    _start_trial_if_first_visit(customer)
+    # Partner attribution at trial start (spec §9): a typed code beats the
+    # link cookie (R8); the perks (longer trial, extra proofs) apply now,
+    # the commission attribution is provisional until first payment.
+    promo, source = referrals.resolve_for_signup(typed_code=promo_code, cookie=ref_cookie, email=email)
+    trial_subscription_id = _start_trial_if_first_visit(customer, promo)
+    if promo is not None:
+        referrals.attribute_customer(customer["id"], promo, source=source, subscription_id=trial_subscription_id)
     _record_terms_acceptance(customer)
 
     token = secrets.token_urlsafe(32)
@@ -153,13 +159,15 @@ def _record_terms_acceptance(customer) -> None:
     db.add_event(customer_id=customer["id"], subscription_id=None, kind="terms_accepted", detail=f"Accepted Terms v{config.TERMS_VERSION} by signing in on the web.")
 
 
-def _start_trial_if_first_visit(customer) -> Optional[int]:
+def _start_trial_if_first_visit(customer, promo=None) -> Optional[int]:
     """One trial per email, ever: only an account with no subscription row
-    of any kind (never trialed, never paid, never comped) gets one."""
+    of any kind (never trialed, never paid, never comped) gets one. A
+    partner's code can make it longer (`promotions.trial_days`, §9)."""
     if db.best_subscription_for_customer(customer["id"]) is not None:
         return None
     now = _now()
-    until = now + timedelta(days=config.TRIAL_DAYS)
+    trial_days = referrals.trial_days_for(promo)
+    until = now + timedelta(days=trial_days)
     subscription_id = db.upsert_subscription(
         customer_id=customer["id"],
         stripe_subscription_id=None,
@@ -174,7 +182,7 @@ def _start_trial_if_first_visit(customer) -> Optional[int]:
         amount_cents=0,
         notes=TRIAL_NOTE,
     )
-    db.add_event(customer_id=customer["id"], subscription_id=subscription_id, kind="trial_started", detail=f"{config.TRIAL_DAYS}-day web trial through {_iso(until)[:10]}.")
+    db.add_event(customer_id=customer["id"], subscription_id=subscription_id, kind="trial_started", detail=f"{trial_days}-day web trial through {_iso(until)[:10]}.")
     emails.enroll(customer["id"], "trial", start=now)
     return subscription_id
 
@@ -251,6 +259,12 @@ def checkout_url(*, token: str, promo_code: str = "") -> str:
     if validity.entitled and validity.status in ("active", "past_due"):
         raise ActivationError("already_subscribed", "This account already has an active subscription — use Manage billing instead.")
     promotion = promotions.validate(promo_code, email=customer["email"]) if promo_code.strip() else None
+    if promotion is None:
+        # A partner code captured at trial start (or a link) attributes the
+        # paid subscription too: it rides to Stripe on the metadata.
+        existing = db.redemption_for_customer(customer["id"])
+        if existing is not None and existing["kind"] == "promoter" and existing["promoter_status"] in ("active", "approved"):
+            promotion = db.get_promotion(existing["promotion_id"])
     checkout = stripe_client.create_subscription_checkout(
         customer_name=customer["name"], customer_email=customer["email"], customer_id=customer["id"],
         success_url=f"{config.WEB_APP_URL}/?subscribed=1", cancel_url=f"{config.WEB_APP_URL}/?subscribed=0", promotion=promotion,
