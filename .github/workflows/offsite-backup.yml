@@ -38,16 +38,23 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.BACKUP_REGION || 'us-east-1' }}
           ENDPOINT: ${{ secrets.BACKUP_ENDPOINT }}
           BUCKET: ${{ secrets.BACKUP_BUCKET }}
+          # DigitalOcean Spaces (and most S3-compatible services) reject the
+          # checksum headers AWS CLI v2.23+ began sending by default. Our own
+          # uploader signs plain PUTs, which is why the services back up
+          # happily while this step did not.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
         run: |
           set -euo pipefail
           if [ -z "${BUCKET:-}" ]; then
-            echo "::warning::No bucket configured — add the BACKUP_* secrets to this repository." && exit 0
+            echo "::warning::No bucket configured — add the BACKUP_* secrets to this repository."
+            exit 0
           fi
+          echo "Uploading to $ENDPOINT/$BUCKET as region ${AWS_DEFAULT_REGION}"
           aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle" "s3://$BUCKET/repository/piperstitch-${STAMP}.bundle"
           aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle.sha256" "s3://$BUCKET/repository/piperstitch-${STAMP}.bundle.sha256"
           # Read it back: an upload nobody checked is a belief, not a backup.
           aws --endpoint-url "$ENDPOINT" s3 cp "s3://$BUCKET/repository/piperstitch-${STAMP}.bundle" check.bundle
-          sha256sum -c "piperstitch-${STAMP}.bundle.sha256" < /dev/null || true
           test "$(sha256sum check.bundle | cut -d' ' -f1)" = "$(cut -d' ' -f1 "piperstitch-${STAMP}.bundle.sha256")"
           git bundle verify check.bundle
           echo "Verified: the bundle in the bucket is a complete, clonable repository."
@@ -59,9 +66,13 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.BACKUP_REGION || 'us-east-1' }}
           ENDPOINT: ${{ secrets.BACKUP_ENDPOINT }}
           BUCKET: ${{ secrets.BACKUP_BUCKET }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
         run: |
           set -euo pipefail
-          [ -z "${BUCKET:-}" ] && exit 0
+          if [ -z "${BUCKET:-}" ]; then
+            exit 0
+          fi
           keys="$(aws --endpoint-url "$ENDPOINT" s3 ls "s3://$BUCKET/repository/" | awk '{print $4}' | grep '\.bundle$' | sort)"
           count="$(echo "$keys" | wc -l)"
           if [ "$count" -gt 12 ]; then
