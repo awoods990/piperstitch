@@ -207,6 +207,22 @@ struct RefreshedSessionKey: StorageKey { typealias Value = Bool }
 /// Gates the engine routes: signed in and entitled (trial or paid), or
 /// accounts are off. On a refreshed session the renewed cookie rides
 /// along with the response so the re-check isn't repeated.
+/// What a browser should be told about how to treat our pages: don't
+/// guess content types, don't let another site frame us, don't leak the
+/// full URL to third parties, and stay on HTTPS once you've arrived.
+struct SecurityHeaders: AsyncMiddleware {
+    func respond(to request: Request, chainingTo next: AsyncResponder) async throws -> Response {
+        let response = try await next.respond(to: request)
+        response.headers.replaceOrAdd(name: "X-Content-Type-Options", value: "nosniff")
+        response.headers.replaceOrAdd(name: "X-Frame-Options", value: "DENY")
+        response.headers.replaceOrAdd(name: "Referrer-Policy", value: "strict-origin-when-cross-origin")
+        if request.application.environment == .production {
+            response.headers.replaceOrAdd(name: "Strict-Transport-Security", value: "max-age=15552000; includeSubDomains")
+        }
+        return response
+    }
+}
+
 struct EntitlementGate: AsyncMiddleware {
     func respond(to request: Request, chainingTo next: AsyncResponder) async throws -> Response {
         guard request.application.auth.enabled else { return try await next.respond(to: request) }

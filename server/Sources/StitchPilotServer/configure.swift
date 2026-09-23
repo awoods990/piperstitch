@@ -13,6 +13,17 @@ func configure(_ app: Application) throws {
     app.http.server.configuration.hostname = Environment.get("HOST") ?? "0.0.0.0"
     app.auth = AuthConfig.fromEnvironment(app)
 
+    // Fail closed. Without a License Admin URL the entitlement gate lets
+    // everyone through -- which is what you want on a laptop and a
+    // catastrophe in production, where it quietly turns the paywall off.
+    // Refusing to boot makes a missing variable a failed deploy (Railway
+    // keeps the previous one running) instead of a free engine nobody
+    // notices.
+    if app.environment == .production && !app.auth.enabled {
+        app.logger.critical("LICENSE_ADMIN_URL is not set: the entitlement gate would let everyone in. Refusing to start.")
+        throw Abort(.internalServerError, reason: "LICENSE_ADMIN_URL is required in production")
+    }
+
     // Development: the Vite dev server (another origin) talks to us
     // directly. Production serves the built web app from this same process
     // (see below), so cross-origin requests are normally none at all.
@@ -25,6 +36,7 @@ func configure(_ app: Application) throws {
         allowCredentials: true
     ))
     app.middleware.use(cors, at: .beginning)
+    app.middleware.use(SecurityHeaders())
 
     // The built web app, when present (Docker copies web/dist here). Any
     // path that isn't an API route falls through to index.html so the

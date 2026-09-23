@@ -1,5 +1,6 @@
 import Foundation
 import StitchPilotCore
+import Vapor
 
 /// Runs the engine's CPU-bound, synchronous work off Vapor's event loops,
 /// at most one job per core at a time. A full digitize is ~0.4 s on Apple
@@ -8,10 +9,16 @@ import StitchPilotCore
 /// thrashing or a request timing out.
 enum Engine {
     private static let queue = DispatchQueue(label: "com.piperstitch.engine", qos: .userInitiated, attributes: .concurrent)
-    private static let limiter = JobLimiter(maxConcurrent: max(1, ProcessInfo.processInfo.activeProcessorCount))
+    private static let limiter = JobLimiter(maxConcurrent: max(1, ProcessInfo.processInfo.activeProcessorCount),
+                                            maxWaiting: max(8, ProcessInfo.processInfo.activeProcessorCount * 8))
 
     static func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-        await limiter.acquire()
+        guard await limiter.acquire() else {
+            // Queueing without limit turns a burst into a wall of requests
+            // that all time out. Better to tell the few at the back to try
+            // again than to fail everyone slowly.
+            throw Abort(.serviceUnavailable, reason: "PiperStitch is busy right now — try that again in a few seconds.")
+        }
         defer { Task { await limiter.release() } }
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
@@ -23,18 +30,26 @@ enum Engine {
 
 actor JobLimiter {
     private let maxConcurrent: Int
+    private let maxWaiting: Int
     private var running = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    init(maxConcurrent: Int) { self.maxConcurrent = maxConcurrent }
+    init(maxConcurrent: Int, maxWaiting: Int = .max) {
+        self.maxConcurrent = maxConcurrent
+        self.maxWaiting = maxWaiting
+    }
 
-    func acquire() async {
+    /// False when the queue is already as long as we're willing to let it
+    /// get; the caller should turn the request away.
+    func acquire() async -> Bool {
         if running < maxConcurrent {
             running += 1
-            return
+            return true
         }
+        guard waiters.count < maxWaiting else { return false }
         await withCheckedContinuation { waiters.append($0) }
         running += 1
+        return true
     }
 
     func release() {

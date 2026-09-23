@@ -60,6 +60,22 @@ func authRoutes(_ api: RoutesBuilder) {
         return ["sent": out.sent]
     }
 
+    // The browser app fell over. Relayed rather than posted directly:
+    // the app must never hold the License Admin key. Failures here are
+    // swallowed on purpose -- a crash report that itself errors would be
+    // a poor way to learn about a crash.
+    auth.post("client-error") { req -> [String: Bool] in
+        guard req.application.auth.enabled else { return ["recorded": false] }
+        struct Body: Content { var name: String?; var message: String?; var page: String?; var stack: String? }
+        struct In: Content { var name: String; var message: String; var page: String; var stack: String }
+        let body = (try? req.content.decode(Body.self)) ?? Body(name: nil, message: nil, page: nil, stack: nil)
+        struct Out: Decodable { var recorded: Bool }
+        let payload = In(name: String((body.name ?? "Error").prefix(120)), message: String((body.message ?? "").prefix(500)),
+                         page: String((body.page ?? "").prefix(200)), stack: String((body.stack ?? "").prefix(4000)))
+        let out = try? await req.licenseAdmin.post("/api/web/client-error", payload, as: Out.self)
+        return ["recorded": out?.recorded ?? false]
+    }
+
     auth.post("verify") { req -> Response in
         try requireEnabled(req)
         // A partner code (typed, or remembered from ?ref=) and the partner
