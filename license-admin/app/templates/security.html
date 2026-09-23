@@ -27,5 +27,16 @@
       <p><a class="button" href="/admin/security?generate=1">Set it up</a></p>
     {% endif %}
   </div>
+
+  <div class="card">
+    <h2>Tax forms at rest</h2>
+    {% if documents_encrypted %}
+      <p><span class="pill active">encrypted</span> Partners' W-9s and W-8BENs are encrypted in the database{% if documents_plain %} &mdash; except {{ documents_plain }} stored before the key was set{% endif %}.</p>
+      {% if documents_plain %}<p class="muted small">Run <span class="mono">scripts/encrypt_documents.py</span> once to bring those in.</p>{% endif %}
+    {% else %}
+      <p><span class="pill no">not encrypted</span> {{ documents_held }} tax form{{ '' if documents_held == 1 else 's' }} held. A W-9 carries a Social Security number, and as it stands that number is in the database and in every snapshot of it.</p>
+      <p class="muted small">Generate a key with <span class="mono">scripts/generate_document_key.py</span>, set it as <span class="mono">DOCUMENT_ENCRYPTION_KEY</span> on this service, redeploy, then run <span class="mono">scripts/encrypt_documents.py</span> once. Keep a copy of the key somewhere safe &mdash; without it the forms can't be read, which is both the point and the risk.</p>
+    {% endif %}
+  </div>
 </main>
 {% endblock %}

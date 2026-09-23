@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
-from . import config, db, email_sender, promotions
+from . import config, db, documents, email_sender, promotions
 
 log = logging.getLogger("license_admin.partners")
 
@@ -249,7 +249,7 @@ def store_document(promoter, *, kind: str, filename: str, content_type: str, raw
     if content_type not in DOCUMENT_TYPES:
         raise PartnerError("file", "Send a PDF, or a photo as PNG, JPEG or HEIC.")
     document_id = db.add_partner_document(promoter_id=promoter["id"], kind=kind, filename=filename or f"tax-form{DOCUMENT_TYPES[content_type]}",
-                                          content_type=content_type, data=base64.b64encode(raw).decode(), size_bytes=len(raw))
+                                          content_type=content_type, data=documents.seal(raw), size_bytes=len(raw))
     db.update_partner_fields(promoter["id"], tax_form_type=kind if kind != "other" else promoter["tax_form_type"])
     try:
         email_sender.send_plain_email(

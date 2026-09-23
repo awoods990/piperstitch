@@ -273,3 +273,39 @@ def test_without_an_authenticator_nothing_changes(isolated_db, test_keypair, adm
         assert r.status_code == 303 and client.get("/admin").status_code == 200
         assert "Set it up" in client.get("/admin/security").text
         assert "ADMIN_TOTP_SECRET=" in client.get("/admin/security?generate=1").text
+
+
+def test_a_tax_form_is_encrypted_at_rest_when_a_key_is_set(isolated_db, test_keypair, fake_smtp, admin_password_configured, monkeypatch):
+    """A W-9 carries a Social Security number; plain base64 puts it in
+    every copy of the database."""
+    from app import documents, partners
+
+    monkeypatch.setattr(config, "DOCUMENT_ENCRYPTION_KEY", "5yJmPk0oQmZ0ZXN0LW9ubHkta2V5LWZvci10ZXN0cw")
+    pid = db.create_promoter(name="Kathleen", email="kathleen@example.com", default_share_pct=30)
+    promoter = db.get_promoter(pid)
+    partners.store_document(promoter, kind="w9", filename="w9.pdf", content_type="application/pdf", raw=b"%PDF-1.4 123-45-6789")
+
+    stored = db.list_partner_documents_with_data()[0]["data"]
+    assert documents.is_sealed(stored) and "123-45-6789" not in stored
+    # The admin still reads it, and it is never cached.
+    doc = db.list_partner_documents(pid)[0]
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.get(f"/admin/partner-documents/{doc['id']}")
+        assert r.content == b"%PDF-1.4 123-45-6789" and "no-store" in r.headers["cache-control"]
+        assert "encrypted" in client.get("/admin/security").text
+    # Without the key it stays shut rather than serving rubbish.
+    monkeypatch.setattr(config, "DOCUMENT_ENCRYPTION_KEY", "")
+    with pytest.raises(ValueError):
+        documents.open_(stored)
+
+
+def test_forms_stored_before_the_key_still_open(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    from app import documents, partners
+
+    monkeypatch.setattr(config, "DOCUMENT_ENCRYPTION_KEY", "")
+    pid = db.create_promoter(name="Early", email="early@example.com", default_share_pct=30)
+    partners.store_document(db.get_promoter(pid), kind="w9", filename="old.pdf", content_type="application/pdf", raw=b"older form")
+    monkeypatch.setattr(config, "DOCUMENT_ENCRYPTION_KEY", "5yJmPk0oQmZ0ZXN0LW9ubHkta2V5LWZvci10ZXN0cw")
+    stored = db.list_partner_documents_with_data()[0]["data"]
+    assert not documents.is_sealed(stored) and documents.open_(stored) == b"older form"

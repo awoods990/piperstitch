@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, documents, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -1399,6 +1399,8 @@ def admin_security(request: Request, generate: str = ""):
     return templates.TemplateResponse(request, "security.html", {
         "active_nav": "security", "enabled": auth.totp_required(), "secret": secret,
         "qr": partners.qr_svg(auth.totp_uri(secret)) if secret else None,
+        "documents_encrypted": documents.enabled(), "documents_held": len(db.list_partner_documents()),
+        "documents_plain": sum(0 if documents.is_sealed(d["data"]) else 1 for d in db.list_partner_documents_with_data()),
     })
 
 
@@ -2206,8 +2208,14 @@ def admin_partner_document(document_id: int):
     doc = db.get_partner_document(document_id)
     if doc is None:
         raise HTTPException(status_code=404)
-    return Response(base64.b64decode(doc["data"]), media_type=doc["content_type"],
-                    headers={"Content-Disposition": f'inline; filename="{doc["promoter_name"].replace(chr(34), "")}-{doc["kind"]}-{doc["filename"]}"'})
+    try:
+        raw = documents.open_(doc["data"])
+    except ValueError as e:
+        return _promoter_redirect(doc["promoter_id"], error=str(e))
+    return Response(raw, media_type=doc["content_type"], headers={
+        "Content-Disposition": f'inline; filename="{doc["promoter_name"].replace(chr(34), "")}-{doc["kind"]}-{doc["filename"]}"',
+        "Cache-Control": "no-store, private",       # a tax form has no business in a cache
+    })
 
 
 @app.post("/admin/partner-documents/{document_id}", dependencies=[Depends(auth.require_admin)])

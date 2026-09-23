@@ -50,6 +50,13 @@ SESSION_COOKIE_SECURE = _bool("SESSION_COOKIE_SECURE")
 # authenticator app. Unset means password only, exactly as before --
 # nobody is locked out by upgrading. /admin/security generates one.
 ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").replace(" ", "").upper()
+# Tax forms hold a Social Security or EIN number, and they sit in the same
+# database as everything else -- and in every snapshot of it. With this set
+# they are encrypted at rest and only decrypted to be read by an admin.
+# Deliberately its own key, not SESSION_SECRET: rotating a session secret
+# must never make somebody's W-9 unreadable. Generate with
+# scripts/generate_document_key.py.
+DOCUMENT_ENCRYPTION_KEY = os.environ.get("DOCUMENT_ENCRYPTION_KEY", "")
 
 # --- Stripe ------------------------------------------------------------
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")

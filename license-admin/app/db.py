@@ -1841,6 +1841,13 @@ def list_partner_documents(promoter_id: Optional[int] = None, *, pending_only: b
         return conn.execute(sql, args).fetchall()
 
 
+def list_partner_documents_with_data() -> list[sqlite3.Row]:
+    """Only for asking which are encrypted; everything else uses the
+    listing that leaves the bytes behind."""
+    with connection() as conn:
+        return conn.execute("SELECT id, data FROM partner_documents").fetchall()
+
+
 def decide_partner_document(document_id: int, *, accepted: bool, by: str = "admin", note: str = "") -> None:
     with connection() as conn:
         if accepted:
