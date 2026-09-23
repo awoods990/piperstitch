@@ -1,0 +1,27 @@
+{% extends "admin_base.html" %}
+{% block title %}Errors — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  <div class="toolbar">
+    <div><h1 style="margin:0">Errors</h1><div class="muted small">Every failure a customer met, grouped by where it came from. The first of each kind is emailed; the rest are counted here.</div></div>
+    <div class="muted small">{% if showing_all %}<a href="/admin/errors">Only what's outstanding</a>{% else %}<a href="/admin/errors?all=1">Show dealt-with too</a>{% endif %}</div>
+  </div>
+  <div class="card">
+    <table>
+      <tr><th>Last seen</th><th>What</th><th>Where</th><th>Times</th><th></th></tr>
+      {% for e in rows %}
+      <tr{% if e.resolved_at %} style="opacity:.55"{% endif %}>
+        <td class="muted small">{{ e.last_seen_at|short_dt }}<br><span class="muted">first {{ e.first_seen_at|short_date }}</span></td>
+        <td><span class="pill {{ 'incomplete' if e.source == 'server' else 'trialing' }}">{{ e.source }}</span> <strong>{{ e.kind }}</strong>
+          <div class="small">{{ e.message }}</div>
+          {% if e.detail %}<details><summary class="muted small">Detail</summary><pre class="small" style="white-space:pre-wrap; overflow-x:auto">{{ e.detail }}</pre></details>{% endif %}</td>
+        <td class="mono small">{{ e.where_ }}</td>
+        <td><strong>{{ e.count }}</strong></td>
+        <td>{% if e.resolved_at %}<span class="pill yes">dealt with</span>{% else %}<form method="post" action="/admin/errors/{{ e.id }}/resolve"><button class="small secondary" type="submit">Mark dealt with</button></form>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="muted">Nothing has broken. That is the correct number of errors.</td></tr>{% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

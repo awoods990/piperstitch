@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, emails, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -112,6 +112,30 @@ async def _guard_and_harden(request: Request, call_next):
     return response
 
 
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """A 500 used to scroll past in the logs. Now it is a row in the
+    admin's error page, and the first of its kind is an email."""
+    errors.capture(exc, where=f"{request.method} {request.url.path}")
+    if request.url.path.startswith(("/api/", "/webhooks/")):
+        return JSONResponse({"error": "server_error", "message": "Something went wrong at our end. It's been reported."}, status_code=500)
+    return templates.TemplateResponse(request, "error.html", {}, status_code=500)
+
+
+@app.get("/admin/errors", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_errors(request: Request, all: str = "", message: str = ""):
+    return templates.TemplateResponse(request, "errors.html", {
+        "active_nav": "errors", "rows": db.list_errors(unresolved_only=not all), "showing_all": bool(all),
+        "unresolved": db.count_unresolved_errors(), "message": message or None,
+    })
+
+
+@app.post("/admin/errors/{error_id}/resolve", dependencies=[Depends(auth.require_admin)])
+def admin_error_resolve(error_id: int):
+    db.resolve_error(error_id)
+    return RedirectResponse("/admin/errors?message=" + quote_plus("Marked as dealt with — it'll come back if it happens again."), status_code=303)
+
+
 @app.get("/robots.txt", include_in_schema=False)
 def robots() -> Response:
     """Nothing here belongs in a search index: it is somebody's account
@@ -139,7 +163,8 @@ def _price_label() -> str:
 
 templates.env.globals.update(price_label=_price_label, config=config, max_devices=config.MAX_DEVICES, unreviewed_feedback_count=db.count_feedback_unreviewed,
                               partner_applications_count=lambda: db.count_partners_by_status().get("applied", 0),
-                              year_now=lambda: datetime.now(timezone.utc).year)
+                              year_now=lambda: datetime.now(timezone.utc).year,
+                              unresolved_error_count=db.count_unresolved_errors)
 
 
 def _browser_name(user_agent: str) -> str:
@@ -228,6 +253,13 @@ class ActivateVerifyIn(BaseModel):
 
 class DeviceTokenIn(BaseModel):
     device_token: str
+
+
+class ClientErrorIn(BaseModel):
+    name: str = ""
+    message: str = ""
+    page: str = ""
+    stack: str = ""
 
 
 class WebEmailIn(BaseModel):
@@ -673,6 +705,17 @@ def api_billing_portal(body: DeviceTokenIn):
 def _require_web_key(x_api_key: Optional[str]) -> None:
     if not config.WEB_API_KEY or not x_api_key or not hmac.compare_digest(x_api_key, config.WEB_API_KEY):
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+@app.post("/api/web/client-error")
+def api_client_error(request: Request, body: ClientErrorIn, x_api_key: Optional[str] = Header(None)):
+    """The browser app telling us it fell over. Limited per caller: a
+    crash loop must not become a denial of service against ourselves."""
+    _require_web_key(x_api_key)
+    if not ratelimit.allow(request, bucket="form"):
+        return {"recorded": False}
+    errors.capture_browser(name=body.name[:120], message=body.message[:500], page=body.page[:200], stack=body.stack[:4000])
+    return {"recorded": True}
 
 
 @app.post("/api/web/signin/request")

@@ -322,6 +322,24 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS error_log (
+    -- Anything that reached a customer as a 500, and anything the browser
+    -- app crashed on. Grouped by fingerprint so a storm is one row with a
+    -- count rather than ten thousand.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL DEFAULT 'server',   -- server | browser
+    kind TEXT NOT NULL DEFAULT '',           -- exception class, or the browser's error name
+    message TEXT NOT NULL DEFAULT '',
+    where_ TEXT NOT NULL DEFAULT '',         -- route, or the page it happened on
+    detail TEXT NOT NULL DEFAULT '',         -- traceback / stack, trimmed
+    count INTEGER NOT NULL DEFAULT 1,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_error_log_seen ON error_log(last_seen_at);
+
 CREATE TABLE IF NOT EXISTS partner_documents (
     -- A partner's tax form (W-9 / W-8BEN). Held as base64 in this
     -- database for the same reason the feedback images are: it is the
@@ -1756,6 +1774,41 @@ def count_partner_prospects() -> dict:
         r = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied, "
                          "SUM(CASE WHEN last_seen_at IS NULL THEN 1 ELSE 0 END) AS never_opened FROM partner_prospects").fetchone()
     return {"total": r["total"] or 0, "applied": r["applied"] or 0, "never_opened": r["never_opened"] or 0}
+
+
+# ------------------------------------------------------------- errors --
+
+
+def record_error(*, fingerprint: str, source: str, kind: str, message: str, where: str, detail: str) -> bool:
+    """Returns True the first time this fingerprint is seen, so the caller
+    knows whether it is worth an email."""
+    with connection() as conn:
+        existing = conn.execute("SELECT id FROM error_log WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        if existing:
+            conn.execute("UPDATE error_log SET count = count + 1, last_seen_at = ?, resolved_at = NULL WHERE id = ?", (_now(), existing["id"]))
+            return False
+        conn.execute(
+            "INSERT INTO error_log (fingerprint, source, kind, message, where_, detail, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (fingerprint, source, kind[:120], message[:500], where[:200], detail[:4000], _now(), _now()))
+        return True
+
+
+def list_errors(*, unresolved_only: bool = False, limit: int = 100) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM error_log"
+    if unresolved_only:
+        sql += " WHERE resolved_at IS NULL"
+    with connection() as conn:
+        return conn.execute(sql + " ORDER BY resolved_at IS NOT NULL, last_seen_at DESC LIMIT ?", (limit,)).fetchall()
+
+
+def resolve_error(error_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE error_log SET resolved_at = ? WHERE id = ?", (_now(), error_id))
+
+
+def count_unresolved_errors() -> int:
+    with connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM error_log WHERE resolved_at IS NULL").fetchone()[0]
 
 
 # ------------------------------------------------- documents (tax forms) --

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Something went wrong — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <h1>That didn&rsquo;t work.</h1>
+    <p>Something broke at our end, not yours. It&rsquo;s been reported and we&rsquo;ll look at it.</p>
+    <p class="muted small">Try again in a moment. If it keeps happening, email <a href="mailto:{{ config.REPLY_TO_EMAIL }}">{{ config.REPLY_TO_EMAIL }}</a> and tell us what you were doing &mdash; that&rsquo;s usually all we need.</p>
+  </div>
+</main>
+{% endblock %}

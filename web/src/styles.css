@@ -602,3 +602,10 @@ a.choice { text-decoration: none; }
 .get-piper-steps { margin: 0 0 10px; padding-left: 18px; font-size: 13.5px; color: var(--ink2); }
 .get-piper-steps li { margin: 2px 0; }
 @media (max-width: 600px) { .get-piper { flex-direction: column; align-items: flex-start; } }
+
+/* The last resort: what a customer sees if the app itself crashes. */
+.crash { max-width: 560px; margin: 14vh auto; padding: 0 24px; text-align: center; }
+.crash h1 { font-size: 1.6rem; margin: 0 0 12px; }
+.crash p { color: var(--muted, #6a7280); line-height: 1.6; margin: 0 0 10px; }
+.crash-hint { font-size: .92rem; }
+.crash-actions { display: flex; gap: 10px; justify-content: center; margin-top: 22px; flex-wrap: wrap; }

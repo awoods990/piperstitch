@@ -16,6 +16,7 @@
       <a href="/admin/financials" class="{% if active_nav == 'financials' %}active{% endif %}">Financials</a>
       <a href="/admin/feedback" class="{% if active_nav == 'feedback' %}active{% endif %}">Feedback{% set n = unreviewed_feedback_count() %}{% if n %} <span class="pill" style="padding:1px 7px; font-size:.75em">{{ n }}</span>{% endif %}</a>
       <a href="/admin/updates" class="{% if active_nav == 'updates' %}active{% endif %}">Updates</a>
+      <a href="/admin/errors" class="{% if active_nav == 'errors' %}active{% endif %}">Errors{% set n = unresolved_error_count() %}{% if n %} <span class="pill" style="padding:1px 7px; font-size:.75em; background:#fdeaea; color:#b3252c">{{ n }}</span>{% endif %}</a>
       <a href="/admin/go-live" class="{% if active_nav == 'go_live' %}active{% endif %}">Go live</a>
     </nav>
     <form method="post" action="/admin/logout"><button type="submit">Sign out</button></form>

@@ -188,3 +188,43 @@ def test_erasure_waits_until_the_subscription_is_cancelled(isolated_db, test_key
     r = client.post("/account/delete", data={"confirm": "DELETE"}, follow_redirects=False)
     assert "Cancel+your+subscription+first" in r.headers["location"]
     assert db.get_customer(session.customer_id)["email"] == "paying@example.com"
+
+
+def test_a_failure_is_recorded_grouped_and_emailed_once(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import errors
+
+    errors.reset_alert_window()
+    boom = ValueError("the wheels came off")
+    try:
+        raise boom
+    except ValueError as e:
+        errors.capture(e, where="GET /admin/subscribers")
+        fake_smtp.sent.clear()
+        errors.capture(e, where="GET /admin/subscribers")          # same place, same problem
+    rows = db.list_errors()
+    assert len(rows) == 1 and rows[0]["count"] == 2 and rows[0]["kind"] == "ValueError"
+    assert fake_smtp.sent == []                                    # the second one is a count, not another email
+    assert db.count_unresolved_errors() == 1
+
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        page = client.get("/admin/errors").text
+        assert "the wheels came off" in page and "GET /admin/subscribers" in page
+        client.post(f"/admin/errors/{rows[0]['id']}/resolve")
+        assert db.count_unresolved_errors() == 0
+        assert "the wheels came off" not in client.get("/admin/errors").text
+        assert "the wheels came off" in client.get("/admin/errors?all=1").text
+
+
+def test_the_browser_app_can_report_its_own_crash(isolated_db, test_keypair, fake_smtp, monkeypatch, client):
+    from app import errors
+
+    errors.reset_alert_window()
+    monkeypatch.setattr(config, "WEB_API_KEY", "web-key")
+    payload = {"name": "TypeError", "message": "x is not a function", "page": "/editor", "stack": "at Editor.tsx:120"}
+    assert client.post("/api/web/client-error", json=payload).status_code == 401      # the key is what proves it's our app
+    r = client.post("/api/web/client-error", json=payload, headers={"x-api-key": "web-key"})
+    assert r.status_code == 200 and r.json()["recorded"] is True
+    row = db.list_errors()[0]
+    assert row["source"] == "browser" and row["kind"] == "TypeError" and row["where_"] == "/editor"
+    assert any("TypeError" in m["Subject"] for m in fake_smtp.sent)
