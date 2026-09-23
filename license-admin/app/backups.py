@@ -127,8 +127,17 @@ def _endpoint() -> tuple[str, str]:
 
 
 def _request(method: str, key: str, *, body: bytes = b"", query: str = "") -> httpx.Response:
+    """Path-style (`host/bucket/key`) suits Backblaze, R2, Spaces and
+    Wasabi; AWS has deprecated it for newer buckets and wants the bucket
+    in the hostname instead. BACKUP_PATH_STYLE=false picks the latter, so
+    the choice of provider stays yours."""
     base, host = _endpoint()
-    path = f"/{config.BACKUP_BUCKET}/{quote(key)}" if key else f"/{config.BACKUP_BUCKET}"
+    if config.BACKUP_PATH_STYLE:
+        path = f"/{config.BACKUP_BUCKET}/{quote(key)}" if key else f"/{config.BACKUP_BUCKET}"
+    else:
+        host = f"{config.BACKUP_BUCKET}.{host}"
+        base = base.split("://", 1)[0] + "://" + host
+        path = f"/{quote(key)}" if key else "/"
     payload_sha = hashlib.sha256(body).hexdigest()
     headers = authorization(method=method, host=host, path=path, payload_sha=payload_sha, now=datetime.now(timezone.utc),
                             access_key=config.BACKUP_ACCESS_KEY, secret_key=config.BACKUP_SECRET_KEY, region=config.BACKUP_REGION, query=query)

@@ -127,3 +127,32 @@ def test_a_stale_backup_is_reported_as_stale(isolated_db, monkeypatch):
     with db.connection() as conn:
         conn.execute("UPDATE backup_runs SET created_at = ?", ((datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds") + "Z",))
     assert backups.status()["stale"] is True
+
+
+@pytest.mark.parametrize("path_style, expect_host, expect_path", [
+    (True, "s3.example.com", "/piperstitch/license-admin/x.tar.gz"),
+    (False, "piperstitch.s3.example.com", "/license-admin/x.tar.gz"),
+])
+def test_it_speaks_to_either_kind_of_provider(monkeypatch, path_style, expect_host, expect_path):
+    """Backblaze, R2, Spaces and Wasabi put the bucket in the path; AWS
+    wants it in the hostname. Both, so the choice stays open."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(config, "BACKUP_PATH_STYLE", path_style)
+    seen = {}
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, method, url, content=None, headers=None):
+            seen["url"] = url
+            seen["host"] = headers["Authorization"]
+            import types
+            return types.SimpleNamespace(status_code=200, headers={"content-length": "1"}, content=b"", text="")
+
+    monkeypatch.setattr(backups.httpx, "Client", lambda timeout=None: FakeClient())
+    backups._request("PUT", "license-admin/x.tar.gz", body=b"x")
+    assert seen["url"] == f"https://{expect_host}{expect_path}"

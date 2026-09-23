@@ -68,6 +68,9 @@ BACKUP_ACCESS_KEY = os.environ.get("BACKUP_ACCESS_KEY", "")
 BACKUP_SECRET_KEY = os.environ.get("BACKUP_SECRET_KEY", "")
 BACKUP_REGION = os.environ.get("BACKUP_REGION", "us-east-1")   # B2 and R2 accept anything; AWS does not
 BACKUP_HOUR_UTC = _int("BACKUP_HOUR_UTC", 3)
+# Backblaze, Cloudflare R2, DigitalOcean Spaces and Wasabi all take the
+# bucket in the path; AWS wants it in the hostname for newer buckets.
+BACKUP_PATH_STYLE = _bool("BACKUP_PATH_STYLE", "true")
 
 # --- Stripe ------------------------------------------------------------
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
