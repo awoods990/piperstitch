@@ -1143,7 +1143,7 @@ def lapsed_check(*, now: Optional[datetime] = None) -> int:
 def run_scheduled_work() -> dict:
     """Everything the background loop does each tick."""
     from . import finance, partners
-    result = {"sent": 0, "winback": 0, "proofs": 0, "lapsed": 0, "recurring": 0, "backfilled": 0, "outreach": 0, "announcements": 0}
+    result = {"sent": 0, "winback": 0, "proofs": 0, "lapsed": 0, "recurring": 0, "backfilled": 0, "outreach": 0, "announcements": 0, "backup": 0}
     try:
         result["sent"] = process_due()
     except Exception as e:  # noqa: BLE001 - the loop must survive
@@ -1172,6 +1172,11 @@ def run_scheduled_work() -> dict:
         result["announcements"] = partners.announcements_check()
     except Exception as e:  # noqa: BLE001
         log.exception("Partner kit announcement failed: %s", e)
+    try:
+        from . import backups
+        result["backup"] = backups.check()
+    except Exception as e:  # noqa: BLE001
+        log.exception("Backup check failed: %s", e)
     try:
         from . import analytics
         analytics.prune()

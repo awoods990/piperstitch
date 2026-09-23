@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, analytics, auth, config, db, documents, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, analytics, auth, backups, config, db, documents, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -1423,6 +1423,17 @@ def login_code(request: Request, code: str = Form("")):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.post("/admin/backup/run", dependencies=[Depends(auth.require_admin)])
+def admin_backup_run():
+    """Take one now rather than waiting for tonight."""
+    result = backups.run()
+    if result.get("ok"):
+        return RedirectResponse("/admin/security?message=" + quote_plus(
+            f"Backed up {result['bytes'] / 1024 / 1024:.1f} MB to {config.BACKUP_BUCKET}, read back and checked."), status_code=303)
+    reason = "no off-platform bucket is configured" if result.get("reason") == "unconfigured" else result.get("reason", "")
+    return RedirectResponse("/admin/security?error=" + quote_plus(f"That didn't work: {reason}"), status_code=303)
+
+
 @app.get("/admin/backup.sqlite3", dependencies=[Depends(auth.require_admin)])
 def admin_backup():
     """The whole database, consistent, in one click. Railway's volume
@@ -1444,7 +1455,7 @@ def admin_backup():
 
 
 @app.get("/admin/security", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
-def admin_security(request: Request, generate: str = ""):
+def admin_security(request: Request, generate: str = "", message: str = "", error: str = ""):
     """Where two-step sign-in is set up. The secret lives in an
     environment variable rather than this database: it should not be
     sitting in the thing it protects, and a volume snapshot shouldn't
@@ -1452,7 +1463,8 @@ def admin_security(request: Request, generate: str = ""):
     secret = auth.new_totp_secret() if generate and not auth.totp_required() else ""
     return templates.TemplateResponse(request, "security.html", {
         "active_nav": "security", "enabled": auth.totp_required(), "secret": secret,
-        "qr": partners.qr_svg(auth.totp_uri(secret)) if secret else None,
+        "qr": partners.qr_svg(auth.totp_uri(secret)) if secret else None, "message": message or None, "error": error or None,
+        "backups": backups.status(),
         "documents_encrypted": documents.enabled(), "documents_held": len(db.list_partner_documents()),
         "documents_plain": sum(0 if documents.is_sealed(d["data"]) else 1 for d in db.list_partner_documents_with_data()),
     })

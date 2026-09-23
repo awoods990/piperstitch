@@ -58,6 +58,17 @@ ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").replace(" ", "").upp
 # scripts/generate_document_key.py.
 DOCUMENT_ENCRYPTION_KEY = os.environ.get("DOCUMENT_ENCRYPTION_KEY", "")
 
+# --- Backups, off this platform ---------------------------------------
+# An S3-compatible bucket somewhere that is not Railway: Backblaze B2,
+# Cloudflare R2, AWS, Wasabi. Without all four of these nothing is
+# copied off the platform and the admin says so plainly.
+BACKUP_ENDPOINT = os.environ.get("BACKUP_ENDPOINT", "")        # e.g. https://s3.us-west-004.backblazeb2.com
+BACKUP_BUCKET = os.environ.get("BACKUP_BUCKET", "")
+BACKUP_ACCESS_KEY = os.environ.get("BACKUP_ACCESS_KEY", "")
+BACKUP_SECRET_KEY = os.environ.get("BACKUP_SECRET_KEY", "")
+BACKUP_REGION = os.environ.get("BACKUP_REGION", "us-east-1")   # B2 and R2 accept anything; AWS does not
+BACKUP_HOUR_UTC = _int("BACKUP_HOUR_UTC", 3)
+
 # --- Stripe ------------------------------------------------------------
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")

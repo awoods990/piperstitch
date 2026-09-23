@@ -323,6 +323,20 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS backup_runs (
+    -- Every attempt to put a copy of this database somewhere that isn't
+    -- Railway, so "are we backed up?" has an answer rather than a hope.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service TEXT NOT NULL,
+    key TEXT NOT NULL DEFAULT '',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    digest TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,                    -- ok | failed | unconfigured
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_backup_runs ON backup_runs(service, created_at);
+
 CREATE TABLE IF NOT EXISTS page_views (
     -- First-party analytics: enough to know which channel brings people
     -- and what they read, and nothing that identifies a person. The
@@ -1819,6 +1833,36 @@ def backup_to(path: str) -> int:
     finally:
         source.close()
     return os.path.getsize(path)
+
+
+# ----------------------------------------------------------- backups --
+
+
+def record_backup(*, service: str, key: str, size_bytes: int, digest: str, status: str, detail: str = "") -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO backup_runs (service, key, size_bytes, digest, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (service, key, size_bytes, digest, status, detail[:2000], _now()))
+        return cur.lastrowid
+
+
+def last_backup(*, service: str, status: str = "") -> Optional[sqlite3.Row]:
+    sql = "SELECT * FROM backup_runs WHERE service = ?"
+    args: list = [service]
+    if status:
+        sql += " AND status = ?"; args.append(status)
+    with connection() as conn:
+        return conn.execute(sql + " ORDER BY created_at DESC LIMIT 1", args).fetchone()
+
+
+def recent_backups(*, service: str = "", limit: int = 10) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM backup_runs"
+    args: list = []
+    if service:
+        sql += " WHERE service = ?"; args.append(service)
+    args.append(limit)
+    with connection() as conn:
+        return conn.execute(sql + " ORDER BY created_at DESC LIMIT ?", args).fetchall()
 
 
 # --------------------------------------------------------- analytics --

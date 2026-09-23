@@ -2,7 +2,40 @@
 {% block title %}Security — PiperStitch License Admin{% endblock %}
 {% block admin_body %}
 <main>
-  <div class="toolbar"><h1 style="margin:0">Security</h1></div>
+  {% if message %}<div class="success">{{ message }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <div class="toolbar"><h1 style="margin:0">Security &amp; backups</h1></div>
+
+  <div class="card{% if not backups.configured or backups.stale %} warn{% endif %}" {% if not backups.configured or backups.stale %}style="border-color:#f0cabe; background:#fdf6f4"{% endif %}>
+    <h2>Off this platform</h2>
+    {% if backups.configured %}
+      {% if backups.last_ok and not backups.stale %}
+        <p><span class="pill active">protected</span> Last copy {{ backups.last_ok.created_at|short_dt }}, {{ (backups.last_ok.size_bytes / 1024 / 1024)|round(1) }} MB, uploaded and read back to check it arrived.</p>
+      {% elif backups.last_ok %}
+        <p><span class="pill past_due">stale</span> The last good copy was {{ backups.last_ok.created_at|short_dt }}. Nothing has succeeded since.</p>
+      {% else %}
+        <p><span class="pill no">nothing yet</span> A bucket is configured but no copy has succeeded.</p>
+      {% endif %}
+      <p class="muted small">Nightly, to <span class="mono">{{ backups.destination }}</span> &mdash; a month of nights and the first of each month for a year. If Railway lost everything tomorrow, this is what you would rebuild from.</p>
+    {% else %}
+      <p><span class="pill no">not protected</span> Nothing is copied off Railway. Railway's own volume snapshots sit on the same platform as the volume, so they do not answer &ldquo;what if Railway is gone?&rdquo;</p>
+      <p class="muted small">Set <span class="mono">BACKUP_ENDPOINT</span>, <span class="mono">BACKUP_BUCKET</span>, <span class="mono">BACKUP_ACCESS_KEY</span> and <span class="mono">BACKUP_SECRET_KEY</span> on this service (Backblaze B2, Cloudflare R2, AWS S3 &mdash; any of them) and it starts that night. See <span class="mono">RESTORE.md</span>.</p>
+    {% endif %}
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
+      <form method="post" action="/admin/backup/run"><button class="small" type="submit">Back up now</button></form>
+      <a class="button small secondary" href="/admin/backup.sqlite3">Download a copy to this computer</a>
+    </div>
+    {% if backups.recent %}
+    <table style="margin-top:14px">
+      <tr><th>When</th><th>Size</th><th>Where</th><th>Result</th></tr>
+      {% for r in backups.recent %}
+      <tr><td class="muted small">{{ r.created_at|short_dt }}</td><td>{% if r.size_bytes %}{{ (r.size_bytes / 1024 / 1024)|round(1) }} MB{% else %}&mdash;{% endif %}</td>
+        <td class="mono small">{{ r.key or '&mdash;'|safe }}</td>
+        <td>{% if r.status == 'ok' %}<span class="pill yes">checked</span>{% elif r.status == 'unconfigured' %}<span class="pill no">nowhere to put it</span>{% else %}<span class="pill incomplete">failed</span> <span class="muted small">{{ r.detail[:90] }}</span>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
   <div class="card">
     <h2>Two-step sign-in</h2>
     {% if enabled %}
@@ -39,11 +72,5 @@
     {% endif %}
   </div>
 
-  <div class="card">
-    <h2>A copy you keep</h2>
-    <p class="muted small" style="margin-top:0">Railway's volume snapshots live on the same platform as the volume. This is the copy that doesn't &mdash; a consistent dump of the whole database, taken safely while the service is running.</p>
-    <p><a class="button" href="/admin/backup.sqlite3">Download a backup</a></p>
-    <p class="muted small">Everything is in it: customers, subscriptions, the partner ledger and their tax forms. Keep it where you would keep those &mdash; and once in a while, open one and check it isn't empty. A backup nobody has ever restored isn't a backup.</p>
-  </div>
 </main>
 {% endblock %}
