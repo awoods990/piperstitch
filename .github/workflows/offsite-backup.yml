@@ -45,12 +45,49 @@ jobs:
           AWS_REQUEST_CHECKSUM_CALCULATION: when_required
           AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
         run: |
-          set -euo pipefail
+          set -uo pipefail          # not -e: we want to explain a failure, not vanish on it
           if [ -z "${BUCKET:-}" ]; then
             echo "::warning::No bucket configured — add the BACKUP_* secrets to this repository."
             exit 0
           fi
-          echo "Uploading to $ENDPOINT/$BUCKET as region ${AWS_DEFAULT_REGION}"
+
+          # Say what we are about to do, and how long each secret is —
+          # never the values. A secret pasted with a stray space or
+          # missing entirely is the usual reason this step fails in one
+          # repository while working in another.
+          {
+            echo "### Off-platform mirror"
+            echo ""
+            echo "| Setting | Value |"
+            echo "|---|---|"
+            echo "| Endpoint | \`${ENDPOINT:-(empty)}\` |"
+            echo "| Bucket | \`${BUCKET:-(empty)}\` |"
+            echo "| Region | \`${AWS_DEFAULT_REGION:-(empty)}\` |"
+            echo "| Access key | ${#AWS_ACCESS_KEY_ID} characters |"
+            echo "| Secret key | ${#AWS_SECRET_ACCESS_KEY} characters |"
+            echo "| Bundle | $(du -h "piperstitch-${STAMP}.bundle" | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Checking the bucket is reachable with these credentials..."
+          if ! probe="$(aws --endpoint-url "$ENDPOINT" s3 ls "s3://$BUCKET" 2>&1)"; then
+            {
+              echo ""
+              echo "**The bucket refused those credentials.** What it said:"
+              echo ""
+              echo '```'
+              echo "$probe"
+              echo '```'
+              echo ""
+              echo "Usually one of: the secrets aren't set on *this* repository (they are per-repository);"
+              echo "a stray space when pasting; the region not matching the endpoint's datacentre; or the"
+              echo "bucket name being inside BACKUP_ENDPOINT, where it doesn't belong."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Could not reach s3://$BUCKET — see the run summary for what the bucket said."
+            echo "$probe"
+            exit 1
+          fi
+          echo "Reachable. Uploading..."
+          set -e
           aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle" "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle"
           aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle.sha256" "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle.sha256"
           # Read it back: an upload nobody checked is a belief, not a backup.
