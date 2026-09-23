@@ -1,0 +1,83 @@
+{% extends "admin_base.html" %}
+{% block title %}Analytics — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<style>
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin: 14px 0 6px; }
+  .spark div { flex: 1; background: var(--blue); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .85; }
+  .spark div:hover { opacity: 1; }
+  .spark-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .funnel td.n { font-variant-numeric: tabular-nums; }
+</style>
+<main>
+  <div class="toolbar">
+    <div><h1 style="margin:0">Analytics</h1>
+      <div class="muted small">Counted on our own server. No cookies, no third party, nothing that identifies a person &mdash; a visitor is a salted daily digest that can&rsquo;t be reversed or followed past midnight, and Do&nbsp;Not&nbsp;Track is honoured.</div></div>
+    <div class="muted small">Last {% for d in [7, 30, 90] %}<a href="/admin/analytics?days={{ d }}" {% if days == d %}style="font-weight:700"{% endif %}>{{ d }}</a>{{ ' · ' if not loop.last }}{% endfor %} days</div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-tile"><div class="kpi-value">{{ totals.visitors }}</div><div class="kpi-label">Visitors</div><div class="kpi-sub">{{ totals.views }} page views</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ signups }}</div><div class="kpi-label">Accounts started</div><div class="kpi-sub">{% if totals.visitors %}{{ (100 * signups / totals.visitors)|round(1) }}% of visitors{% else %}&mdash;{% endif %}</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ subscribed }}</div><div class="kpi-label">Went on to subscribe</div><div class="kpi-sub">{% if signups %}{{ (100 * subscribed / signups)|round(1) }}% of those who started{% else %}&mdash;{% endif %}</div></div>
+    <div class="kpi-tile"><div class="kpi-value">{{ referrers|length }}</div><div class="kpi-label">Sites sending people</div><div class="kpi-sub">{{ campaigns|length }} tagged campaign{{ '' if campaigns|length == 1 else 's' }}</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Visitors a day</h2>
+    {% if by_day %}
+    <div class="spark">
+      {% for d in by_day %}<div style="height: {{ (100 * d.visitors / peak)|round|int if peak else 2 }}%" title="{{ d.day }}: {{ d.visitors }} visitor{{ '' if d.visitors == 1 else 's' }}, {{ d.views }} views"></div>{% endfor %}
+    </div>
+    <div class="spark-axis"><span>{{ by_day[0].day }}</span><span>peak {{ peak }}</span><span>{{ by_day[-1].day }}</span></div>
+    {% else %}
+    <p class="muted">Nothing counted yet. The site posts a view per page once it&rsquo;s deployed &mdash; give it a day and this fills in.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="toolbar"><h2 style="margin:0">Where the accounts came from</h2><span class="muted small">The number the tracking exists for</span></div>
+    <p class="muted small" style="margin-top:0">Recorded once on each account when it&rsquo;s created, from the link they arrived on, and never overwritten afterwards &mdash; the first touch is the one that earned them.</p>
+    <table class="funnel">
+      <tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Accounts</th><th>Subscribed</th><th></th></tr>
+      {% for s in sources %}
+      <tr><td><strong>{{ s.source }}</strong></td><td class="muted">{{ s.medium or '—' }}</td><td class="muted">{{ s.campaign or '—' }}</td>
+        <td class="n">{{ s.signups }}</td><td class="n">{{ s.subscribed }}</td>
+        <td class="muted small">{% if s.signups %}{{ (100 * s.subscribed / s.signups)|round|int }}% converted{% endif %}</td></tr>
+      {% else %}<tr><td colspan="6" class="muted">No accounts started in this window.</td></tr>{% endfor %}
+    </table>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <h2>Pages</h2>
+      <table>
+        <tr><th>Page</th><th>Visitors</th><th>Views</th></tr>
+        {% for p in pages %}<tr><td class="mono small">{{ p.value }}</td><td>{{ p.visitors }}</td><td class="muted">{{ p.views }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">Nothing yet.</td></tr>{% endfor %}
+      </table>
+    </div>
+    <div class="card">
+      <h2>Sites sending people</h2>
+      <p class="muted small" style="margin-top:0">The site only &mdash; never which page or search someone came from.</p>
+      <table>
+        <tr><th>From</th><th>Visitors</th><th>Views</th></tr>
+        {% for r in referrers %}<tr><td>{{ r.value }}</td><td>{{ r.visitors }}</td><td class="muted">{{ r.views }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">Everyone so far arrived directly, or their browser didn't say.</td></tr>{% endfor %}
+      </table>
+      {% if campaigns %}
+      <h3>Tagged campaigns</h3>
+      <table>
+        <tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Visitors</th></tr>
+        {% for c in campaigns %}<tr><td>{{ c.source }}</td><td class="muted">{{ c.medium or '—' }}</td><td class="muted">{{ c.campaign or '—' }}</td><td>{{ c.visitors }}</td></tr>{% endfor %}
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tagging a link</h2>
+    <p class="muted small" style="margin-top:0">Add <span class="mono">?utm_source=</span> to anything you post and it shows up above, both as traffic and as accounts. Partner links carry their own code and are counted under Partners.</p>
+    <p class="mono small">{{ config.WEBSITE_BASE_URL }}/?utm_source=youtube&amp;utm_medium=video&amp;utm_campaign=cap-logo-demo</p>
+  </div>
+</main>
+{% endblock %}

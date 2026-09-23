@@ -1173,6 +1173,11 @@ def run_scheduled_work() -> dict:
     except Exception as e:  # noqa: BLE001
         log.exception("Partner kit announcement failed: %s", e)
     try:
+        from . import analytics
+        analytics.prune()
+    except Exception as e:  # noqa: BLE001
+        log.exception("Pruning page views failed: %s", e)
+    try:
         result["recurring"] = finance.materialize_recurring(through=finance.today())
     except Exception as e:  # noqa: BLE001
         log.exception("Recurring expense materialization failed: %s", e)

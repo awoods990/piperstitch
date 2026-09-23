@@ -27,6 +27,7 @@ LIMITS: dict[str, tuple[int, int]] = {
     "email": (8, 3600),          # one endpoint, one IP: eight emails an hour
     "email_total": (20, 3600),   # ...and twenty across all of them
     "form": (40, 3600),          # non-mailing public form posts
+    "track": (240, 3600),        # page views: generous for a real reader, closed to a flood
 }
 
 _hits: dict[tuple[str, str], list[float]] = {}

@@ -323,6 +323,25 @@ CREATE TABLE IF NOT EXISTS partner_content (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_content_promoter ON partner_content(promoter_id);
 
+CREATE TABLE IF NOT EXISTS page_views (
+    -- First-party analytics: enough to know which channel brings people
+    -- and what they read, and nothing that identifies a person. The
+    -- visitor hash is a one-way digest of address, browser and the day,
+    -- salted -- it cannot be turned back into anyone, it cannot follow
+    -- them past midnight, and there is no cookie.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL,                       -- YYYY-MM-DD, the bucket everything is counted in
+    path TEXT NOT NULL DEFAULT '/',
+    referrer_host TEXT NOT NULL DEFAULT '',  -- the site they came from, never the full URL
+    utm_source TEXT NOT NULL DEFAULT '',
+    utm_medium TEXT NOT NULL DEFAULT '',
+    utm_campaign TEXT NOT NULL DEFAULT '',
+    visitor_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_page_views_day ON page_views(day);
+CREATE INDEX IF NOT EXISTS idx_page_views_visitor ON page_views(day, visitor_hash);
+
 CREATE TABLE IF NOT EXISTS error_log (
     -- Anything that reached a customer as a 500, and anything the browser
     -- app crashed on. Grouped by fingerprint so a storm is one row with a
@@ -631,6 +650,12 @@ def init_db() -> None:
         _add_column_if_missing(conn, "partner_resources", "announce_queued_at", "TEXT")    # the scheduler sends it, not the request
         _add_column_if_missing(conn, "web_sessions", "expires_at", "TEXT")                 # sliding; NULL on rows that predate it
         _add_column_if_missing(conn, "customers", "deleted_at", "TEXT")                    # erased on request; the row stays for the books
+        # Where this customer came from, captured once at signup. Named
+        # apart from the existing `source`, which says how the *record*
+        # was created ('web_trial', 'website_registration') and means
+        # something quite different.
+        for column in ("acq_source", "acq_medium", "acq_campaign", "acq_landing"):
+            _add_column_if_missing(conn, "customers", column, "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "partner_outreach_log", "direction", "TEXT NOT NULL DEFAULT 'out'")   # out = we wrote; in = they replied
         _add_column_if_missing(conn, "partner_outreach_log", "body", "TEXT NOT NULL DEFAULT ''")           # the reply itself
         for column, definition in (                                                        # recruitment (spec §8: bring partners in)
@@ -1794,6 +1819,85 @@ def backup_to(path: str) -> int:
     finally:
         source.close()
     return os.path.getsize(path)
+
+
+# --------------------------------------------------------- analytics --
+
+
+def record_page_view(*, day: str, path: str, referrer_host: str, utm_source: str, utm_medium: str, utm_campaign: str, visitor_hash: str) -> None:
+    with connection() as conn:
+        conn.execute(
+            "INSERT INTO page_views (day, path, referrer_host, utm_source, utm_medium, utm_campaign, visitor_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (day, path[:200], referrer_host[:120], utm_source[:60], utm_medium[:60], utm_campaign[:80], visitor_hash, _now()))
+
+
+def traffic_by_day(*, since: str) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT day, COUNT(*) AS views, COUNT(DISTINCT visitor_hash) AS visitors FROM page_views WHERE day >= ? GROUP BY day ORDER BY day", (since,)).fetchall()
+
+
+def traffic_totals(*, since: str) -> dict:
+    with connection() as conn:
+        r = conn.execute("SELECT COUNT(*) AS views, COUNT(DISTINCT visitor_hash) AS visitors FROM page_views WHERE day >= ?", (since,)).fetchone()
+    return {"views": r["views"] or 0, "visitors": r["visitors"] or 0}
+
+
+def _top(column: str, *, since: str, limit: int, where: str = "") -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            f"SELECT {column} AS value, COUNT(*) AS views, COUNT(DISTINCT visitor_hash) AS visitors FROM page_views "
+            f"WHERE day >= ? {where} GROUP BY {column} ORDER BY visitors DESC, views DESC LIMIT ?", (since, limit)).fetchall()
+
+
+def top_pages(*, since: str, limit: int = 12) -> list[sqlite3.Row]:
+    return _top("path", since=since, limit=limit)
+
+
+def top_referrers(*, since: str, limit: int = 12) -> list[sqlite3.Row]:
+    return _top("referrer_host", since=since, limit=limit, where="AND referrer_host != ''")
+
+
+def top_campaigns(*, since: str, limit: int = 12) -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute(
+            "SELECT utm_source AS source, utm_medium AS medium, utm_campaign AS campaign, COUNT(*) AS views, COUNT(DISTINCT visitor_hash) AS visitors "
+            "FROM page_views WHERE day >= ? AND utm_source != '' GROUP BY source, medium, campaign ORDER BY visitors DESC LIMIT ?", (since, limit)).fetchall()
+
+
+def prune_page_views(*, before: str) -> int:
+    """Kept for a season, not for ever: the counts are what matter and a
+    row per view isn't worth holding once it has been read."""
+    with connection() as conn:
+        return conn.execute("DELETE FROM page_views WHERE day < ?", (before,)).rowcount
+
+
+def set_customer_source(customer_id: int, *, source: str, medium: str, campaign: str, landing_page: str) -> None:
+    """Written once, at signup: which channel earned this account. Later
+    visits never overwrite it -- somebody who finds us through a video
+    and returns a week later by typing the address was earned by the
+    video."""
+    if not any((source, medium, campaign, landing_page)):
+        return
+    with connection() as conn:
+        conn.execute(
+            "UPDATE customers SET acq_source = CASE WHEN acq_source = '' THEN ? ELSE acq_source END, "
+            "acq_medium = CASE WHEN acq_medium = '' THEN ? ELSE acq_medium END, "
+            "acq_campaign = CASE WHEN acq_campaign = '' THEN ? ELSE acq_campaign END, "
+            "acq_landing = CASE WHEN acq_landing = '' THEN ? ELSE acq_landing END WHERE id = ?",
+            (source[:60], medium[:60], campaign[:80], landing_page[:200], customer_id))
+
+
+def signups_by_source(*, since: str) -> list[sqlite3.Row]:
+    """The end of the funnel: who actually started, and who paid, by where
+    they came from. This is the number the tracking exists for."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT CASE WHEN customers.acq_source = '' THEN 'direct / unknown' ELSE customers.acq_source END AS source, "
+            "customers.acq_medium AS medium, customers.acq_campaign AS campaign, COUNT(*) AS signups, "
+            "SUM(CASE WHEN EXISTS (SELECT 1 FROM subscriptions s WHERE s.customer_id = customers.id AND s.source = 'stripe') THEN 1 ELSE 0 END) AS subscribed "
+            "FROM customers WHERE customers.created_at >= ? AND customers.deleted_at IS NULL "
+            "GROUP BY source, customers.acq_medium, customers.acq_campaign ORDER BY signups DESC", (since,)).fetchall()
 
 
 # ------------------------------------------------------------- errors --

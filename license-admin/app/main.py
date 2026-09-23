@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, documents, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, analytics, auth, config, db, documents, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -120,6 +120,12 @@ async def _unhandled(request: Request, exc: Exception):
     if request.url.path.startswith(("/api/", "/webhooks/")):
         return JSONResponse({"error": "server_error", "message": "Something went wrong at our end. It's been reported."}, status_code=500)
     return templates.TemplateResponse(request, "error.html", {}, status_code=500)
+
+
+@app.get("/admin/analytics", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_analytics(request: Request, days: str = "30"):
+    window = int(days) if days.isdigit() and 1 <= int(days) <= 365 else 30
+    return templates.TemplateResponse(request, "analytics.html", {"active_nav": "analytics", **analytics.overview(window)})
 
 
 @app.get("/admin/errors", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
@@ -284,6 +290,10 @@ class WebVerifyIn(BaseModel):
     user_agent: str = ""
     promo_code: str = ""      # a partner code typed at signup (beats the cookie, R8)
     ref_cookie: str = ""      # the ps_ref cookie the app server saw, if any
+    source: str = ""
+    medium: str = ""
+    campaign: str = ""
+    landing_page: str = ""
 
 
 class WebTokenIn(BaseModel):
@@ -707,6 +717,29 @@ def _require_web_key(x_api_key: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
+class TrackIn(BaseModel):
+    path: str = "/"
+    referrer: str = ""
+    source: str = ""
+    medium: str = ""
+    campaign: str = ""
+
+
+@app.post("/api/track")
+def api_track(request: Request, body: TrackIn):
+    """A page view from the marketing site. Deliberately unauthenticated
+    -- it is a public site -- and rate-limited so it can't be used to
+    fill the disk. Nothing identifying is stored; see analytics.py."""
+    if not ratelimit.allow(request, bucket="track"):
+        return {"counted": False}
+    counted = analytics.record(
+        path=body.path, referrer=body.referrer,
+        utm={"source": body.source, "medium": body.medium, "campaign": body.campaign},
+        ip=ratelimit.client_ip(request), user_agent=request.headers.get("user-agent", ""),
+        do_not_track=request.headers.get("dnt") == "1" or request.headers.get("sec-gpc") == "1")
+    return {"counted": counted}
+
+
 @app.post("/api/web/client-error")
 def api_client_error(request: Request, body: ClientErrorIn, x_api_key: Optional[str] = Header(None)):
     """The browser app telling us it fell over. Limited per caller: a
@@ -736,7 +769,8 @@ def api_web_signin_request(request: Request, body: WebEmailIn, x_api_key: Option
 def api_web_signin_verify(body: WebVerifyIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
     try:
-        session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent, promo_code=body.promo_code, ref_cookie=body.ref_cookie)
+        session = web_access.verify_code(email=body.email, code=body.code, user_agent=body.user_agent, promo_code=body.promo_code, ref_cookie=body.ref_cookie,
+                                         source_name=body.source, medium=body.medium, campaign=body.campaign, landing_page=body.landing_page)
     except activation.ActivationError as e:
         return _activation_error(e, status=400)
     return {"token": session.token, **web_access.state(token=session.token)}

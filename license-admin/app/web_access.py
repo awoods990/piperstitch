@@ -115,7 +115,8 @@ class WebSession:
     session_row_id: int
 
 
-def verify_code(*, email: str, code: str, user_agent: str = "", promo_code: str = "", ref_cookie: str = "") -> WebSession:
+def verify_code(*, email: str, code: str, user_agent: str = "", promo_code: str = "", ref_cookie: str = "",
+                source_name: str = "", medium: str = "", campaign: str = "", landing_page: str = "") -> WebSession:
     email = email.strip().lower()
     row = db.latest_activation_code(email, WEB_DEVICE_ID)
     if row is None or _expired(row["expires_at"]):
@@ -141,6 +142,11 @@ def verify_code(*, email: str, code: str, user_agent: str = "", promo_code: str 
     except promotions.PromoError:
         # A remembered code that is no longer valid must not stop a sign-in.
         promo, source = referrals.resolve_for_signup(cookie=ref_cookie, email=email)
+    # Which channel earned the account, kept on their row and never
+    # overwritten (§ analytics). A partner's code is attribution of its
+    # own and takes precedence in the reporting.
+    db.set_customer_source(customer["id"], source=source_name or (promo["code"] if promo is not None else ""),
+                           medium=medium or ("partner" if promo is not None else ""), campaign=campaign, landing_page=landing_page)
     trial_subscription_id = _start_trial_if_first_visit(customer, promo)
     if promo is not None:
         referrals.attribute_customer(customer["id"], promo, source=source, subscription_id=trial_subscription_id)

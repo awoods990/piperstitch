@@ -42,8 +42,12 @@ export const api = {
   requestCode: (email: string, flow: "signin" | "trial" = "signin") => postJSON<{ sent: boolean }>("/auth/request", { email, flow }),
   verifyCode: (email: string, code: string) => {
     let promoCode = "";
-    try { promoCode = localStorage.getItem("piperstitch.promo") ?? ""; } catch { /* ignore */ }
-    return postJSON<MeResponse>("/auth/verify", { email, code, promoCode });
+    let source: unknown = null;
+    try {
+      promoCode = localStorage.getItem("piperstitch.promo") ?? "";
+      source = JSON.parse(localStorage.getItem("piperstitch.source") || "null");
+    } catch { /* ignore */ }
+    return postJSON<MeResponse>("/auth/verify", { email, code, promoCode, ...(source ? { source } : {}) });
   },
   signOut: () => postJSON<void>("/auth/signout", {}),
   updateName: (name: string) => postJSON<MeResponse>("/auth/profile", { name }),

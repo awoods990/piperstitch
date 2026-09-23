@@ -36,13 +36,41 @@ const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(undef
 const PROMO_KEY = "piperstitch.promo";
 
 /** A code from a promoter's link (?promo=CODE) is remembered until it's used. */
+const SOURCE_KEY = "piperstitch.source";
+
 export function capturePromoFromURL() {
   // ?promo= (a discount code) and ?ref= (a partner's code, from their
   // link or landing page) are the same thing to the account service.
   const params = new URLSearchParams(window.location.search);
   const code = (params.get("promo") || params.get("ref"))?.trim().toUpperCase();
   if (code) { try { localStorage.setItem(PROMO_KEY, code); } catch { /* ignore */ } }
+  captureSourceFromURL(params);
 }
+
+/** Where this person came from, kept until they sign up and no longer:
+ *  it answers "which channel earned this account?" and nothing else. The
+ *  first arrival wins -- someone who finds us through a video and comes
+ *  back a week later by typing the address was earned by the video. */
+export function captureSourceFromURL(params: URLSearchParams) {
+  try {
+    if (localStorage.getItem(SOURCE_KEY)) return;
+    const source = (params.get("utm_source") || params.get("ref") || "").trim();
+    const referrer = document.referrer && !document.referrer.includes("piperstitch.com")
+      ? new URL(document.referrer).hostname.replace(/^www\./, "") : "";
+    if (!source && !referrer) return;
+    localStorage.setItem(SOURCE_KEY, JSON.stringify({
+      source: (source || referrer).slice(0, 60),
+      medium: (params.get("utm_medium") || (source ? "" : "referral")).slice(0, 60),
+      campaign: (params.get("utm_campaign") || "").slice(0, 80),
+      landing: location.pathname.slice(0, 200),
+    }));
+  } catch { /* private mode, or a referrer that isn't a URL */ }
+}
+
+export const rememberedSource = () => {
+  try { return JSON.parse(localStorage.getItem(SOURCE_KEY) || "null"); } catch { return null; }
+};
+export const forgetSource = () => { try { localStorage.removeItem(SOURCE_KEY); } catch { /* ignore */ } };
 export const rememberedPromo = () => { try { return localStorage.getItem(PROMO_KEY) ?? ""; } catch { return ""; } };
 export const forgetPromo = () => { try { localStorage.removeItem(PROMO_KEY); } catch { /* ignore */ } };
 
