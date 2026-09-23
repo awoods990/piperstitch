@@ -44,6 +44,33 @@ Stripe, Postmark and the bucket can all issue new credentials if these
 are lost. The licence key and the document key cannot be reissued —
 losing them loses what they protect.
 
+### Getting the list right
+
+Each service can print the full list of variables it reads, names only:
+
+```bash
+cd license-admin && python scripts/env_checklist.py
+```
+
+It marks which are secrets and which two cannot be reissued. Work down it
+once with your password manager open; that is the whole job.
+
+### The names, for rebuilding DNS
+
+If the domain has to be pointed somewhere new (GoDaddy → whichever host):
+
+| Name | Points at |
+|---|---|
+| `www` | the site service |
+| `app` | the engine + browser app |
+| `admin` | License Admin |
+| `proofs` | Proofs |
+| apex `piperstitch.com` | forwards to `www` (path-preserving — see below) |
+| `pm-bounces` | CNAME to `pm.mtasv.net` (Postmark's return path) |
+| SPF `TXT` | `v=spf1 include:secureserver.net include:spf.mtasv.net -all` |
+| DMARC `TXT` at `_dmarc` | `v=DMARC1; p=quarantine; adkim=r; aspf=r; rua=...` |
+| MX | Microsoft 365 |
+
 ## Restoring
 
 ### 1. Get the files
