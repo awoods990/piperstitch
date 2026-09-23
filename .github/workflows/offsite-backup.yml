@@ -51,10 +51,10 @@ jobs:
             exit 0
           fi
           echo "Uploading to $ENDPOINT/$BUCKET as region ${AWS_DEFAULT_REGION}"
-          aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle" "s3://$BUCKET/repository/piperstitch-${STAMP}.bundle"
-          aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle.sha256" "s3://$BUCKET/repository/piperstitch-${STAMP}.bundle.sha256"
+          aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle" "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle"
+          aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle.sha256" "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle.sha256"
           # Read it back: an upload nobody checked is a belief, not a backup.
-          aws --endpoint-url "$ENDPOINT" s3 cp "s3://$BUCKET/repository/piperstitch-${STAMP}.bundle" check.bundle
+          aws --endpoint-url "$ENDPOINT" s3 cp "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle" check.bundle
           test "$(sha256sum check.bundle | cut -d' ' -f1)" = "$(cut -d' ' -f1 "piperstitch-${STAMP}.bundle.sha256")"
           git bundle verify check.bundle
           echo "Verified: the bundle in the bucket is a complete, clonable repository."
@@ -73,10 +73,10 @@ jobs:
           if [ -z "${BUCKET:-}" ]; then
             exit 0
           fi
-          keys="$(aws --endpoint-url "$ENDPOINT" s3 ls "s3://$BUCKET/repository/" | awk '{print $4}' | grep '\.bundle$' | sort)"
+          keys="$(aws --endpoint-url "$ENDPOINT" s3 ls "s3://$BUCKET/repository/core/" | awk '{print $4}' | grep '\.bundle$' | sort)"
           count="$(echo "$keys" | wc -l)"
           if [ "$count" -gt 12 ]; then
             echo "$keys" | head -n "$((count - 12))" | while read -r old; do
-              aws --endpoint-url "$ENDPOINT" s3 rm "s3://$BUCKET/repository/$old" "s3://$BUCKET/repository/$old.sha256" || true
+              aws --endpoint-url "$ENDPOINT" s3 rm "s3://$BUCKET/repository/core/$old" "s3://$BUCKET/repository/core/$old.sha256" || true
             done
           fi

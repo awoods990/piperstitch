@@ -14,7 +14,7 @@ should not be the first time you have read it.
 | Copy | Holds | Where it lives | Made by |
 |---|---|---|---|
 | **Nightly service backups** | License Admin database; Proofs database **and every artifact** — renders, PDFs, Certificates of Approval | Your S3-compatible bucket (Backblaze B2, Cloudflare R2, AWS…) | Each service, ~03:00 and ~04:00 UTC, verified by reading back |
-| **Weekly repository mirror** | All code, the marketing site, the videos, every commit and tag | Same bucket, `repository/` | GitHub Actions, Sundays |
+| **Weekly repository mirrors** | All code of both repositories, the marketing site, the videos, every commit and tag | Same bucket, `repository/core/` and `repository/proofs/` | GitHub Actions, Sundays |
 | **GitHub** | The same code, live | github.com | Every push |
 | **Stripe** | Customers, subscriptions, invoices, payouts | stripe.com | Continuously |
 | **Your password manager** | The secrets below — *the one thing no backup can hold for you* | Wherever you keep it | You |
@@ -94,11 +94,16 @@ sqlite3 license_admin.sqlite3 "PRAGMA integrity_check; SELECT COUNT(*) FROM cust
 From GitHub if it is there. If it is not:
 
 ```bash
-aws --endpoint-url "$BACKUP_ENDPOINT" s3 cp "s3://$BACKUP_BUCKET/repository/piperstitch-2026-09-21.bundle" .
+aws --endpoint-url "$BACKUP_ENDPOINT" s3 cp "s3://$BACKUP_BUCKET/repository/core/piperstitch-2026-09-21.bundle" .
+aws --endpoint-url "$BACKUP_ENDPOINT" s3 cp "s3://$BACKUP_BUCKET/repository/proofs/piperstitch-proofs-2026-09-21.bundle" .
 git clone piperstitch-2026-09-21.bundle piperstitch
+git clone piperstitch-proofs-2026-09-21.bundle piperstitch-proofs
 ```
 
-That clone contains every commit, the marketing site and the videos.
+Those clones contain every commit of both repositories, the marketing
+site and the videos. Proofs is a separate repository and a separate
+bundle; the two folders in the bucket keep them from pruning each
+other.
 
 ### 3. Stand the services up
 
