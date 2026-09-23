@@ -156,3 +156,13 @@ def test_it_speaks_to_either_kind_of_provider(monkeypatch, path_style, expect_ho
     monkeypatch.setattr(backups.httpx, "Client", lambda timeout=None: FakeClient())
     backups._request("PUT", "license-admin/x.tar.gz", body=b"x")
     assert seen["url"] == f"https://{expect_host}{expect_path}"
+
+
+def test_the_query_string_is_signed_in_the_order_amazon_requires():
+    """SigV4 sorts query parameters by name. Getting this wrong is a 403
+    SignatureDoesNotMatch — and only on the one call that has a query,
+    which is exactly how it showed up against a real bucket."""
+    assert backups.canonical_query({"list-type": 2, "prefix": "proofs/", "max-keys": 1000}) == \
+        "list-type=2&max-keys=1000&prefix=proofs%2F"
+    keys = [pair.split("=")[0] for pair in backups.canonical_query({"b": 1, "a": 2, "c": 3}).split("&")]
+    assert keys == sorted(keys)
