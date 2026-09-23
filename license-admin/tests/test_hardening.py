@@ -228,3 +228,48 @@ def test_the_browser_app_can_report_its_own_crash(isolated_db, test_keypair, fak
     row = db.list_errors()[0]
     assert row["source"] == "browser" and row["kind"] == "TypeError" and row["where_"] == "/editor"
     assert any("TypeError" in m["Subject"] for m in fake_smtp.sent)
+
+
+def test_two_step_sign_in_when_an_authenticator_is_configured(isolated_db, test_keypair, admin_password_configured, monkeypatch):
+    import time as _time
+
+    from app import auth
+
+    secret = auth.new_totp_secret()
+    monkeypatch.setattr(config, "ADMIN_TOTP_SECRET", secret)
+    with TestClient(app) as client:
+        # The password alone gets you to the second step, not into the admin.
+        r = client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        assert r.status_code == 200 and "authenticator app" in r.text
+        assert client.get("/admin", follow_redirects=False).status_code == 303
+        # A wrong code is refused and counts against the lockout.
+        r = client.post("/admin/login/code", data={"code": "000000"})
+        assert r.status_code == 401 and "Codes change every thirty seconds" in r.text
+        assert client.get("/admin", follow_redirects=False).status_code == 303
+        # The real one signs in.
+        code = auth._totp_at(secret, int(_time.time() // auth.TOTP_STEP))
+        auth._login_failures.clear()
+        r = client.post("/admin/login/code", data={"code": code}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/admin"
+        assert client.get("/admin").status_code == 200
+
+    # A code on its own, with no password first, is worth nothing.
+    with TestClient(app) as client:
+        auth._login_failures.clear()
+        code = auth._totp_at(secret, int(_time.time() // auth.TOTP_STEP))
+        r = client.post("/admin/login/code", data={"code": code})
+        assert r.status_code == 401 and "took too long" in r.text
+
+
+def test_without_an_authenticator_nothing_changes(isolated_db, test_keypair, admin_password_configured, monkeypatch):
+    """Upgrading must not lock the one person who has the password out of
+    their own admin."""
+    from app import auth
+
+    monkeypatch.setattr(config, "ADMIN_TOTP_SECRET", "")
+    auth._login_failures.clear()
+    with TestClient(app) as client:
+        r = client.post("/admin/login", data={"username": "admin", "password": admin_password_configured}, follow_redirects=False)
+        assert r.status_code == 303 and client.get("/admin").status_code == 200
+        assert "Set it up" in client.get("/admin/security").text
+        assert "ADMIN_TOTP_SECRET=" in client.get("/admin/security?generate=1").text

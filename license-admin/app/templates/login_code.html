@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in — PiperStitch License Admin{% endblock %}
+{% block body %}
+<main class="public" style="max-width:420px">
+  <div class="card">
+    <h1>One more thing.</h1>
+    <p class="muted" style="margin-top:0">Open your authenticator app and type the six-digit code for PiperStitch.</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/admin/login/code">
+      <label for="code">Code</label>
+      <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"
+             required autofocus style="font-size:22px; letter-spacing:.3em; text-align:center; font-family:ui-monospace,Menlo,monospace">
+      <div style="margin-top:16px"><button type="submit">Sign in</button></div>
+    </form>
+    <p class="muted small" style="margin-top:14px">Lost the authenticator? Clear <span class="mono">ADMIN_TOTP_SECRET</span> on the service and sign in with the password alone.</p>
+  </div>
+</main>
+{% endblock %}

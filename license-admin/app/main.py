@@ -1371,7 +1371,35 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
         return templates.TemplateResponse(request, "login.html", {"error": "Too many attempts — try again in a few minutes."}, status_code=429)
     if not auth.try_login(request, username, password):
         return templates.TemplateResponse(request, "login.html", {"error": "Incorrect username or password."}, status_code=401)
+    if auth.awaiting_code(request):
+        return templates.TemplateResponse(request, "login_code.html", {})
     return RedirectResponse("/admin", status_code=303)
+
+
+@app.post("/admin/login/code")
+def login_code(request: Request, code: str = Form("")):
+    """The second step, when an authenticator is configured. The password
+    alone never grants the session."""
+    if auth.is_locked_out(request):
+        return templates.TemplateResponse(request, "login.html", {"error": "Too many attempts — try again in a few minutes."}, status_code=429)
+    if not auth.awaiting_code(request):
+        return templates.TemplateResponse(request, "login.html", {"error": "That took too long — sign in again."}, status_code=401)
+    if not auth.try_code(request, code):
+        return templates.TemplateResponse(request, "login_code.html", {"error": "That code didn't match. Codes change every thirty seconds — try the current one."}, status_code=401)
+    return RedirectResponse("/admin", status_code=303)
+
+
+@app.get("/admin/security", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_security(request: Request, generate: str = ""):
+    """Where two-step sign-in is set up. The secret lives in an
+    environment variable rather than this database: it should not be
+    sitting in the thing it protects, and a volume snapshot shouldn't
+    carry the second factor with the first."""
+    secret = auth.new_totp_secret() if generate and not auth.totp_required() else ""
+    return templates.TemplateResponse(request, "security.html", {
+        "active_nav": "security", "enabled": auth.totp_required(), "secret": secret,
+        "qr": partners.qr_svg(auth.totp_uri(secret)) if secret else None,
+    })
 
 
 @app.post("/admin/logout")

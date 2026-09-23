@@ -46,6 +46,10 @@ SESSION_SECRET = os.environ.get("SESSION_SECRET", "")
 # deployment — Stripe refuses to send webhooks to a plain-http endpoint
 # anyway, so a real deploy is https-only by construction.
 SESSION_COOKIE_SECURE = _bool("SESSION_COOKIE_SECURE")
+# A second step on the admin sign-in: a six-digit code from an
+# authenticator app. Unset means password only, exactly as before --
+# nobody is locked out by upgrading. /admin/security generates one.
+ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").replace(" ", "").upper()
 
 # --- Stripe ------------------------------------------------------------
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")

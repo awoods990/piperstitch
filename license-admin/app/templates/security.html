@@ -1,0 +1,30 @@
+{% extends "admin_base.html" %}
+{% block title %}Security — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+<main>
+  <div class="toolbar"><h1 style="margin:0">Security</h1></div>
+  <div class="card">
+    <h2>Two-step sign-in</h2>
+    {% if enabled %}
+      <p><span class="pill active">on</span> This admin asks for a code from your authenticator after the password.</p>
+      <p class="muted small">To turn it off or move it to a new phone, clear or replace <span class="mono">ADMIN_TOTP_SECRET</span> on the service. With it unset, the password alone signs you in &mdash; so you can never be locked out of your own admin.</p>
+    {% elif secret %}
+      <p class="muted small" style="margin-top:0">Scan this with any authenticator app (1Password, Google Authenticator, Authy), then set the secret on the service and redeploy. Nothing is on until you do.</p>
+      <div style="display:flex; gap:22px; flex-wrap:wrap; align-items:center; margin:14px 0">
+        <div style="width:190px; height:190px; border:1px solid var(--border); border-radius:8px; background:#fff; padding:8px">{{ qr|safe }}</div>
+        <div>
+          <label>Then set this variable</label>
+          <input type="text" readonly value="ADMIN_TOTP_SECRET={{ secret }}" onclick="this.select()" style="font-family:ui-monospace,Menlo,monospace; width:420px; max-width:100%">
+          <p class="muted small" style="margin:8px 0 0">Railway &rarr; license-admin &rarr; Variables &rarr; New Variable, then redeploy.<br>
+            <strong>Scan it before you leave this page</strong> &mdash; it isn't stored anywhere and reloading gives a different one.</p>
+        </div>
+      </div>
+      <p class="muted small">Keep a copy somewhere safe (your password manager). If you lose both the phone and the copy, clear the variable to get back in.</p>
+    {% else %}
+      <p><span class="pill no">off</span> The password is all that stands between the internet and every customer record, the partner ledger and the tax forms.</p>
+      <p class="muted small">Two-step sign-in takes about a minute to set up and needs one variable on the service afterwards.</p>
+      <p><a class="button" href="/admin/security?generate=1">Set it up</a></p>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}

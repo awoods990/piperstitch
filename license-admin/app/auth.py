@@ -6,10 +6,12 @@ shape as the Amerus License Admin this service is modelled on.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
 import time
+from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 
@@ -82,6 +84,9 @@ def clear_login_failures(request: Request) -> None:
 
 
 def try_login(request: Request, username: str, password: str) -> bool:
+    """The password step. With an authenticator configured this only gets
+    as far as the second step: the admin session isn't granted until the
+    code checks out."""
     if is_locked_out(request):
         return False
     username_ok = hmac.compare_digest(username.encode("utf-8"), config.ADMIN_USERNAME.encode("utf-8"))
@@ -89,8 +94,73 @@ def try_login(request: Request, username: str, password: str) -> bool:
         record_login_failure(request)
         return False
     clear_login_failures(request)
+    if totp_required():
+        request.session.pop("admin", None)
+        request.session["admin_pending"] = time.time()
+        return True
     request.session["admin"] = True
     return True
+
+
+# ------------------------------------------------- the second step (TOTP) --
+# RFC 6238 in twenty lines rather than a dependency: HMAC-SHA1 over the
+# 30-second counter, six digits, and a window either side for clocks that
+# disagree. What every authenticator app speaks.
+
+TOTP_STEP = 30
+TOTP_WINDOW = 1          # ±30 seconds
+PENDING_TTL = 300        # five minutes between password and code
+
+
+def totp_required() -> bool:
+    return bool(config.ADMIN_TOTP_SECRET)
+
+
+def _totp_at(secret: str, counter: int) -> str:
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    digest = hmac.new(key, counter.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = int.from_bytes(digest[offset:offset + 4], "big") & 0x7FFFFFFF
+    return f"{code % 1_000_000:06d}"
+
+
+def verify_totp(code: str, *, secret: str = "", now: Optional[float] = None) -> bool:
+    secret = (secret or config.ADMIN_TOTP_SECRET).replace(" ", "").upper()
+    code = (code or "").strip().replace(" ", "")
+    if not secret or not code.isdigit() or len(code) != 6:
+        return False
+    counter = int((now if now is not None else time.time()) // TOTP_STEP)
+    return any(hmac.compare_digest(code, _totp_at(secret, counter + drift)) for drift in range(-TOTP_WINDOW, TOTP_WINDOW + 1))
+
+
+def awaiting_code(request: Request) -> bool:
+    started = request.session.get("admin_pending")
+    if not started or time.time() - float(started) > PENDING_TTL:
+        request.session.pop("admin_pending", None)
+        return False
+    return True
+
+
+def try_code(request: Request, code: str) -> bool:
+    if is_locked_out(request) or not awaiting_code(request):
+        return False
+    if not verify_totp(code):
+        record_login_failure(request)
+        return False
+    clear_login_failures(request)
+    request.session.pop("admin_pending", None)
+    request.session["admin"] = True
+    return True
+
+
+def new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+
+
+def totp_uri(secret: str) -> str:
+    """What the QR code encodes, for an authenticator app to scan."""
+    label = quote(f"PiperStitch admin ({config.ADMIN_USERNAME})")
+    return f"otpauth://totp/{label}?secret={secret}&issuer=PiperStitch&digits=6&period={TOTP_STEP}"
 
 
 def logout(request: Request) -> None:
