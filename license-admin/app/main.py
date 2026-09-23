@@ -1389,6 +1389,26 @@ def login_code(request: Request, code: str = Form("")):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.get("/admin/backup.sqlite3", dependencies=[Depends(auth.require_admin)])
+def admin_backup():
+    """The whole database, consistent, in one click. Railway's volume
+    snapshots live on the same platform as the volume; this is the copy
+    that doesn't. Everything is in here -- customers, the partner ledger,
+    tax forms -- so keep it somewhere you'd keep those."""
+    with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as tmp:
+        target = tmp.name
+    try:
+        db.backup_to(target)
+        payload = Path(target).read_bytes()
+    finally:
+        Path(target).unlink(missing_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M")
+    return Response(payload, media_type="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="piperstitch-{stamp}.sqlite3"',
+        "Cache-Control": "no-store, private",
+    })
+
+
 @app.get("/admin/security", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
 def admin_security(request: Request, generate: str = ""):
     """Where two-step sign-in is set up. The secret lives in an

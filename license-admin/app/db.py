@@ -15,6 +15,7 @@ the admin, which exist only here.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -1774,6 +1775,25 @@ def count_partner_prospects() -> dict:
         r = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied, "
                          "SUM(CASE WHEN last_seen_at IS NULL THEN 1 ELSE 0 END) AS never_opened FROM partner_prospects").fetchone()
     return {"total": r["total"] or 0, "applied": r["applied"] or 0, "never_opened": r["never_opened"] or 0}
+
+
+def backup_to(path: str) -> int:
+    """A consistent copy of the database, taken through SQLite's own
+    backup API so it is safe to run while the service is serving (a plain
+    file copy of a live WAL database is not). Returns the size in bytes."""
+    import sqlite3 as _sqlite3
+
+    source = _connect()
+    try:
+        target = _sqlite3.connect(path)
+        try:
+            source.backup(target)
+            target.execute("VACUUM")
+        finally:
+            target.close()
+    finally:
+        source.close()
+    return os.path.getsize(path)
 
 
 # ------------------------------------------------------------- errors --

@@ -309,3 +309,21 @@ def test_forms_stored_before_the_key_still_open(isolated_db, test_keypair, fake_
     monkeypatch.setattr(config, "DOCUMENT_ENCRYPTION_KEY", "5yJmPk0oQmZ0ZXN0LW9ubHkta2V5LWZvci10ZXN0cw")
     stored = db.list_partner_documents_with_data()[0]["data"]
     assert not documents.is_sealed(stored) and documents.open_(stored) == b"older form"
+
+
+def test_a_backup_is_a_real_database_taken_while_serving(isolated_db, test_keypair, admin_password_configured, tmp_path):
+    import sqlite3
+
+    db.create_promoter(name="Kathleen", email="kathleen@example.com", default_share_pct=30)
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.get("/admin/backup.sqlite3")
+    assert r.status_code == 200 and r.headers["content-disposition"].endswith('.sqlite3"')
+    copy = tmp_path / "backup.sqlite3"
+    copy.write_bytes(r.content)
+    conn = sqlite3.connect(copy)
+    try:
+        assert conn.execute("SELECT name FROM promoters").fetchone()[0] == "Kathleen"
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        conn.close()

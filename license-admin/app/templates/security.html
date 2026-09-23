@@ -38,5 +38,12 @@
       <p class="muted small">Generate a key with <span class="mono">scripts/generate_document_key.py</span>, set it as <span class="mono">DOCUMENT_ENCRYPTION_KEY</span> on this service, redeploy, then run <span class="mono">scripts/encrypt_documents.py</span> once. Keep a copy of the key somewhere safe &mdash; without it the forms can't be read, which is both the point and the risk.</p>
     {% endif %}
   </div>
+
+  <div class="card">
+    <h2>A copy you keep</h2>
+    <p class="muted small" style="margin-top:0">Railway's volume snapshots live on the same platform as the volume. This is the copy that doesn't &mdash; a consistent dump of the whole database, taken safely while the service is running.</p>
+    <p><a class="button" href="/admin/backup.sqlite3">Download a backup</a></p>
+    <p class="muted small">Everything is in it: customers, subscriptions, the partner ledger and their tax forms. Keep it where you would keep those &mdash; and once in a while, open one and check it isn't empty. A backup nobody has ever restored isn't a backup.</p>
+  </div>
 </main>
 {% endblock %}
