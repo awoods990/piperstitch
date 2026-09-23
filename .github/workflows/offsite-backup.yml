@@ -87,6 +87,16 @@ jobs:
             exit 1
           fi
           echo "Reachable. Uploading..."
+
+          # Above 8 MB the CLI splits an object into a multipart upload,
+          # and that is where DigitalOcean Spaces still refuses the
+          # checksums it insists on sending. This repository's bundle is
+          # ~50 MB (the videos), Proofs' is under a megabyte — which is
+          # why the identical job succeeded there and failed here. A
+          # single PUT handles up to 5 GB, so raise the threshold and
+          # send it in one piece.
+          aws configure set default.s3.multipart_threshold 4GB
+          aws configure set default.s3.multipart_chunksize 4GB
           set -e
           aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle" "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle"
           aws --endpoint-url "$ENDPOINT" s3 cp "piperstitch-${STAMP}.bundle.sha256" "s3://$BUCKET/repository/core/piperstitch-${STAMP}.bundle.sha256"
