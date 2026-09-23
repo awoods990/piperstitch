@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, auth, config, db, email_sender, emails, finance, partners, project_view, promotions, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, auth, config, db, email_sender, emails, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -79,10 +79,50 @@ app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET or "dev-o
 # not browser-originated at all and ignores CORS).
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ALLOWED_ORIGINS, allow_methods=["POST"], allow_headers=["Content-Type"])
 
+# Browser-facing POSTs are authorised by a cookie, so a form on someone
+# else's site could aim one at us. SameSite=lax already stops the common
+# case; this closes the rest by insisting the request says where it came
+# from, and that the answer is us. The app's JSON API and Stripe's
+# webhook are exempt: they carry their own credentials and no cookie.
+_CSRF_EXEMPT = ("/api/", "/webhooks/")
+_SELF_ORIGINS = {config.PUBLIC_BASE_URL.rstrip("/")}
+
+
+@app.middleware("http")
+async def _guard_and_harden(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith(_CSRF_EXEMPT):
+        origin = request.headers.get("origin") or ""
+        referer = request.headers.get("referer") or ""
+        source = origin or (referer.split("/", 3)[:3] and "/".join(referer.split("/", 3)[:3]))
+        here = {f"{request.url.scheme}://{request.headers.get('host', '')}"} | _SELF_ORIGINS
+        if source and source not in here:
+            log.warning("Refused a cross-site %s to %s from %s", request.method, request.url.path, source)
+            return JSONResponse({"error": "cross_site", "message": "That form didn't come from PiperStitch — reload the page and try again."}, status_code=403)
+    response = await call_next(request)
+    site = config.WEBSITE_BASE_URL.rstrip("/")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Content-Security-Policy",
+                                "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; "
+                                f"img-src 'self' data: {site}; style-src 'self' 'unsafe-inline' {site}; "
+                                f"script-src 'self' 'unsafe-inline'; media-src 'self' {site}; form-action 'self'")
+    if config.PUBLIC_BASE_URL.startswith("https://"):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=15552000; includeSubDomains")
+    return response
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots() -> Response:
+    """Nothing here belongs in a search index: it is somebody's account
+    page, the admin, or terms we hand out deliberately."""
+    return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_TOO_MANY = "That's a lot of emails from one place in an hour. Wait a little and try again — or write to us and we'll sort it out by hand."
 
 
 def _validate_email(v: str) -> str:
@@ -412,6 +452,8 @@ def account_request_submit(request: Request, email: str = Form(...)):
     """Always shows the same "check your email" page whether or not the
     address is known — this one IS enumeration-resistant, since it's a
     public web form anyone can poke at, unlike the app's sign-in."""
+    if not ratelimit.allow(request):
+        return templates.TemplateResponse(request, "account_request.html", {"error": _TOO_MANY, "email": email}, status_code=429)
     try:
         email = _validate_email(email)
     except ValueError:
@@ -591,8 +633,13 @@ def _require_web_key(x_api_key: Optional[str]) -> None:
 
 
 @app.post("/api/web/signin/request")
-def api_web_signin_request(body: WebEmailIn, x_api_key: Optional[str] = Header(None)):
+def api_web_signin_request(request: Request, body: WebEmailIn, x_api_key: Optional[str] = Header(None)):
+    """The key proves this is our app; the per-address limit lives in
+    activation.py; this one stops a script working through a list of
+    strangers' addresses."""
     _require_web_key(x_api_key)
+    if not ratelimit.allow(request):
+        return JSONResponse({"error": "rate_limited", "message": _TOO_MANY}, status_code=429)
     try:
         return web_access.request_code(email=body.email, app="proofs" if body.app == "proofs" else "core", flow="trial" if body.flow == "trial" else "signin")
     except activation.ActivationError as e:
@@ -1005,6 +1052,8 @@ def partner_portal(request: Request, message: str = "", error: str = ""):
 def partner_portal_request_link(request: Request, email: str = Form(...)):
     """Enumeration-resistant like /account: the same page whether or not
     the address is a partner's."""
+    if not ratelimit.allow(request):
+        return templates.TemplateResponse(request, "partner_portal_request.html", {"error": _TOO_MANY, "email": email}, status_code=429)
     try:
         email = _validate_email(email)
     except ValueError:
@@ -1157,6 +1206,8 @@ def partner_register(request: Request, name: str = Form(""), email: str = Form("
     """The short registration in front of the program details. It is a
     doorway, not a wall: they are in as soon as they tell us who they
     are, and the same link reaches them by email."""
+    if not ratelimit.allow(request):
+        return _program_gate(request, error=_TOO_MANY, form={"name": name, "email": email}, status=429)
     if website.strip():                      # honeypot
         return RedirectResponse("/partners/program", status_code=303)
     form = {"name": name, "email": email, "organization": organization, "platforms": platforms}
@@ -1202,6 +1253,9 @@ def partner_apply_submit(request: Request, name: str = Form(""), email: str = Fo
     prospect, allowed = _program_reader(request)
     if not allowed:
         return _program_gate(request)
+    if not ratelimit.allow(request):
+        return templates.TemplateResponse(request, "partner_apply.html", {"form": {"name": name, "email": email}, "error": _TOO_MANY,
+                                                                          "seats_left": partners.founding_seats_left(), "program": partners}, status_code=429)
     form = {"name": name, "email": email, "organization": organization, "platforms": platforms, "application": application, "has_social": has_social, "handles": handles}
     if website.strip():
         return templates.TemplateResponse(request, "partner_applied.html", {"email": email})

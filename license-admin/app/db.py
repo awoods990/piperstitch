@@ -554,8 +554,17 @@ CREATE TABLE IF NOT EXISTS published_updates (
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DATABASE_PATH)
+    """One connection per unit of work. WAL is what makes that safe under
+    load: with the default rollback journal a reader blocks every writer,
+    so two customers arriving at once is enough to raise "database is
+    locked". WAL lets readers carry on while one writer commits, and the
+    busy timeout makes the writers queue politely instead of failing.
+    `synchronous` is left at SQLite's FULL: this database holds money, and
+    an fsync per commit is cheap at our write rate."""
+    conn = sqlite3.connect(config.DATABASE_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")      # persists in the file; a no-op read after the first time
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 

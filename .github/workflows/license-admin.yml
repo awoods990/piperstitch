@@ -1,0 +1,28 @@
+# The service that holds the money: subscriptions, entitlements, the
+# partner ledger. Its tests only ran on the development Mac until now,
+# which meant a push could deploy a broken payout run unnoticed.
+name: license-admin
+on:
+  push:
+    paths: ["license-admin/**", ".github/workflows/license-admin.yml"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: license-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: license-admin/requirements.txt
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m pytest tests -q

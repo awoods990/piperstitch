@@ -57,7 +57,11 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    """Behind Railway every request arrives from the same proxy, so the
+    socket address identifies nobody. The forwarded header is what tells
+    one caller from another."""
+    from . import ratelimit
+    return ratelimit.client_ip(request)
 
 
 def is_locked_out(request: Request) -> bool:

@@ -92,7 +92,7 @@
               {% elif e.kind == 'opened' %}<span class="pill trialing">opened</span>
               {% elif e.kind == 'applied' %}<span class="pill active">applied</span>
               {% else %}<span class="pill ended">said no</span>{% endif %}
-              <div class="small" style="margin-top:3px">{{ e.subject|safe }}</div>
+              <div class="small" style="margin-top:3px">{{ e.subject }}</div>
               {% if e.body %}<div class="small" style="white-space:pre-wrap; background:#f7f5f1; border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-top:6px">{{ e.body }}</div>{% endif %}
               {% if e.error %}<div class="muted small" style="margin-top:3px">{{ e.error }}</div>{% endif %}
             </td>

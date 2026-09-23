@@ -44,6 +44,17 @@ class FakeSMTP:
 
 
 @pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """The per-IP limits are process-wide, and every test arrives from the
+    same (absent) address -- without this the twentieth email in a run
+    starts failing for reasons that have nothing to do with the test."""
+    from app import ratelimit
+    ratelimit.reset()
+    yield
+    ratelimit.reset()
+
+
+@pytest.fixture(autouse=True)
 def fake_smtp(monkeypatch):
     FakeSMTP.sent = []
     FakeSMTP.fail = False

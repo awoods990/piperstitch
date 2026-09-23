@@ -507,7 +507,7 @@ def recruit_timeline(prospect) -> list[dict]:
         events.append({"at": row["created_at"], "kind": "reply" if row["direction"] == "in" else ("failed" if row["status"] == "failed" else "sent"),
                        "step": row["step"], "subject": row["subject"], "body": row["body"], "error": row["error"]})
     if prospect["last_seen_at"]:
-        events.append({"at": prospect["last_seen_at"], "kind": "opened", "subject": f"Opened the program details ({prospect['views']}&times; in all)", "step": 0, "body": "", "error": ""})
+        events.append({"at": prospect["last_seen_at"], "kind": "opened", "subject": f"Opened the program details ({prospect['views']} times in all)", "step": 0, "body": "", "error": ""})
     if prospect["applied_at"]:
         events.append({"at": prospect["applied_at"], "kind": "applied", "subject": "Applied to the program", "step": 0, "body": "", "error": ""})
     if prospect["opted_out_at"]:
