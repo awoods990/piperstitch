@@ -539,6 +539,49 @@ def account_revoke_device(request: Request, device_row_id: int):
     return RedirectResponse("/account/manage?message=" + quote_plus("That Mac has been signed out."), status_code=303)
 
 
+@app.get("/account/export.json")
+def account_export(request: Request):
+    """A copy of everything we hold about them, on request and without
+    asking us."""
+    customer = _account_customer(request)
+    data = db.export_customer(customer["id"])
+    data["exported_at"] = db.now_iso()
+    data["note"] = ("This is everything PiperStitch holds about your account. Your card details are Stripe's and never reach us; "
+                    "your artwork is processed and not kept. Questions: " + config.REPLY_TO_EMAIL)
+    return Response(json.dumps(data, indent=2), media_type="application/json",
+                    headers={"Content-Disposition": 'attachment; filename="piperstitch-my-data.json"'})
+
+
+@app.post("/account/delete")
+def account_delete(request: Request, confirm: str = Form("")):
+    """Erasure on request. A live subscription has to be cancelled first
+    -- deleting the record here would not stop Stripe charging the card,
+    and that is the last thing anyone wants."""
+    customer = _account_customer(request)
+    if confirm.strip().upper() != "DELETE":
+        return RedirectResponse("/account/manage?error=" + quote_plus("Type DELETE in the box to confirm."), status_code=303)
+    validity = subscriptions.validity_for(customer["id"])
+    if validity.entitled and validity.status in ("active", "past_due"):
+        return RedirectResponse("/account/manage?error=" + quote_plus(
+            "Cancel your subscription first — otherwise Stripe would keep billing a card we can no longer connect to you. "
+            "Use Manage billing above, then come back."), status_code=303)
+    email = customer["email"]
+    removed = db.erase_customer(customer["id"])
+    log.info("Erased customer %s at their request: %s", customer["id"], removed)
+    try:
+        email_sender.send_plain_email(
+            to_email=email, subject="Your PiperStitch account has been deleted",
+            body=("Your PiperStitch account and everything personal in it have been deleted, as you asked.\n\n"
+                  "What we've kept: the record of what was paid, with your name and address removed from it, because an "
+                  "accountant needs it and the law requires it. Stripe keeps its own copy of the billing side.\n\n"
+                  "Nothing else remains. If you'd like to use PiperStitch again, just start a new account.\n\n"
+                  "Thank you for having tried it."))
+    except email_sender.EmailSendError:
+        pass
+    request.session.pop("account_customer_id", None)
+    return templates.TemplateResponse(request, "account_deleted.html", {"email": email})
+
+
 @app.post("/account/logout")
 def account_logout(request: Request):
     request.session.pop("account_customer_id", None)
@@ -2061,8 +2104,8 @@ def admin_partner_resource_add(title: str = Form(...), url: str = Form(...), kin
     resource_id = db.add_partner_resource(title=title, url=url, kind=kind, description=description, sort_order=int(sort_order) if sort_order.strip().lstrip("-").isdigit() else 0)
     message = f"Added “{title.strip()}” to the partner kit."
     if announce:
-        sent = partners.announce_resource(resource_id)
-        message += f" Told {sent} partner{'' if sent == 1 else 's'} about it."
+        waiting = partners.queue_announcement(resource_id)
+        message += f" {waiting} partner{'' if waiting == 1 else 's'} will hear about it within a few minutes."
     return _partners_redirect(message=message, anchor="kit")
 
 
@@ -2116,10 +2159,10 @@ def admin_partner_document_decide(document_id: int, decision: str = Form("accept
 @app.post("/admin/partners/resources/{resource_id}/announce", dependencies=[Depends(auth.require_admin)])
 def admin_partner_resource_announce(resource_id: int):
     try:
-        sent = partners.announce_resource(resource_id)
+        waiting = partners.queue_announcement(resource_id)
     except partners.PartnerError as e:
         return _partners_redirect(error=e.message, anchor="kit")
-    return _partners_redirect(message=f"Told {sent} partner{'' if sent == 1 else 's'} about it.", anchor="kit")
+    return _partners_redirect(message=f"Queued — {waiting} partner{'' if waiting == 1 else 's'} will hear within a few minutes.", anchor="kit")
 
 
 @app.post("/admin/partners/recruit", dependencies=[Depends(auth.require_admin)])

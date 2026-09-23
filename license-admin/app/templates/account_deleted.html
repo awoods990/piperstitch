@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Account deleted — PiperStitch{% endblock %}
+{% block body %}
+<main class="public">
+  <a class="brand" href="{{ config.WEBSITE_BASE_URL }}"><img src="/static/images/piperstitch-mark.png" alt="">PiperStitch</a>
+  <div class="card">
+    <h1>Deleted.</h1>
+    <p>Your account and everything personal in it are gone, and we&rsquo;ve emailed <strong>{{ email }}</strong> to confirm it.</p>
+    <p class="muted small">We keep the record of what was paid with your name taken out of it, because an accountant needs it &mdash; that&rsquo;s all. If you&rsquo;d like to use PiperStitch again one day, just start a new account; there&rsquo;s nothing to undo.</p>
+  </div>
+</main>
+{% endblock %}

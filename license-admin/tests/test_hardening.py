@@ -119,3 +119,72 @@ def test_a_recruits_reply_cannot_put_script_in_the_admin(isolated_db, test_keypa
         page = client.get(f"/admin/partners/recruit/{prospect_id}").text
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
     assert "<img src=x" not in page and "&lt;img src=x onerror=alert(2)&gt;" in page   # shown as words, not run
+
+
+def test_a_session_lapses_when_it_stops_being_used(isolated_db, test_keypair, fake_smtp):
+    """A token used to be good until somebody revoked it by hand, which
+    made a stolen one permanent."""
+    from datetime import datetime, timedelta
+
+    from app import web_access
+    from test_web_access import _sign_in
+
+    session = _sign_in(fake_smtp, "jane@example.com")
+    row = db.get_web_session(session.session_row_id)
+    assert row["expires_at"] and row["expires_at"] > db.now_iso()
+    # Using it slides the expiry along.
+    with db.connection() as conn:
+        conn.execute("UPDATE web_sessions SET expires_at = ? WHERE id = ?",
+                     ((datetime.utcnow() + timedelta(days=1)).isoformat(timespec="seconds") + "Z", session.session_row_id))
+    web_access.state(token=session.token)
+    assert db.get_web_session(session.session_row_id)["expires_at"] > (datetime.utcnow() + timedelta(days=80)).isoformat()
+    # Left alone past its date, it stops working.
+    with db.connection() as conn:
+        conn.execute("UPDATE web_sessions SET expires_at = ? WHERE id = ?",
+                     ((datetime.utcnow() - timedelta(minutes=1)).isoformat(timespec="seconds") + "Z", session.session_row_id))
+    with pytest.raises(Exception) as e:
+        web_access.state(token=session.token)
+    assert "signed out" in str(e.value).lower()
+
+
+def test_a_customer_can_take_a_copy_of_their_data_and_have_it_erased(isolated_db, test_keypair, fake_smtp, client):
+    from test_web_access import _sign_in
+
+    session = _sign_in(fake_smtp, "jane@example.com")
+    cid = session.customer_id
+    db.log_email(customer_id=cid, to_email="jane@example.com", kind="welcome", subject="Welcome", status="sent")
+    db.create_activation_code(email="jane@example.com", code_hash="x", device_id="d", ttl_minutes=10)
+    # Signed in on the account page.
+    url = None
+    from app import activation
+    url = activation.create_account_link(cid)
+    client.get(url.split(config.PUBLIC_BASE_URL)[-1], follow_redirects=False)
+
+    export = client.get("/account/export.json")
+    assert export.status_code == 200 and export.headers["content-disposition"].endswith('"piperstitch-my-data.json"')
+    data = export.json()
+    assert data["account"]["email"] == "jane@example.com" and "emails_we_sent" in data and data["exported_at"]
+
+    # Deleting needs the word, and it means it.
+    assert client.post("/account/delete", data={"confirm": "yes"}, follow_redirects=False).headers["location"].count("Type+DELETE") == 1
+    assert db.get_customer(cid)["email"] == "jane@example.com"
+    fake_smtp.sent.clear()
+    r = client.post("/account/delete", data={"confirm": "delete"})
+    assert r.status_code == 200 and "Deleted." in r.text
+    gone = db.get_customer(cid)
+    assert gone["email"].endswith("@piperstitch.invalid") and gone["name"] == "Deleted account" and gone["deleted_at"]
+    assert db.list_active_web_sessions(cid) == [] and db.export_customer(cid)["emails_we_sent"] == []
+    assert fake_smtp.sent[-1]["To"] == "jane@example.com" and "deleted" in fake_smtp.sent[-1]["Subject"]
+
+
+def test_erasure_waits_until_the_subscription_is_cancelled(isolated_db, test_keypair, fake_smtp, client):
+    from conftest import stripe_subscription
+    from test_web_access import _sign_in
+    from app import activation, subscriptions
+
+    session = _sign_in(fake_smtp, "paying@example.com")
+    subscriptions.sync_from_stripe(stripe_subscription(sub_id="sub_p", customer="cus_p", customer_id=session.customer_id, email="paying@example.com", amount=2400))
+    client.get(activation.create_account_link(session.customer_id).split(config.PUBLIC_BASE_URL)[-1], follow_redirects=False)
+    r = client.post("/account/delete", data={"confirm": "DELETE"}, follow_redirects=False)
+    assert "Cancel+your+subscription+first" in r.headers["location"]
+    assert db.get_customer(session.customer_id)["email"] == "paying@example.com"

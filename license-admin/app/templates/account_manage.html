@@ -84,5 +84,23 @@
     <p class="small muted" style="margin:10px 0 0">Receipts and invoices with full detail are on the Stripe billing page above.</p>
   </div>
   {% endif %}
+
+  <div class="card">
+    <h2>Your data</h2>
+    <p class="muted small" style="margin-top:0">It&rsquo;s yours: take a copy whenever you like, or have the lot deleted. Your artwork isn&rsquo;t kept at all &mdash; it&rsquo;s processed and discarded &mdash; and your card details belong to Stripe and never reach us.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+      <a class="button secondary small" href="/account/export.json">Download everything we hold</a>
+    </div>
+    <h3 style="margin-top:20px">Delete my account</h3>
+    <p class="muted small" style="margin-top:0">
+      This removes your account, your saved projects, your sign-ins and everything else personal, and can&rsquo;t be undone.
+      We keep the record of what was paid with your name taken out of it, because an accountant needs it.
+      {% if validity.entitled and validity.status in ('active', 'past_due') %}<br><strong>Cancel your subscription first</strong> &mdash; otherwise Stripe keeps billing a card we can no longer connect to you.{% endif %}
+    </p>
+    <form method="post" action="/account/delete" onsubmit="return confirm('Delete your PiperStitch account and everything in it? This cannot be undone.')" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap">
+      <div><label for="confirm">Type DELETE to confirm</label><input type="text" id="confirm" name="confirm" placeholder="DELETE" style="width:160px"></div>
+      <button class="small secondary" type="submit">Delete my account</button>
+    </form>
+  </div>
 </main>
 {% endblock %}

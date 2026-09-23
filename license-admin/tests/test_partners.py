@@ -894,6 +894,7 @@ def _fill_ledger(promoter_id):
 
 
 def test_a_new_kit_item_tells_every_partner_with_a_link_to_it(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import partners
     a_id, _ = partner()
     b_id, _ = partner(name="Mia", email="mia@example.com", code="MIA")
     partner(name="Gone", email="gone@example.com", code="GONE", status="closed")
@@ -902,6 +903,8 @@ def test_a_new_kit_item_tells_every_partner_with_a_link_to_it(isolated_db, test_
         fake_smtp.sent.clear()
         client.post("/admin/partners/resources", data={"title": "Digitizing a cap logo", "url": "https://youtu.be/abc123", "kind": "video",
                                                        "description": "Two minutes, start to finished file", "sort_order": "1", "announce": "1"})
+        assert fake_smtp.sent == []                       # queued, not sent in the request
+        assert partners.announcements_check() == 2        # the scheduler does the sending
         told = {m["To"] for m in fake_smtp.sent}
         assert told == {"kathleen@example.com", "mia@example.com"}          # not the closed one
         note = fake_smtp.sent[-1]
@@ -916,7 +919,9 @@ def test_a_new_kit_item_tells_every_partner_with_a_link_to_it(isolated_db, test_
         quiet = [r for r in db.list_partner_resources() if r["title"] == "Quiet one"][0]
         assert quiet["announced_at"] is None
         client.post(f"/admin/partners/resources/{quiet['id']}/announce")
+        assert fake_smtp.sent == [] and partners.announcements_check() == 2
         assert len(fake_smtp.sent) == 2 and db.get_partner_resource(quiet["id"])["announced_at"]
+        assert partners.announcements_check() == 0        # and not again
 
 
 def test_recruitment_runs_itself_from_a_pasted_list_and_tracks_everything(isolated_db, test_keypair, fake_smtp, admin_password_configured):

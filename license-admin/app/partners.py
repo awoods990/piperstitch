@@ -317,12 +317,32 @@ def payout_readiness(promoter) -> dict:
 # ----------------------------------------------- the kit, announced (§8) --
 
 
+def queue_announcement(resource_id: int) -> int:
+    """Hands the sending to the scheduler and says how many will hear.
+    Doing it in the request meant an admin waiting on one SMTP round trip
+    per partner -- fine for three, a timed-out page and a half-sent
+    announcement at thirty."""
+    if db.get_partner_resource(resource_id) is None:
+        raise PartnerError("missing", "That item isn't in the kit.")
+    db.queue_resource_announcement(resource_id)
+    return len(db.partners_to_notify())
+
+
+def announcements_check() -> int:
+    """The scheduler's tick: send whatever an admin has queued."""
+    sent = 0
+    for item in db.resources_awaiting_announcement():
+        sent += announce_resource(item["id"])
+    return sent
+
+
 def announce_resource(resource_id: int) -> int:
     """Tells every active partner about a new piece of kit, with the link
     to it. Returns how many were told."""
     item = db.get_partner_resource(resource_id)
     if item is None:
         raise PartnerError("missing", "That item isn't in the kit.")
+    db.mark_resource_announced(resource_id)      # before sending: a crash mid-way must not re-announce to everyone
     sent = 0
     for promoter in db.partners_to_notify():
         try:
@@ -331,7 +351,6 @@ def announce_resource(resource_id: int) -> int:
             sent += 1
         except email_sender.EmailSendError:
             log.warning("Could not tell %s about kit item %s", promoter["email"], resource_id)
-    db.mark_resource_announced(resource_id)
     return sent
 
 

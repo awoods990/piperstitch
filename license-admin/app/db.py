@@ -609,6 +609,9 @@ def init_db() -> None:
         _add_column_if_missing(conn, "promo_payouts", "note", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "stripe_events", "result", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "partner_resources", "announced_at", "TEXT")          # when partners were told about it
+        _add_column_if_missing(conn, "partner_resources", "announce_queued_at", "TEXT")    # the scheduler sends it, not the request
+        _add_column_if_missing(conn, "web_sessions", "expires_at", "TEXT")                 # sliding; NULL on rows that predate it
+        _add_column_if_missing(conn, "customers", "deleted_at", "TEXT")                    # erased on request; the row stays for the books
         _add_column_if_missing(conn, "partner_outreach_log", "direction", "TEXT NOT NULL DEFAULT 'out'")   # out = we wrote; in = they replied
         _add_column_if_missing(conn, "partner_outreach_log", "body", "TEXT NOT NULL DEFAULT ''")           # the reply itself
         for column, definition in (                                                        # recruitment (spec §8: bring partners in)
@@ -771,6 +774,63 @@ def delete_customer(customer_id: int) -> None:
         conn.execute("DELETE FROM subscriptions WHERE customer_id = ?", (customer_id,))
         conn.execute("UPDATE checkout_sessions SET customer_id = NULL WHERE customer_id = ?", (customer_id,))
         conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
+
+
+# Everything of a customer's that hangs off their id, for the two things
+# a person is entitled to ask for: a copy, and an erasure.
+_CUSTOMER_OWNED = [
+    "devices", "account_links", "web_sessions", "web_handoffs", "projects", "web_preferences",
+    "feedback_submissions", "sent_files", "sequence_deliveries", "email_log", "proofs_uses", "subscription_events", "promo_redemptions",
+]
+
+
+def export_customer(customer_id: int) -> dict:
+    """Everything we hold about one person, as plain data. Stripe keeps
+    its own copy of the billing side; this is ours."""
+    with connection() as conn:
+        customer = conn.execute("SELECT * FROM customers WHERE id = ?", (customer_id,)).fetchone()
+        if customer is None:
+            return {}
+        out: dict = {"account": {k: customer[k] for k in customer.keys() if k != "id"},
+                     "subscriptions": [], "payments": [], "activity": [], "projects": [], "sessions": [], "devices": [], "emails_we_sent": []}
+        out["subscriptions"] = [dict(r) for r in conn.execute("SELECT * FROM subscriptions WHERE customer_id = ?", (customer_id,)).fetchall()]
+        out["payments"] = [dict(r) for r in conn.execute("SELECT * FROM payments WHERE customer_id = ?", (customer_id,)).fetchall()]
+        out["activity"] = [dict(r) for r in conn.execute("SELECT kind, detail, created_at FROM subscription_events WHERE customer_id = ? ORDER BY created_at", (customer_id,)).fetchall()]
+        out["projects"] = [{"id": r["id"], "name": r["name"], "created_at": r["created_at"], "updated_at": r["updated_at"]}
+                           for r in conn.execute("SELECT id, name, created_at, updated_at FROM projects WHERE customer_id = ?", (customer_id,)).fetchall()]
+        out["sessions"] = [{"user_agent": r["user_agent"], "created_at": r["created_at"], "last_seen_at": r["last_seen_at"], "revoked_at": r["revoked_at"]}
+                           for r in conn.execute("SELECT * FROM web_sessions WHERE customer_id = ?", (customer_id,)).fetchall()]
+        out["devices"] = [{"device_name": r["device_name"], "created_at": r["created_at"], "revoked_at": r["revoked_at"]}
+                          for r in conn.execute("SELECT * FROM devices WHERE customer_id = ?", (customer_id,)).fetchall()]
+        out["emails_we_sent"] = [{"kind": r["kind"], "subject": r["subject"], "status": r["status"], "sent_at": r["sent_at"]}
+                                 for r in conn.execute("SELECT * FROM email_log WHERE customer_id = ? ORDER BY sent_at", (customer_id,)).fetchall()]
+    return out
+
+
+def erase_customer(customer_id: int) -> dict:
+    """Erasure that keeps the books straight: everything personal goes,
+    and the rows an accountant needs -- what was paid, and the partner
+    commission that arose from it -- stay with the person cut out of
+    them. Stripe holds the authoritative billing record either way."""
+    removed: dict[str, int] = {}
+    with connection() as conn:
+        for table in _CUSTOMER_OWNED:
+            cur = conn.execute(f"DELETE FROM {table} WHERE customer_id = ?", (customer_id,))
+            if cur.rowcount:
+                removed[table] = cur.rowcount
+        # Sign-in codes are keyed by address, not id.
+        email = (conn.execute("SELECT email FROM customers WHERE id = ?", (customer_id,)).fetchone() or {"email": ""})["email"]
+        if email:
+            cur = conn.execute("DELETE FROM activation_codes WHERE email = ?", (email,))
+            if cur.rowcount:
+                removed["activation_codes"] = cur.rowcount
+        conn.execute("UPDATE checkout_sessions SET customer_id = NULL, customer_name = '', customer_email = '' WHERE customer_id = ?", (customer_id,))
+        conn.execute("UPDATE promo_payouts SET customer_id = NULL WHERE customer_id = ?", (customer_id,))
+        conn.execute("UPDATE subscriptions SET notes = '' WHERE customer_id = ?", (customer_id,))
+        conn.execute(
+            "UPDATE customers SET name = 'Deleted account', email = ?, stripe_customer_id = stripe_customer_id, notes = '', marketing_opt_out = 1, deleted_at = ? WHERE id = ?",
+            (f"deleted+{customer_id}@piperstitch.invalid", _now(), customer_id))
+    return removed
 
 
 # Tables that hold customers and what they did, as against the shop's own
@@ -1332,11 +1392,18 @@ def latest_published_update() -> Optional[sqlite3.Row]:
 # cheap to create and easy to end from the account page.
 
 
+WEB_SESSION_DAYS = 90
+
+
+def _session_expiry() -> str:
+    return (datetime.utcnow() + timedelta(days=WEB_SESSION_DAYS)).isoformat(timespec="seconds") + "Z"
+
+
 def create_web_session(*, customer_id: int, token_hash: str, user_agent: str) -> int:
     with connection() as conn:
         cur = conn.execute(
-            "INSERT INTO web_sessions (customer_id, token_hash, user_agent, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
-            (customer_id, token_hash, user_agent[:200], _now(), _now()),
+            "INSERT INTO web_sessions (customer_id, token_hash, user_agent, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (customer_id, token_hash, user_agent[:200], _now(), _now(), _session_expiry()),
         )
         return cur.lastrowid
 
@@ -1360,8 +1427,13 @@ def consume_handoff(code_hash: str) -> Optional[sqlite3.Row]:
 
 
 def get_web_session_by_token_hash(token_hash: str) -> Optional[sqlite3.Row]:
+    """A live session. Tokens used to be good for ever, which made a
+    stolen one permanent; they now lapse WEB_SESSION_DAYS after their
+    last use. Rows from before the column existed have no expiry and are
+    given one the next time they're used."""
     with connection() as conn:
-        return conn.execute("SELECT * FROM web_sessions WHERE token_hash = ? AND revoked_at IS NULL", (token_hash,)).fetchone()
+        return conn.execute("SELECT * FROM web_sessions WHERE token_hash = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+                            (token_hash, _now())).fetchone()
 
 
 def get_web_session(session_row_id: int) -> Optional[sqlite3.Row]:
@@ -1370,8 +1442,10 @@ def get_web_session(session_row_id: int) -> Optional[sqlite3.Row]:
 
 
 def touch_web_session(session_row_id: int) -> None:
+    """Sliding: using the app keeps you signed in, quiet for three months
+    signs you out."""
     with connection() as conn:
-        conn.execute("UPDATE web_sessions SET last_seen_at = ? WHERE id = ?", (_now(), session_row_id))
+        conn.execute("UPDATE web_sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?", (_now(), _session_expiry(), session_row_id))
 
 
 def revoke_web_session(session_row_id: int) -> None:
@@ -1805,7 +1879,17 @@ def recruitment_counts() -> dict:
 
 def mark_resource_announced(resource_id: int) -> None:
     with connection() as conn:
-        conn.execute("UPDATE partner_resources SET announced_at = ? WHERE id = ?", (_now(), resource_id))
+        conn.execute("UPDATE partner_resources SET announced_at = ?, announce_queued_at = NULL WHERE id = ?", (_now(), resource_id))
+
+
+def queue_resource_announcement(resource_id: int) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_resources SET announce_queued_at = ? WHERE id = ?", (_now(), resource_id))
+
+
+def resources_awaiting_announcement() -> list[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_resources WHERE announce_queued_at IS NOT NULL ORDER BY announce_queued_at").fetchall()
 
 
 def partners_to_notify() -> list[sqlite3.Row]:
