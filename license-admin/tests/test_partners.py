@@ -1117,27 +1117,73 @@ def test_a_recruits_page_shows_the_sequence_resends_any_email_and_keeps_their_re
     assert "Go on then" in [e["body"] for e in partners.recruit_timeline(db.get_partner_prospect(prospect_id))][-1]
 
 
-def test_the_first_recruitment_email_leads_with_seeing_it_and_the_video_opens_without_a_form(isolated_db, test_keypair, fake_smtp):
+def test_the_first_recruitment_email_leads_with_the_programme_graphic(isolated_db, test_keypair, fake_smtp):
+    """The graphic is the message now: full width at the top, linked to the
+    reader's own copy of the details. What it must not become is an email
+    that says nothing when a client blocks images -- so the offer is in the
+    alt text and in the words underneath as well."""
     from app import partners
     prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
     partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
     note = fake_smtp.sent[-1]
     body = _body(note)
-    # It opens on seeing and trying it, not on the money.
-    assert "two minutes" in note["Subject"]
-    assert body.index("/partners/video?k=") < body.index("/partners/program?k=")
+    html = note.get_body(preferencelist=("html",)).get_content()
+
+    program = f"{config.PUBLIC_BASE_URL}/partners/program?k="
+    assert "/assets/partner-introduction-email.jpg" in html
+    assert 'width="568"' in html, "the graphic should run the width of the card, not sit small and centred"
+    assert html.index("partner-introduction-email.jpg") > html.index("<a href")  # wrapped in a link
+    assert program.split("?")[0] in html.split("partner-introduction-email.jpg")[0], "the graphic links to the full details"
+    assert "30% of everything they pay" in html, "alt text has to carry the offer for a blocked image"
+
+    # The words stand on their own when the picture never loads.
+    assert "30% of everything they pay" in body
+    assert "/partners/program?k=" in body
+    assert "/partners/video?k=" in body
     assert f"{config.WEB_APP_URL}/?trial=1" in body and "no card" in body
     assert "/partners/no-thanks?k=" in body
-    # The film itself plays without registering, and counts as a look.
+
+    # The film still plays without registering, and counts as a look.
     link = body.split("/partners/video?k=")[1].split()[0]
     with TestClient(app) as guest:
         r = guest.get(f"/partners/video?k={link}")
         assert r.status_code == 200 and "Dev, here it is in two minutes" in r.text
-        assert "Show me the details" not in r.text
         assert "/assets/video/piperstitch-partner-program.mp4" in r.text
-        # ...and the details are one click on from there, still no form.
-        assert "30% of every invoice" in guest.get("/partners/program", follow_redirects=True).text
     assert db.get_partner_prospect(prospect_id)["views"] >= 1
+
+
+def test_the_signup_link_is_short_and_is_their_name(isolated_db, test_keypair, fake_smtp):
+    """A signed token is what nobody types off a phone or reads aloud, so
+    the invitation carries their name instead and the route looks the token
+    up at the other end."""
+    from app import partners
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    body = _body(fake_smtp.sent[-1])
+
+    expected = f"{config.WEBSITE_BASE_URL}/join/dev-patel"
+    assert expected in body
+    assert len(expected) < 60, "the whole point is that it fits on a line"
+
+    with TestClient(app) as guest:
+        r = guest.get("/join/dev-patel", follow_redirects=False)
+        assert r.status_code == 303
+        assert "/partners/apply?k=" in r.headers["location"], "it should land on their own application, already identified"
+        # A name we don't know says nothing about whether we know it.
+        miss = guest.get("/join/someone-else-entirely", follow_redirects=False)
+        assert miss.status_code == 303 and "/partners" in miss.headers["location"]
+
+
+def test_two_people_with_the_same_name_get_different_links(isolated_db, test_keypair, fake_smtp):
+    from app import partners
+    a = partners.register_prospect(name="Dev Patel", email="dev1@example.com", source="recruit")
+    b = partners.register_prospect(name="Dev Patel", email="dev2@example.com", source="recruit")
+    slugs = {db.get_partner_prospect(a)["slug"], db.get_partner_prospect(b)["slug"]}
+    assert slugs == {"dev-patel", "dev-patel-2"}
+    with TestClient(app) as guest:
+        for slug, pid in (("dev-patel", a), ("dev-patel-2", b)):
+            loc = guest.get(f"/join/{slug}", follow_redirects=False).headers["location"]
+            assert "/partners/apply?k=" in loc
 
 
 def test_the_films_are_in_every_partner_kit(isolated_db, test_keypair, fake_smtp):

@@ -461,6 +461,7 @@ CREATE TABLE IF NOT EXISTS partner_prospects (
     organization TEXT NOT NULL DEFAULT '',
     platforms TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'self',     -- 'self' (registered on the site) | 'invite' (we sent them a link)
+    slug TEXT UNIQUE,                        -- their name, for a short personal invite link: piperstitch.com/join/ada-lovelace
     note TEXT NOT NULL DEFAULT '',
     views INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -642,6 +643,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "payments", "balance_transaction_id", "TEXT")
         _add_column_if_missing(conn, "customers", "marketing_opt_out", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "projects", "thumbnail", "TEXT")   # projects saved before this stay blank until next saved
+        _add_column_if_missing(conn, "partner_prospects", "slug", "TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_slug ON partner_prospects(slug) WHERE slug IS NOT NULL")
         _add_column_if_missing(conn, "customers", "last_active_at", "TEXT")   # last web sign-in / app use, for "we miss you"
         # Which product a subscription is for: the app ('core') or PiperStitch Proofs ('proofs').
         _add_column_if_missing(conn, "subscriptions", "product", "TEXT NOT NULL DEFAULT 'core'")
@@ -1833,6 +1836,21 @@ def create_partner_prospect(*, name: str, email: str, organization: str = "", pl
             "INSERT INTO partner_prospects (name, email, organization, platforms, source, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name.strip(), email, organization.strip(), platforms.strip(), source, note.strip(), _now()))
         return cur.lastrowid
+
+
+def get_prospect_by_slug(slug: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM partner_prospects WHERE slug = ?", (slug,)).fetchone()
+
+
+def set_prospect_slug(prospect_id: int, slug: str) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_prospects SET slug = ? WHERE id = ?", (slug, prospect_id))
+
+
+def slug_taken(slug: str) -> bool:
+    with connection() as conn:
+        return conn.execute("SELECT 1 FROM partner_prospects WHERE slug = ?", (slug,)).fetchone() is not None
 
 
 def get_partner_prospect(prospect_id: int) -> Optional[sqlite3.Row]:

@@ -79,3 +79,37 @@ def test_auth_hash_roundtrip():
 
     h = auth.hash_password("hunter2hunter2")
     assert auth.verify_password("hunter2hunter2", h) and not auth.verify_password("nope", h) and not auth.verify_password("x", "garbage")
+
+
+# ------------------------------------------------- links in email bodies ---
+
+
+def test_a_bare_url_in_an_email_body_becomes_a_clickable_link():
+    """The bodies are written as plain text and shown as HTML, so until
+    this a link was only a link if the reader's client happened to
+    underline it. An invitation whose signup link cannot be clicked is an
+    invitation nobody accepts."""
+    from app import email_branding
+    html = email_branding.render(body_text="Your signup page is: https://www.piperstitch.com/join/dev-patel")
+    assert '<a href="https://www.piperstitch.com/join/dev-patel"' in html
+
+
+def test_punctuation_after_a_url_stays_outside_the_link():
+    from app import email_branding
+    html = email_branding.render(body_text="The terms are here: https://example.com/a?k=1. Read them.")
+    assert '<a href="https://example.com/a?k=1"' in html
+    assert 'href="https://example.com/a?k=1."' not in html, "a full stop is punctuation, not part of the address"
+
+
+def test_a_body_with_no_urls_is_untouched():
+    from app import email_branding
+    html = email_branding.render(body_text="Nothing to click here.")
+    assert "Nothing to click here." in html and "<a href=" not in html.split("Nothing to click here.")[0][-200:]
+
+
+def test_the_full_width_hero_can_carry_a_link_and_the_small_one_still_works():
+    from app import email_branding
+    full = email_branding.render(body_text="Hi", hero_image="https://x/i.jpg", hero_alt="The offer", hero_url="https://x/p", hero_full=True)
+    assert 'width="568"' in full and 'href="https://x/p"' in full and 'alt="The offer"' in full
+    small = email_branding.render(body_text="Hi", hero_image="https://x/i.jpg", hero_alt="Piper")
+    assert 'width="240"' in small and "href=" not in small.split("i.jpg")[0][-120:]

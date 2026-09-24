@@ -1207,6 +1207,28 @@ async def inbound_email(token: str, request: Request):
 # ------------------------------------------------------- partner links ---
 
 
+@app.get("/join/{slug}")
+def partner_join(request: Request, slug: str):
+    """A prospect's short personal invitation: /join/ada-lovelace.
+
+    The signed token is what lets the application know who they are without
+    asking again, and a signed token is exactly what nobody types off a
+    phone screen or reads aloud on a podcast. So the short form carries the
+    name and this looks the token up at the other end.
+
+    A slug we do not know goes to the public programme page rather than a
+    404, and the whole route is rate-limited: guessing names would
+    otherwise answer "is this person one of yours?" to anyone who asked
+    enough times.
+    """
+    if not ratelimit.allow(request, bucket="form"):
+        return RedirectResponse(f"{config.WEBSITE_BASE_URL}/partners", status_code=303)
+    prospect = db.get_prospect_by_slug((slug or "").strip().lower()[:60])
+    if prospect is None:
+        return RedirectResponse(f"{config.WEBSITE_BASE_URL}/partners", status_code=303)
+    return RedirectResponse(partners.apply_url(prospect["id"]), status_code=303)
+
+
 @app.get("/r/{code}", response_class=HTMLResponse)
 def referral_link(request: Request, code: str, to: str = ""):
     """A partner's link (Partner Program §5.2): log the click, set the

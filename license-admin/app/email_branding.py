@@ -45,6 +45,27 @@ def _paragraphs(text: str) -> list[str]:
     return [b.strip() for b in re.split(r"\n\s*\n", text.strip()) if b.strip()]
 
 
+#: A bare URL sitting in a sentence. Trailing punctuation is left out of the
+#: link -- "…details: {url}." should not send anyone to a URL ending in a
+#: full stop.
+_URL = re.compile(r"(https?://[^\s<>\"]+?)([.,;:!?)\]]*)(?=\s|$)")
+
+
+def _linkify(escaped_line: str) -> str:
+    """Make the URLs in a plain-text body clickable.
+
+    The bodies are written as plain text and shown as HTML, so until now a
+    link was only a link if the reader's client happened to underline it
+    for them. Several clients do not, and an invitation whose signup link
+    cannot be clicked is an invitation nobody accepts. The line is already
+    HTML-escaped when it gets here, so nothing is re-escaped.
+    """
+    def wrap(m):
+        url, tail = m.group(1), m.group(2)
+        return f'<a href="{url}" style="color:{BLUE};text-decoration:underline;">{url}</a>{tail}'
+    return _URL.sub(wrap, escaped_line)
+
+
 def _render_block(block: str) -> str:
     """One plain-text paragraph -> one HTML block. A block whose every
     line starts with '- ' or '* ' becomes a bullet list; a lone '---' a
@@ -69,7 +90,7 @@ def _render_block(block: str) -> str:
             f'font-weight:700;color:{NAVY};background:{LINEN};border:1px solid {LINE};border-radius:12px;padding:16px 20px;text-align:center;">{lines[0]}</p>'
         )
 
-    body = "<br>".join(html.escape(ln) for ln in lines)
+    body = "<br>".join(_linkify(html.escape(ln)) for ln in lines)
     return f'<p style="margin:0 0 18px 0;color:{INK_2};font-size:16px;line-height:26px;font-family:{FONT};">{body}</p>'
 
 
@@ -81,14 +102,35 @@ def button(label: str, url: str) -> str:
     )
 
 
-def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader: str = "", footer_note: str = "", hero_image: str = "", hero_alt: str = "") -> str:
-    """Wraps a plain-text body in the PiperStitch shell. `hero_image` is an
-    absolute URL shown above the words -- Piper's confetti on a welcome,
-    and nothing at all on an ordinary email."""
+def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader: str = "", footer_note: str = "",
+           hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False) -> str:
+    """Wraps a plain-text body in the PiperStitch shell.
+
+    `hero_image` is an absolute URL shown above the words -- Piper's
+    confetti on a welcome, and nothing at all on an ordinary email. It is
+    drawn small and centred by default; `hero_full` gives it the width of
+    the card instead, for an email whose picture *is* the message. Either
+    can be wrapped in a link with `hero_url`.
+
+    Alt text matters more here than on a web page: a good share of people
+    will see the words and no picture at all, because their client blocks
+    images until they ask for them.
+    """
     blocks = "".join(_render_block(b) for b in _paragraphs(body_text))
-    hero = (f'<tr><td align="center" style="padding:6px 32px 0 32px;">'
-            f'<img src="{html.escape(hero_image, quote=True)}" width="240" alt="{html.escape(hero_alt, quote=True)}" '
-            f'style="display:block;width:240px;max-width:70%;height:auto;border:0;margin:0 auto;"></td></tr>') if hero_image else ""
+    hero = ""
+    if hero_image:
+        src, alt = html.escape(hero_image, quote=True), html.escape(hero_alt, quote=True)
+        if hero_full:
+            img = (f'<img src="{src}" width="568" alt="{alt}" '
+                   f'style="display:block;width:100%;max-width:568px;height:auto;border:0;border-radius:10px;">')
+            pad = "16px 16px 4px 16px"
+        else:
+            img = (f'<img src="{src}" width="240" alt="{alt}" '
+                   f'style="display:block;width:240px;max-width:70%;height:auto;border:0;margin:0 auto;">')
+            pad = "6px 32px 0 32px"
+        if hero_url:
+            img = f'<a href="{html.escape(hero_url, quote=True)}" style="display:block;text-decoration:none;">{img}</a>'
+        hero = f'<tr><td align="center" style="padding:{pad};">{img}</td></tr>' 
     cta = button(cta_label, cta_url) if cta_label and cta_url else ""
     pre = f'<div style="display:none;max-height:0;overflow:hidden;opacity:0;">{html.escape(preheader)}</div>' if preheader else ""
     note = html.escape(footer_note) if footer_note else "You're receiving this because you have a PiperStitch account. Replies reach a person."

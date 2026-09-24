@@ -185,19 +185,37 @@ def send_partner_program_email(*, to_email: str, partner_name: str, url: str, in
                           vars=_partner_vars(partner_name, to_email, url=url, link_days=partners.PROGRAM_TOKEN_DAYS))
 
 
-def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, url: str, apply_url: str, opt_out_url: str, video_url: str = "", trial_url: str = "") -> str:
+#: The programme on one page, drawn rather than written. It leads the first
+#: recruitment email and links straight to the full details.
+PARTNER_INTRO_IMAGE = "/assets/partner-introduction-email.jpg"
+#: Read instead of the picture by everyone whose client blocks images, which
+#: on cold mail is most of them on first open -- so it carries the offer, not
+#: a description of a picture.
+PARTNER_INTRO_ALT = ("The PiperStitch Partner Program: get paid every month, for two years. "
+                     "$15 the day they subscribe, then 30% of everything they pay for 24 months. "
+                     "Founding rate locked for life for the first fifty partners.")
+
+
+def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, url: str, apply_url: str, opt_out_url: str,
+                                video_url: str = "", trial_url: str = "", join_url: str = "") -> str:
     """One step of the recruitment sequence. Returns the subject line, for
     the outreach log. Cold mail, so the opt-out rides in the footer as
-    well as the body."""
+    well as the body.
+
+    The first step leads with the programme graphic, full width and linked
+    to the details; the later steps are words alone."""
     from . import db
     e = _emails()
     vars = _partner_vars(partner_name, to_email, url=url, apply_url=apply_url, opt_out_url=opt_out_url,
-                         video_url=video_url, trial_url=trial_url or f"{config.WEB_APP_URL}/?trial=1")
+                         video_url=video_url, join_url=join_url, trial_url=trial_url or f"{config.WEB_APP_URL}/?trial=1")
     row = db.get_email_template(key)
     if row is None:
         e.seed(); row = db.get_email_template(key)
     subject = e.fill(row["subject"], vars)
+    lead = key == "partner_outreach_1"
     e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
+                  hero_image=f"{config.WEBSITE_BASE_URL}{PARTNER_INTRO_IMAGE}" if lead else "",
+                  hero_alt=PARTNER_INTRO_ALT if lead else "", hero_url=url if lead else "", hero_full=lead,
                   footer_note=f"You're getting this because we think you'd be a good PiperStitch partner. To hear no more: {opt_out_url}")
     return subject
 

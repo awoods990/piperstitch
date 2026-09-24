@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import io
 import re
+import unicodedata
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -193,6 +194,45 @@ def resolve_program_token(token: str) -> Optional[int]:
     return prospect["id"] if prospect is not None else None
 
 
+def _slugify(name: str) -> str:
+    """Their name as it will appear in a link: lowercase, words joined by
+    hyphens, nothing else. Accented letters are folded rather than dropped,
+    so Renée becomes renee and not rene."""
+    folded = unicodedata.normalize("NFKD", name or "")
+    ascii_only = "".join(c for c in folded if not unicodedata.combining(c))
+    parts = re.findall(r"[A-Za-z0-9]+", ascii_only)
+    return "-".join(parts).lower()[:48]
+
+
+def assign_slug(prospect_id: int, name: str) -> str:
+    """A short personal address for the invitation: piperstitch.com/join/ada-lovelace.
+
+    A long signed token in a link is the thing people will not read aloud
+    on a podcast or type off a phone screen, so the short form carries the
+    name and the route looks the token up at the other end. Two people
+    called Ada get ada-lovelace and ada-lovelace-2; someone whose name has
+    no letters at all falls back to their id.
+    """
+    base = _slugify(name) or f"partner-{prospect_id}"
+    slug, n = base, 1
+    while db.slug_taken(slug):
+        existing = db.get_prospect_by_slug(slug)
+        if existing is not None and existing["id"] == prospect_id:
+            return slug
+        n += 1
+        slug = f"{base}-{n}"
+    db.set_prospect_slug(prospect_id, slug)
+    return slug
+
+
+def join_url(prospect) -> str:
+    """Where the invitation sends them to finish signing up. On the
+    marketing domain because that is the one they know and the one that
+    fits on a line."""
+    slug = prospect["slug"] if "slug" in prospect.keys() and prospect["slug"] else assign_slug(prospect["id"], prospect["name"])
+    return f"{config.WEBSITE_BASE_URL}/join/{slug}"
+
+
 def video_url(prospect_id: int) -> str:
     """The two-minute introduction, with their token so the click counts
     and the details are one step away rather than behind a form."""
@@ -217,6 +257,7 @@ def register_prospect(*, name: str, email: str, organization: str = "", platform
     if "@" not in email or "." not in email.split("@")[-1]:
         raise PartnerError("email", "That doesn't look like an email address.")
     prospect_id = db.create_partner_prospect(name=name, email=email, organization=organization, platforms=platforms, source=source, note=note)
+    assign_slug(prospect_id, name)
     try:
         email_sender.send_partner_program_email(to_email=email, partner_name=name, url=program_url(prospect_id), invited=(source == "invite"))
     except email_sender.EmailSendError:
@@ -459,7 +500,8 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
     try:
         subject = email_sender.send_partner_outreach_email(
             to_email=prospect["email"], partner_name=prospect["name"], key=spec["key"], url=url,
-            apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]), video_url=video_url(prospect["id"]))
+            apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]), video_url=video_url(prospect["id"]),
+            join_url=join_url(prospect))
     except email_sender.EmailSendError as e:
         db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
         return False

@@ -109,25 +109,29 @@ Here are the full details: what you earn on every referral, for how long, the si
 
 The link is yours and works for the next {link_days} days. You can apply from the bottom of the page, or just reply to this email and ask me anything first.""",
          cta_label="Read the program details", cta_url="{url}", preheader="What you earn, for how long, and how we pay.", placeholders="first_name, name, email, url, link_days, site_url"),
-    dict(key="partner_outreach_1", name="Recruit 1: see it or try it", description="First recruitment email. {video_url} is the two-minute film, {trial_url} the free trial, {url} their own copy of the program details, {opt_out_url} stops the sequence.",
-         subject="{first_name} — worth two minutes of your time?",
+    dict(key="partner_outreach_1", name="Recruit 1: the program, on one page", description="First recruitment email. Led by the program graphic, which links to {url} — their own copy of the full details, no registration. {video_url} is the two-minute film, {join_url} their short personal signup link, {opt_out_url} stops the sequence.",
+         subject="{first_name} — paid every month, for two years",
          body="""Hi {first_name},
 
 I'd like you to look at PiperStitch, and if it earns it, to be paid for telling people about it.
 
-Easiest thing first: see it work. Drop in a customer's logo and you get a machine-ready stitch file in seconds — the stitch type, underlay, density and sew order all chosen the way a digitizer would choose them, every one of those decisions shown and editable, and the file rendered as real stitches before you hoop anything.
+Drop in a customer's logo and you get a machine-ready stitch file in seconds. The same link then carries the job out to the customer for approval and writes the run ticket for the machine.
 
-Watch it happen (two minutes, no sign-up): {video_url}
+The picture above is the whole offer on one page. If your email is hiding images, it's all here: {url}
+
+What it pays: $15 the day someone you refer subscribes, then 30% of everything they pay, every month, for two years. Your audience gets a 30-day trial instead of 14 and ten proofs instead of three, at full price — so your commission stays whole. The first fifty partners keep 30% for life; after that it's 25%.
+
+See the full program: {url}
+
+Rather watch it work first? Two minutes, no sign-up: {video_url}
 
 Or skip me entirely and put your own artwork through it — the trial is free, needs no card, and takes about a minute to start: {trial_url}
 
-If it holds up on your work, the Partner Program pays you a recurring share of everything the people you refer pay, for two years, and gives them a longer free trial and a bigger proof allowance than anyone else gets. The first fifty partners are on a better rate and I'd like to hold one of those seats for you.
-
-The full terms, including the rate: {url}
+When you're ready, your signup page is: {join_url}
 
 I'd rather you formed your own view than took mine — so look first, and tell me what's wrong with it. If it's not for you, {opt_out_url} and you'll not hear from me again.""",
-         cta_label="Watch the two-minute introduction", cta_url="{video_url}", preheader="See it work, or put your own artwork through it.",
-         placeholders="first_name, name, email, video_url, trial_url, url, apply_url, opt_out_url, site_url"),
+         cta_label="See the full program", cta_url="{url}", preheader="Paid every month your referral keeps stitching, for two full years.",
+         placeholders="first_name, name, email, video_url, trial_url, url, apply_url, join_url, opt_out_url, site_url"),
     dict(key="partner_outreach_2", name="Recruit 2: how it works", description="Second recruitment email, a few days later: the mechanics.",
          subject="How the PiperStitch partner thing actually works",
          body="""Hi {first_name},
@@ -834,7 +838,8 @@ def fill(text: str, vars: dict) -> str:
     return (text or "").format_map(_Safe(vars))
 
 
-def render_template(row, vars: dict, *, marketing: bool = False, footer_note: str = "", hero_image: str = "", hero_alt: str = "") -> tuple[str, str, str]:
+def render_template(row, vars: dict, *, marketing: bool = False, footer_note: str = "", hero_image: str = "", hero_alt: str = "",
+                    hero_url: str = "", hero_full: bool = False) -> tuple[str, str, str]:
     """(subject, plain body, html) for a template or sequence-step row."""
     subject = fill(row["subject"], vars)
     body = fill(row["body"], vars)
@@ -846,18 +851,20 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
         body = body.rstrip() + f"\n\n—\nDon't want these tips? Unsubscribe: {vars['unsubscribe_url']}"
     # Who sent it, in the plain-text part as well as the HTML one.
     body = body.rstrip() + f"\n\n{config.LEGAL_NAME}, {config.POSTAL_ADDRESS}\n{config.REPLY_TO_EMAIL}"
-    html = email_branding.render(body_text=body, cta_label=cta_label, cta_url=cta_url, preheader=preheader, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt)
+    html = email_branding.render(body_text=body, cta_label=cta_label, cta_url=cta_url, preheader=preheader, footer_note=footer_note,
+                                 hero_image=hero_image, hero_alt=hero_alt, hero_url=hero_url, hero_full=hero_full)
     return subject, body, html
 
 
 def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "",
-                hero_image: str = "", hero_alt: str = "") -> None:
+                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False) -> None:
     """Sends one of the editable system emails. Raises EmailSendError on
     failure after logging it."""
     row = db.get_email_template(key)
     if row is None:
         seed(); row = db.get_email_template(key)
-    subject, body, html = render_template(row, vars or {}, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt)
+    subject, body, html = render_template(row, vars or {}, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt,
+                                         hero_url=hero_url, hero_full=hero_full)
     msg = email_sender._compose(to_email=to_email, subject=subject, body=body, html_body=html, reply_to=reply_to)
     for name, data, ctype in attachments or []:
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
