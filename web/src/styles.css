@@ -502,16 +502,20 @@ a.choice { text-decoration: none; }
 .done-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 4px; }
 .done-piper { border-radius: 20px; animation: piper-pop .6s cubic-bezier(.2,1.4,.4,1) both; }
 /* A partner's code, recognised before sign-up: the one moment in setup
-   where someone is being given something, so it gets Piper's fireworks
-   and the confetti rather than a line of small print. */
-.partner-unlock { position: relative; overflow: hidden; text-align: center; padding: 6px 18px 14px;
-  margin: -6px -6px 18px; border-radius: 14px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent, #2f6f4f) 12%, transparent), transparent); }
-.partner-unlock .done-finale { width: 150px; height: 150px; margin: -10px auto -16px; display: block; }
-.unlock-title { position: relative; z-index: 1; margin: 0 0 4px; font-size: 1.12rem; }
-.unlock-sub { position: relative; z-index: 1; margin: 0; font-size: .93rem; line-height: 1.5; opacity: .88; }
-@media (max-width: 760px) { .partner-unlock .done-finale { width: 112px; height: 112px; } }
-@media (prefers-reduced-motion: reduce) { .partner-unlock .celebrate { display: none; } }
+   where someone is being given something rather than asked for something,
+   so it gets Piper's fireworks and the confetti used at the finish. The
+   confetti itself is a child of the card, not of this box -- it falls in
+   viewport heights and would be clipped away instantly in here. */
+.welcome-card.has-unlock { position: relative; }
+.partner-unlock { position: relative; z-index: 1; text-align: center;
+  padding: 10px 20px 16px; margin: -4px -6px 16px; border-radius: 14px;
+  background: var(--readyBG); border: 1px solid var(--readyBorder); }
+.partner-unlock .done-finale { width: 132px; height: 132px; margin: -14px auto -18px; display: block; }
+.unlock-title { margin: 0 0 5px; font-size: 1.1rem; color: var(--readyText); }
+.unlock-sub { margin: 0 auto; max-width: 520px; font-size: .92rem; line-height: 1.5; color: var(--ink2); }
+.unlock-sub b { color: var(--readyText); }
+@media (max-width: 760px) { .partner-unlock .done-finale { width: 104px; height: 104px; } .unlock-sub { font-size: .88rem; } }
+
 
 .done-finale { width: 240px; height: 240px; margin: -24px 0 -26px; user-select: none; -webkit-user-drag: none; }
 @media (max-width: 760px) { .done-finale { width: 160px; height: 160px; } }

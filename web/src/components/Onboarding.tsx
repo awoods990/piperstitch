@@ -236,12 +236,17 @@ export default function Onboarding(props: Props) {
   if (welcome) {
     return (
       <div className="setup onboarding">
-        <div className="setup-card welcome-card">
+        <div className={"setup-card welcome-card" + (unlocked ? " has-unlock" : "")}>
+          {/* The confetti has to span the whole card, as it does on the
+              finish screen: its fall is written in viewport heights, so
+              inside a small box it is gone before anyone sees it. */}
+          {unlocked && (
+            <div className="celebrate" aria-hidden="true">
+              {CONFETTI.map((c, i) => <span key={i} className="confetti" style={{ left: c.left, animationDelay: c.delay, animationDuration: c.duration, background: c.color, width: c.size, height: c.size * 0.6, transform: `rotate(${c.rotate})` }} />)}
+            </div>
+          )}
           {unlocked && (
             <div className="partner-unlock">
-              <div className="celebrate" aria-hidden="true">
-                {CONFETTI.map((c, i) => <span key={i} className="confetti" style={{ left: c.left, animationDelay: c.delay, animationDuration: c.duration, background: c.color, width: c.size, height: c.size * 0.6, transform: `rotate(${c.rotate})` }} />)}
-              </div>
               <FinalePiper />
               <h3 className="unlock-title">{offer?.partner ? `${offer.partner} unlocked this for you` : "Your partner code is in"}</h3>
               <p className="unlock-sub">
@@ -252,7 +257,9 @@ export default function Onboarding(props: Props) {
             </div>
           )}
           <div className="welcome-brand">
-            <img src="/icon.png" alt="" width={56} height={56} />
+            {/* Piper is already on screen above when a partner unlocked
+                something; two of him reads as a mistake. */}
+            {!unlocked && <img src="/icon.png" alt="" width={56} height={56} />}
             <h2>{needsAccount ? "Welcome — let's start your free trial" : `Welcome to PiperStitch${account?.name ? `, ${account.name.split(" ")[0]}` : ""}`}</h2>
             <p className="setup-sub">{needsAccount
               ? `${trialDays} days of everything, no card needed. Your email is your account — we send a code, no password to remember. Then a few questions set PiperStitch up for your business, or skip them and set things up as you go.`
