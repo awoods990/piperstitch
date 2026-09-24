@@ -219,6 +219,21 @@ def _expire_stale_trial(customer_id: int) -> None:
             conn.execute("UPDATE subscriptions SET status = 'canceled', ended_at = ?, updated_at = ? WHERE id = ?", (db.now_iso(), db.now_iso(), sub["id"]))
 
 
+def trial_days_granted(customer_id: int) -> int:
+    """The trial this customer actually has, which is not always the one we
+    advertise. A partner's code can buy their audience a longer one (§9),
+    and the number we hand back here is the number the app puts on screen --
+    telling someone they have fourteen days when the database gave them
+    thirty is how a partner's promise becomes a complaint about us."""
+    sub = db.best_subscription_for_customer(customer_id)
+    if sub is None or sub["source"] != "manual" or sub["notes"] != TRIAL_NOTE:
+        return config.TRIAL_DAYS
+    start, end = db.parse_iso(sub["current_period_start"]), db.parse_iso(sub["current_period_end"])
+    if start is None or end is None:
+        return config.TRIAL_DAYS
+    return max(1, round((end - start).total_seconds() / 86400))
+
+
 def state(*, token: str) -> dict:
     """What the web server caches in its cookie: who this is and whether
     they may use the app right now. Cheap -- database only."""
@@ -240,7 +255,7 @@ def state(*, token: str) -> dict:
         "has_billing": bool(customer["stripe_customer_id"]),
         "price_cents": config.MONTHLY_PRICE_CENTS,
         "currency": config.CURRENCY,
-        "trial_days": config.TRIAL_DAYS,
+        "trial_days": trial_days_granted(customer["id"]),
         # PiperStitch Proofs, the second product on this customer, so the
         # app can offer it and open it.
         "proofs": {**subscriptions.proofs_state(customer["id"]).as_dict(), "url": config.PROOFS_APP_URL},

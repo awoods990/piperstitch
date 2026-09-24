@@ -120,6 +120,24 @@ def test_self_referral_and_suspended_promoters_are_not_attributed(isolated_db, t
     assert r.status_code == 302 and not r.cookies.get(referrals.COOKIE_NAME)
 
 
+def test_the_app_is_told_the_longer_trial_a_partner_code_actually_granted(isolated_db, test_keypair, fake_smtp):
+    """The database granting thirty days while the app's welcome screen says
+    fourteen is how a partner's promise turns into a complaint about us. The
+    number on that screen comes straight from state(), so it is pinned here
+    alongside the entitlement it is supposed to describe."""
+    pid, promo_id = partner()
+    s = sign_up(fake_smtp, "fan@example.com", ref_cookie=referrals.cookie_value(promo_id))
+    state = web_access.state(token=s.token)
+    assert state["trial_days"] == 30, "the app would tell a referred customer the wrong trial length"
+    ends = datetime.fromisoformat(state["period_end"].replace("Z", "+00:00"))
+    assert timedelta(days=29) < ends - datetime.now(timezone.utc) <= timedelta(days=30)
+
+
+def test_an_unreferred_signup_is_told_the_advertised_trial(isolated_db, test_keypair, fake_smtp):
+    s = sign_up(fake_smtp, "walkin@example.com")
+    assert web_access.state(token=s.token)["trial_days"] == config.TRIAL_DAYS
+
+
 def test_checkout_carries_the_trial_start_attribution_to_stripe(isolated_db, test_keypair, fake_smtp, monkeypatch):
     pid, promo_id = partner()
     s = sign_up(fake_smtp, "buyer@example.com", ref_cookie=referrals.cookie_value(promo_id))

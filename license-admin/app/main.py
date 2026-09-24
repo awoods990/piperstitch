@@ -1524,8 +1524,16 @@ def customer_detail(request: Request, customer_id: int, message: str = "", error
     if customer is None:
         return RedirectResponse("/admin/subscribers", status_code=303)
     validity = subscriptions.validity_for(customer_id)
+    # The trial row is authoritative when there is one: a partner's code can
+    # grant longer than the advertised default, and this page is where a
+    # partner's "why was my referral's trial short?" gets answered. Falling
+    # back to download + default is only for someone who has downloaded the
+    # Mac edition and never opened the web app.
     trial_ends = None
-    if customer["downloaded_at"]:
+    trial = db.best_subscription_for_customer(customer_id)
+    if trial is not None and trial["notes"] == web_access.TRIAL_NOTE and trial["current_period_end"]:
+        trial_ends = db.parse_iso(trial["current_period_end"]).date().isoformat()
+    elif customer["downloaded_at"]:
         trial_ends = (db.parse_iso(customer["downloaded_at"]) + timedelta(days=config.TRIAL_DAYS)).date().isoformat()
     return templates.TemplateResponse(request, "customer_detail.html", {
         "active_nav": "subscribers",
