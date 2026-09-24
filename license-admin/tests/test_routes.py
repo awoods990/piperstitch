@@ -403,3 +403,39 @@ def test_admin_updates_publish(admin, monkeypatch):
     assert db.latest_published_update()["version"] == "0.2.0"
     r = admin.post("/admin/updates", data={"version": "0.1.9"}, files={"build_file": ("x.dmg", b"1")}, follow_redirects=False)
     assert "not+newer" in r.headers["location"]
+
+
+# ------------------------------------------------------------- launch ---
+
+
+def test_the_launch_button_appears_once_and_then_becomes_a_clock(admin):
+    """The dashboard offers the button only while it is still true that we
+    have not launched."""
+    before = admin.get("/admin").text
+    assert 'action="/admin/launch"' in before and "Not launched yet" in before
+    assert "launchClock" not in before
+
+    admin.post("/admin/launch")
+    after = admin.get("/admin").text
+    assert "launchClock" in after and "has been live for" in after
+    assert 'action="/admin/launch"' not in after, "the one-way door is still open"
+
+
+def test_a_second_press_cannot_move_the_launch_date(admin):
+    """By the time anyone presses it twice, the dashboard is the only
+    record of when it happened -- so a silent rewrite would go unnoticed."""
+    admin.post("/admin/launch")
+    first = db.get_setting("launched_at")
+    assert first is not None
+    admin.post("/admin/launch")
+    assert db.get_setting("launched_at") == first
+
+
+def test_launching_is_written_into_the_event_log(admin):
+    admin.post("/admin/launch")
+    assert any(e["kind"] == "launched" for e in db.recent_events())
+
+
+def test_a_stranger_cannot_launch(client, admin_password_configured):
+    client.post("/admin/launch")
+    assert db.get_setting("launched_at") is None

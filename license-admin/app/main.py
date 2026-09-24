@@ -1562,7 +1562,23 @@ def dashboard(request: Request):
         "pending_checkout_count": len(db.list_pending_checkouts()),
         "recent_events": db.recent_events(),
         "latest_update": db.latest_published_update(),
+        "launched_at": db.get_setting("launched_at"),
     })
+
+
+@app.post("/admin/launch", dependencies=[Depends(auth.require_admin)])
+def admin_launch(request: Request):
+    """The moment PiperStitch went public, written down once.
+
+    Write-once on purpose: a second press must not quietly move the date,
+    because by then the number on the dashboard is the only record of it
+    and nobody would notice it had changed. It lives in the database, so
+    it is inside the nightly backup rather than in somebody's memory.
+    """
+    if db.set_setting("launched_at", db.now_iso(), only_once=True):
+        db.add_event(customer_id=None, subscription_id=None, kind="launched",
+                     detail="PiperStitch launched. The counter on the dashboard starts here.")
+    return RedirectResponse("/admin", status_code=303)
 
 
 @app.get("/admin/subscribers", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])

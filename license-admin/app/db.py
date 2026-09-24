@@ -602,6 +602,16 @@ CREATE TABLE IF NOT EXISTS published_updates (
     sha256 TEXT NOT NULL,
     published_at TEXT NOT NULL
 );
+
+-- One row per remembered fact that belongs to the business rather than to
+-- a customer. Currently just the moment PiperStitch launched, which is
+-- worth keeping in the database that gets backed up rather than in
+-- somebody's memory.
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    set_at TEXT NOT NULL
+);
 """
 
 
@@ -698,6 +708,28 @@ def connection() -> Iterator[sqlite3.Connection]:
 
 def _now() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+# ------------------------------------------------------------------ settings --
+
+
+def get_setting(key: str) -> Optional[str]:
+    with connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(key: str, value: str, *, only_once: bool = False) -> bool:
+    """True when this call is the one that set it. `only_once` refuses to
+    overwrite -- the launch moment happened once, and a second click on a
+    button should not quietly rewrite history."""
+    with connection() as conn:
+        if only_once and conn.execute("SELECT 1 FROM settings WHERE key = ?", (key,)).fetchone():
+            return False
+        conn.execute("INSERT INTO settings (key, value, set_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at",
+                     (key, value, now_iso()))
+    return True
 
 
 def now_iso() -> str:

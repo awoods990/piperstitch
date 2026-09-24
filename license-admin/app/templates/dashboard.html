@@ -1,7 +1,70 @@
 {% extends "admin_base.html" %}
 {% block title %}Dashboard — PiperStitch License Admin{% endblock %}
 {% block admin_body %}
+<style>
+  /* The launch marker. Before: one button, deliberately quiet, because
+     pressing it is a one-way door. After: a running clock, because the
+     only thing worth knowing about a launch date afterwards is how long
+     ago it was. */
+  .launch { border: 1px solid var(--line, #e6e0d4); border-radius: 14px; padding: 18px 20px; margin: 0 0 18px;
+            background: linear-gradient(180deg, #f3f8f4, #fbfdfb); text-align: center; }
+  .launch.live { border-color: #cfe5d5; }
+  .launch-kicker { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #5d6472; margin-bottom: 8px; }
+  .launch-clock { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; margin: 6px 0 8px; }
+  .launch-unit { min-width: 74px; }
+  .launch-n { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; color: #2f6b41; }
+  .launch-u { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #5d6472; }
+  .launch-since { font-size: 12px; color: #5d6472; }
+  .launch form { margin: 0; }
+  .launch .btn-launch { font-size: 15px; font-weight: 600; padding: 10px 26px; border-radius: 999px;
+                        background: #2f6b41; color: #fff; border: 1px solid #2f6b41; cursor: pointer; }
+  .launch .btn-launch:hover { background: #265836; }
+  .launch-note { font-size: 12px; color: #5d6472; margin-top: 8px; }
+  @media (max-width: 620px) { .launch-clock { gap: 10px; } .launch-n { font-size: 26px; } .launch-unit { min-width: 58px; } }
+</style>
 <main>
+  {% if launched_at %}
+  <div class="launch live">
+    <div class="launch-kicker">PiperStitch has been live for</div>
+    <div class="launch-clock" id="launchClock" data-since="{{ launched_at }}">
+      <div class="launch-unit"><div class="launch-n" data-unit="days">&mdash;</div><div class="launch-u">days</div></div>
+      <div class="launch-unit"><div class="launch-n" data-unit="hours">&mdash;</div><div class="launch-u">hours</div></div>
+      <div class="launch-unit"><div class="launch-n" data-unit="minutes">&mdash;</div><div class="launch-u">minutes</div></div>
+      <div class="launch-unit"><div class="launch-n" data-unit="seconds">&mdash;</div><div class="launch-u">seconds</div></div>
+    </div>
+    <div class="launch-since">Launched {{ launched_at|replace("T", " ")|replace("Z", "") }} UTC</div>
+  </div>
+  <script>
+    (function () {
+      var el = document.getElementById("launchClock");
+      if (!el) return;
+      var since = Date.parse(el.dataset.since);
+      if (isNaN(since)) return;
+      var cells = {};
+      el.querySelectorAll("[data-unit]").forEach(function (n) { cells[n.dataset.unit] = n; });
+      function pad(n) { return n < 10 ? "0" + n : String(n); }
+      function tick() {
+        var s = Math.max(0, Math.floor((Date.now() - since) / 1000));
+        cells.days.textContent = Math.floor(s / 86400);
+        cells.hours.textContent = pad(Math.floor(s / 3600) % 24);
+        cells.minutes.textContent = pad(Math.floor(s / 60) % 60);
+        cells.seconds.textContent = pad(s % 60);
+      }
+      tick();
+      setInterval(tick, 1000);
+    })();
+  </script>
+  {% else %}
+  <div class="launch">
+    <div class="launch-kicker">Not launched yet</div>
+    <form method="post" action="/admin/launch"
+          onsubmit="return confirm('This records the moment PiperStitch launched, and it can only be set once. Ready?');">
+      <button type="submit" class="btn-launch">Launch</button>
+    </form>
+    <div class="launch-note">Press it when you start telling people. The clock starts here and doesn&rsquo;t stop.</div>
+  </div>
+  {% endif %}
+
   <div class="kpi-grid">
     <div class="kpi-tile">
       <div class="kpi-value">{{ counts.paying }}</div>
@@ -62,7 +125,7 @@
       <li>
         <span class="when">{{ e.created_at|short_dt }}</span>
         <span>
-          {% if e.customer_id %}<a href="/admin/customers/{{ e.customer_id }}">{{ e.customer_name or e.customer_email }}</a>{% else %}<span class="muted">Unknown customer</span>{% endif %}
+          {% if e.customer_id %}<a href="/admin/customers/{{ e.customer_id }}">{{ e.customer_name or e.customer_email }}</a>{% else %}<span class="muted">System</span>{% endif %}
           &mdash; <strong>{{ e.kind.replace('_', ' ') }}</strong>{% if e.detail %}: {{ e.detail }}{% endif %}
         </span>
       </li>
