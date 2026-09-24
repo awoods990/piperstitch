@@ -38,7 +38,14 @@ async function looksLikeHEIC(file: File): Promise<boolean> {
 /** libheif, compiled to WebAssembly. It is a couple of megabytes, so it is
  *  imported here rather than at the top of the file: Vite gives it its own
  *  chunk, and it is fetched only by someone who actually hands us a HEIC.
- *  Everyone else never downloads a byte of it. */
+ *  Everyone else never downloads a byte of it.
+ *
+ *  IF A CONTENT-SECURITY-POLICY IS EVER ADDED TO THIS APP, it must allow
+ *  `worker-src blob:` and `script-src blob:`. The decoder builds its worker
+ *  with `new Worker(URL.createObjectURL(...))`, and a policy without those
+ *  would break HEIC alone, silently, for the one group of people who need
+ *  it -- everyone else would never notice. It needs no SharedArrayBuffer
+ *  and no cross-origin isolation, so COOP/COEP are not required. */
 async function decodeHEIC(file: File): Promise<ImageBitmap> {
   const { heicTo } = await import("heic-to");
   return heicTo({ blob: file, type: "bitmap" });
