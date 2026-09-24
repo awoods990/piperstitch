@@ -1,6 +1,10 @@
 .env
 *.db
 *.db-journal
+# WAL mode (db.py) keeps two sidecar files beside the database; they are
+# as local as the database itself.
+*.db-wal
+*.db-shm
 __pycache__/
 *.pyc
 .pytest_cache/
