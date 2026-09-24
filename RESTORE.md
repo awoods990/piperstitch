@@ -59,17 +59,46 @@ once with your password manager open; that is the whole job.
 
 If the domain has to be pointed somewhere new (GoDaddy → whichever host):
 
-| Name | Points at |
-|---|---|
-| `www` | the site service |
-| `app` | the engine + browser app |
-| `admin` | License Admin |
-| `proofs` | Proofs |
-| apex `piperstitch.com` | forwards to `www` (path-preserving — see below) |
-| `pm-bounces` | CNAME to `pm.mtasv.net` (Postmark's return path) |
-| SPF `TXT` | `v=spf1 include:secureserver.net include:spf.mtasv.net -all` |
-| DMARC `TXT` at `_dmarc` | `v=DMARC1; p=quarantine; adkim=r; aspf=r; rua=...` |
-| MX | Microsoft 365 |
+The complete zone as it stood on 2026-09-23, captured from the live
+nameservers. Every row must exist at the new provider **before** the
+nameservers are switched, or email stops with the move.
+
+| Name | Type | Value |
+|---|---|---|
+| `@` | MX | `piperstitch-com.mail.protection.outlook.com` (priority 0) |
+| `@` | TXT | `NETORGFT21121471.onmicrosoft.com` (Microsoft 365 ownership) |
+| `@` | TXT | `v=spf1 include:secureserver.net include:spf.mtasv.net -all` |
+| `_dmarc` | TXT | `v=DMARC1; p=quarantine; adkim=r; aspf=r; rua=mailto:dmarc_rua@onsecureserver.net;` |
+| `www` | CNAME | the site service (`*.up.railway.app`) |
+| `app` | CNAME | the engine + browser app |
+| `admin` | CNAME | License Admin |
+| `proofs` | CNAME | Proofs |
+| `pm-bounces` | CNAME | `pm.mtasv.net` — Postmark's return path, and what makes SPF *align* |
+| `autodiscover` | CNAME | `autodiscover.outlook.com` |
+| `selector1._domainkey` | CNAME | `selector1-piperstitch-com._domainkey.netorgft21121471.p-v1.dkim.mail.microsoft` |
+| `selector2._domainkey` | CNAME | `selector2-piperstitch-com._domainkey.netorgft21121471.p-v1.dkim.mail.microsoft` |
+| `pm._domainkey` *(or a dated selector)* | TXT | Postmark's DKIM key — the exact host is account-specific, read it off Postmark's DNS Settings page |
+| `lyncdiscover` | CNAME | `webdir.online.lync.com` |
+| `sip` | CNAME | `sipdir.online.lync.com` |
+| `msoid` | CNAME | `clientconfig.microsoftonline-p.net` |
+| `_sipfederationtls._tcp` | SRV | `100 1 5061 sipfed.online.lync.com` |
+
+The apex is the one thing that is **not** a normal record: it points at
+GoDaddy's forwarding service, which sends the bare domain to `www` and
+returns 404 for any path. `piperstitch.com/partners` does not work and
+`www.piperstitch.com/partners` does. GoDaddy supports no ALIAS/ANAME and
+Railway issues no A records, so making the apex serve paths means either
+moving DNS to a provider with CNAME flattening, or pointing the apex `A`
+record at a redirector that preserves paths. Neither is required for the
+platform to run; it only matters for URLs printed or spoken without the
+`www`.
+
+Re-capture this table whenever DNS changes:
+
+```bash
+for n in www app admin proofs pm-bounces autodiscover; do echo "$n $(dig +short CNAME $n.piperstitch.com)"; done
+dig +short MX piperstitch.com; dig +short TXT piperstitch.com; dig +short TXT _dmarc.piperstitch.com
+```
 
 ## Restoring
 
