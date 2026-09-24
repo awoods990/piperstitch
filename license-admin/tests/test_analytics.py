@@ -3,6 +3,8 @@ that cannot be turned back into a person."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -51,6 +53,29 @@ def test_a_page_view_is_counted_and_shows_up_in_the_overview(client):
     assert [p["value"] for p in over["pages"]][0] == "/proofs.html"
     assert over["referrers"][0]["value"] == "youtube.com"
     assert over["campaigns"][0]["campaign"] == "cap-logo"
+
+
+def test_the_beacon_is_counted_when_sent_the_way_the_browser_sends_it(client):
+    """The site posts text/plain on purpose: application/json is not a
+    CORS-safelisted content type, so declaring it forces a preflight, and a
+    preflight this endpoint answered without Allow-Credentials is precisely
+    how it recorded nothing at all while appearing to work. If this test
+    ever needs `json=` to pass, the beacon has been broken again."""
+    r = client.post("/api/track",
+                    content=json.dumps({"path": "/partners", "referrer": "https://www.youtube.com/watch?v=abc", "source": "youtube"}),
+                    headers={"content-type": "text/plain", "x-forwarded-for": "203.0.113.90", "user-agent": "Safari"})
+    assert r.status_code == 200 and r.json()["counted"] is True
+    over = analytics.overview(30)
+    assert over["totals"]["views"] == 1 and over["pages"][0]["value"] == "/partners"
+    assert over["referrers"][0]["value"] == "youtube.com"
+
+
+def test_a_malformed_beacon_body_is_shrugged_off(client):
+    for junk in ("not json at all", "[1,2,3]", ""):
+        r = client.post("/api/track", content=junk,
+                        headers={"content-type": "text/plain", "x-forwarded-for": "203.0.113.91"})
+        assert r.status_code == 200 and r.json()["counted"] is False
+    assert analytics.overview(30)["totals"]["views"] == 0
 
 
 def test_do_not_track_is_honoured(client):

@@ -726,12 +726,32 @@ class TrackIn(BaseModel):
 
 
 @app.post("/api/track")
-def api_track(request: Request, body: TrackIn):
+async def api_track(request: Request):
     """A page view from the marketing site. Deliberately unauthenticated
     -- it is a public site -- and rate-limited so it can't be used to
-    fill the disk. Nothing identifying is stored; see analytics.py."""
+    fill the disk. Nothing identifying is stored; see analytics.py.
+
+    The body is read raw rather than declared as a model because the
+    beacon sends it as text/plain. That is not a quirk: application/json
+    is not a CORS-safelisted content type, so declaring it would force a
+    preflight on every page view, and a preflight is a whole extra
+    round-trip that can fail on its own -- which is exactly how this
+    endpoint silently recorded nothing at all for its first weeks.
+    """
     if not ratelimit.allow(request, bucket="track"):
         return {"counted": False}
+    raw = await request.body()
+    if not raw:
+        return {"counted": False}
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return {"counted": False}
+    if not isinstance(data, dict) or not str(data.get("path") or ""):
+        # No path is not a page view. An empty or junk beacon used to land
+        # here as a view of "/", which quietly inflated the home page.
+        return {"counted": False}
+    body = TrackIn(**{k: str(data.get(k) or "")[:400] for k in ("path", "referrer", "source", "medium", "campaign")})
     counted = analytics.record(
         path=body.path, referrer=body.referrer,
         utm={"source": body.source, "medium": body.medium, "campaign": body.campaign},

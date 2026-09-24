@@ -19,9 +19,13 @@
       campaign: q.get("utm_campaign") || "",
     });
     var url = "https://admin.piperstitch.com/api/track";
-    // sendBeacon survives the page being closed mid-request; fetch is the
-    // fallback where it isn't available.
-    if (navigator.sendBeacon) navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
-    else fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body, keepalive: true, mode: "cors" });
+    // keepalive makes this survive the page being closed mid-request, the
+    // one thing sendBeacon was here for. sendBeacon itself cannot be used:
+    // it always sends with credentials, which forces a preflight the server
+    // would have to answer with Allow-Credentials -- and sending our cookies
+    // along with a page view we promise is cookieless is the wrong trade.
+    // text/plain is CORS-safelisted, so there is no preflight at all.
+    fetch(url, { method: "POST", headers: { "Content-Type": "text/plain" }, body: body,
+                 keepalive: true, mode: "cors", credentials: "omit" });
   } catch (e) { /* analytics must never break a page */ }
 })();
