@@ -47,7 +47,7 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }}
       >
-        <input ref={input} type="file" accept="image/*,.svg" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
+        <input ref={input} type="file" accept="image/*,.svg,.heic,.heif" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
         {busy ? (
           <><div className="spinner" /><div className="drop-title">{busy}</div></>
         ) : touch ? (
@@ -66,7 +66,7 @@ export default function DropZone({ onFile, busy, projects, onOpenProject, onDele
         <>
           {/* `capture` opens the camera directly on phones; a tablet or
               laptop without one falls back to the normal picker. */}
-          <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
+          <input ref={camera} type="file" accept="image/*,.heic,.heif" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
           <button className="btn" onClick={() => camera.current?.click()}>📷 Take a photo of the artwork</button>
         </>
       )}
