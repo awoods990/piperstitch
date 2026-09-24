@@ -131,6 +131,15 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
         if hero_url:
             img = f'<a href="{html.escape(hero_url, quote=True)}" style="display:block;text-decoration:none;">{img}</a>'
         hero = f'<tr><td align="center" style="padding:{pad};">{img}</td></tr>' 
+    # A full-width hero carries its own branding -- the graphic opens with
+    # the mark already -- so the shell's masthead stands down rather than
+    # showing the logo twice, one above the other.
+    masthead = "" if (hero_image and hero_full) else (
+        f'<tr><td align="center" style="padding:34px 32px 8px 32px;">'
+        f'<img src="{MARK_URL}" width="72" alt="" style="display:block;width:72px;max-width:30%;height:auto;border:0;margin:0 auto;">'
+        f'<div style="margin-top:10px;font-family:{FONT};font-size:26px;font-weight:800;letter-spacing:-0.01em;line-height:1;">'
+        f'<span style="color:{NAVY};">Piper</span><span style="color:{BLUE};">Stitch</span>'
+        f'</div></td></tr>')
     cta = button(cta_label, cta_url) if cta_label and cta_url else ""
     pre = f'<div style="display:none;max-height:0;overflow:hidden;opacity:0;">{html.escape(preheader)}</div>' if preheader else ""
     note = html.escape(footer_note) if footer_note else "You're receiving this because you have a PiperStitch account. Replies reach a person."
@@ -146,12 +155,7 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
 <tr><td align="center" style="padding:32px 16px;">
 
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#ffffff;border:1px solid {LINE};border-radius:14px;">
-  <tr><td align="center" style="padding:34px 32px 8px 32px;">
-    <img src="{MARK_URL}" width="72" alt="" style="display:block;width:72px;max-width:30%;height:auto;border:0;margin:0 auto;">
-    <div style="margin-top:10px;font-family:{FONT};font-size:26px;font-weight:800;letter-spacing:-0.01em;line-height:1;">
-      <span style="color:{NAVY};">Piper</span><span style="color:{BLUE};">Stitch</span>
-    </div>
-  </td></tr>
+  {masthead}
   {hero}
   <tr><td style="padding:22px 32px 8px 32px;">
     {blocks}

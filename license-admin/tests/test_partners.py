@@ -1117,9 +1117,10 @@ def test_a_recruits_page_shows_the_sequence_resends_any_email_and_keeps_their_re
     assert "Go on then" in [e["body"] for e in partners.recruit_timeline(db.get_partner_prospect(prospect_id))][-1]
 
 
-def test_the_first_recruitment_email_leads_with_the_programme_graphic(isolated_db, test_keypair, fake_smtp):
-    """The graphic is the message now: full width at the top, linked to the
-    reader's own copy of the details. What it must not become is an email
+def test_the_first_recruitment_email_leads_with_the_program_graphic(isolated_db, test_keypair, fake_smtp):
+    """The graphic is the message: full width at the top, linked to the
+    reader's own copy of the details, and the shell's wordmark stands down
+    so the logo does not appear twice. What it must not become is an email
     that says nothing when a client blocks images -- so the offer is in the
     alt text and in the words underneath as well."""
     from app import partners
@@ -1129,27 +1130,40 @@ def test_the_first_recruitment_email_leads_with_the_programme_graphic(isolated_d
     body = _body(note)
     html = note.get_body(preferencelist=("html",)).get_content()
 
-    program = f"{config.PUBLIC_BASE_URL}/partners/program?k="
     assert "/assets/partner-introduction-email.jpg" in html
-    assert 'width="568"' in html, "the graphic should run the width of the card, not sit small and centred"
-    assert html.index("partner-introduction-email.jpg") > html.index("<a href")  # wrapped in a link
-    assert program.split("?")[0] in html.split("partner-introduction-email.jpg")[0], "the graphic links to the full details"
+    assert 'width="568"' in html, "the graphic should run the width of the card"
+    assert "/partners/program?k=" in html.split("partner-introduction-email.jpg")[0], "the graphic links to the full details"
+    assert ">Piper<" not in html, "the graphic carries the logo; the shell must not show a second one above it"
     assert "30% of everything they pay" in html, "alt text has to carry the offer for a blocked image"
 
     # The words stand on their own when the picture never loads.
-    assert "30% of everything they pay" in body
+    assert "30% of what they pay" in body
     assert "/partners/program?k=" in body
-    assert "/partners/video?k=" in body
-    assert f"{config.WEB_APP_URL}/?trial=1" in body and "no card" in body
     assert "/partners/no-thanks?k=" in body
 
-    # The film still plays without registering, and counts as a look.
-    link = body.split("/partners/video?k=")[1].split()[0]
-    with TestClient(app) as guest:
-        r = guest.get(f"/partners/video?k={link}")
-        assert r.status_code == 200 and "Dev, here it is in two minutes" in r.text
-        assert "/assets/video/piperstitch-partner-program.mp4" in r.text
-    assert db.get_partner_prospect(prospect_id)["views"] >= 1
+
+def test_the_first_email_keeps_its_links_few(isolated_db, test_keypair, fake_smtp):
+    """A cold email thick with links is a cold email in the spam folder.
+    Only three destinations earn a place: the details, their signup page,
+    and the way out -- plus the footer the law requires."""
+    import re
+    from app import partners
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    html = fake_smtp.sent[-1].get_body(preferencelist=("html",)).get_content()
+
+    destinations = {h.split("?")[0] for h in re.findall(r'href="([^"]+)"', html)}
+    assert len(destinations) <= 5, f"too many places to click for a cold email: {sorted(destinations)}"
+    assert any("/partners/program" in d for d in destinations)
+    assert any("/join/" in d for d in destinations)
+    assert any("no-thanks" in d for d in destinations)
+    # The graphic already draws its own "See the full program" button, so a
+    # second button underneath would be one more thing to click saying the
+    # same thing. Two hrefs reach the details: the graphic and the one line
+    # of text that stands in for it when images are blocked. (A linkified
+    # URL writes itself twice -- as the href and as the words -- so this
+    # counts hrefs, not occurrences.)
+    assert len(re.findall(r'href="[^"]*/partners/program', html)) == 2
 
 
 def test_the_signup_link_is_short_and_is_their_name(isolated_db, test_keypair, fake_smtp):

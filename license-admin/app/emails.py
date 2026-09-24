@@ -109,28 +109,20 @@ Here are the full details: what you earn on every referral, for how long, the si
 
 The link is yours and works for the next {link_days} days. You can apply from the bottom of the page, or just reply to this email and ask me anything first.""",
          cta_label="Read the program details", cta_url="{url}", preheader="What you earn, for how long, and how we pay.", placeholders="first_name, name, email, url, link_days, site_url"),
-    dict(key="partner_outreach_1", name="Recruit 1: the program, on one page", description="First recruitment email. Led by the program graphic, which links to {url} — their own copy of the full details, no registration. {video_url} is the two-minute film, {join_url} their short personal signup link, {opt_out_url} stops the sequence.",
-         subject="{first_name} — paid every month, for two years",
+    dict(key="partner_outreach_1", name="Recruit 1: the program, on one page", description="First recruitment email. Led by the program graphic, which links to {url} — their own copy of the full details, no registration. {join_url} is their short personal signup link, {opt_out_url} stops the sequence. Deliberately few links: a cold email thick with them is a cold email in the spam folder.",
+         subject="{first_name} — our partner program, on one page",
          body="""Hi {first_name},
 
-I'd like you to look at PiperStitch, and if it earns it, to be paid for telling people about it.
+PiperStitch turns a customer's logo into a machine-ready embroidery file in seconds, then carries the job out to them for approval and writes the run ticket for the machine. I thought of your audience when we put the partner side of it together.
 
-Drop in a customer's logo and you get a machine-ready stitch file in seconds. The same link then carries the job out to the customer for approval and writes the run ticket for the machine.
+The short version: you're paid $15 when someone you refer subscribes, then 30% of what they pay, every month, for two years. They get a longer trial and a bigger proof allowance than anyone else, at full price, so your share stays whole.
 
-The picture above is the whole offer on one page. If your email is hiding images, it's all here: {url}
+Everything else — the rates, what you get, how it works — is on one page with nothing to fill in: {url}
 
-What it pays: $15 the day someone you refer subscribes, then 30% of everything they pay, every month, for two years. Your audience gets a 30-day trial instead of 14 and ten proofs instead of three, at full price — so your commission stays whole. The first fifty partners keep 30% for life; after that it's 25%.
+If you'd like one of the founding seats, yours is here: {join_url}
 
-See the full program: {url}
-
-Rather watch it work first? Two minutes, no sign-up: {video_url}
-
-Or skip me entirely and put your own artwork through it — the trial is free, needs no card, and takes about a minute to start: {trial_url}
-
-When you're ready, your signup page is: {join_url}
-
-I'd rather you formed your own view than took mine — so look first, and tell me what's wrong with it. If it's not for you, {opt_out_url} and you'll not hear from me again.""",
-         cta_label="See the full program", cta_url="{url}", preheader="Paid every month your referral keeps stitching, for two full years.",
+And if it's not for you, no hard feelings at all — {opt_out_url} and you'll hear no more from me.""",
+         cta_label="", cta_url="", preheader="Paid every month your referral keeps stitching, for two years.",
          placeholders="first_name, name, email, video_url, trial_url, url, apply_url, join_url, opt_out_url, site_url"),
     dict(key="partner_outreach_2", name="Recruit 2: how it works", description="Second recruitment email, a few days later: the mechanics.",
          subject="How the PiperStitch partner thing actually works",
