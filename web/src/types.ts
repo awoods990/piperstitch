@@ -224,6 +224,10 @@ export interface ProjectSummary {
   widthMM: number;
   heightMM: number;
   objectCount: number;
+  /** Whether a picture of the design exists; the picture is fetched from
+   *  /projects/:id/thumbnail so the list stays small and the images cache.
+   *  False for projects last saved before thumbnails existed. */
+  hasThumbnail?: boolean;
   createdAt: string;
   updatedAt: string;
 }

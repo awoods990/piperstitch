@@ -336,6 +336,7 @@ class WebProjectIn(BaseModel):
     id: str
     name: str = ""
     document: dict
+    thumbnail: str = ""
 
 
 class WebFeedbackIn(BaseModel):
@@ -1054,11 +1055,22 @@ def api_web_projects_get(body: WebTokenIn, id: str, x_api_key: Optional[str] = H
     return project
 
 
+@app.post("/api/web/projects/thumbnail")
+def api_web_projects_thumbnail(body: WebTokenIn, id: str, x_api_key: Optional[str] = Header(None)):
+    """One project's picture. Separate from the list on purpose -- see
+    db.get_project_thumbnail."""
+    _require_web_key(x_api_key)
+    try:
+        return {"thumbnail": web_access.project_thumbnail(token=body.token, project_id=id)}
+    except activation.ActivationError as e:
+        return _activation_error(e, status=401)
+
+
 @app.post("/api/web/projects/save")
 def api_web_projects_save(body: WebProjectIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)
     try:
-        return web_access.save_project(token=body.token, project_id=body.id, name=body.name, document=body.document)
+        return web_access.save_project(token=body.token, project_id=body.id, name=body.name, document=body.document, thumbnail=body.thumbnail)
     except activation.ActivationError as e:
         return _activation_error(e, status=401 if e.code == "session_revoked" else 400)
 

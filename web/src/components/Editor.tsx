@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { SITE_URL } from "../links";
 import type { CatalogSize, DigitizeResponse, FabricType, RGBColor, StitchDocument } from "../types";
 import type { Preferences } from "../prefs";
 import { rgbHex, hexRGB } from "../prefs";
@@ -69,7 +70,9 @@ export default function Editor(p: EditorProps) {
   return (
     <div className="editor">
       <header className="topbar">
-        <div className="brand"><img src="/icon.png" alt="" width={26} height={26} /><span>PiperStitch</span></div>
+        <a className="brand" href={SITE_URL} target="_blank" rel="noopener" title="PiperStitch home (opens in a new tab)">
+          <img src="/icon.png" alt="" width={26} height={26} /><span>PiperStitch</span>
+        </a>
         <DocName name={doc.name} onRename={p.onRename} />
         <div className="grow" />
         {p.busy && <span className="busy-pill"><span className="spinner small" />{p.busy}</span>}
@@ -78,7 +81,7 @@ export default function Editor(p: EditorProps) {
 
       {/* File row */}
       <div className="toolbar">
-        <button className="pill" onClick={p.onNew} title="Start a new project (the current one is kept only if saved).">＋ New</button>
+        <button className="pill new" onClick={p.onNew} title="Start a new project (the current one is kept only if saved).">＋ New</button>
         {p.canSave && <button className="pill" onClick={p.onOpenProjects} disabled={!!p.busy} title="Open one of your saved projects.">📂 Open</button>}
         {p.hasSource && <button className="pill" onClick={p.onRedo} disabled={!!p.busy} title="Discard edits made since import and regenerate fresh from the original artwork.">↻ Start over</button>}
         {p.canSave && <button className="pill" onClick={p.onSave} disabled={!!p.busy} title="Save this project to your account.">{p.savedAt ? "Saved ✓" : "💾 Save"}</button>}

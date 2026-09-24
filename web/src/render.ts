@@ -154,3 +154,44 @@ export function fitView(canvasW: number, canvasH: number, widthMM: number, heigh
     offsetY: (canvasH - heightMM * scale) / 2,
   };
 }
+
+
+/** A small picture of the stitched design, for the project list.
+ *
+ *  Drawn from the very commands the canvas paints, so what someone sees in
+ *  the picker is what they were looking at when they saved -- not a
+ *  re-render that might disagree.
+ *
+ *  WebP, measured rather than assumed: the same 240px picture is 3-17 KB as
+ *  WebP and 21-67 KB as PNG, and the sparse designs are the expensive ones
+ *  because anti-aliased thread over open fabric gives PNG nothing to work
+ *  with. Browsers that cannot encode WebP quietly hand back a PNG, which is
+ *  still accepted.
+ */
+export function thumbnailDataURL(
+  commands: WireCommand[],
+  colors: ThreadColor[],
+  widthMM: number,
+  heightMM: number,
+  maxEdge = 240,
+): string | null {
+  if (!commands.length || !(widthMM > 0) || !(heightMM > 0)) return null;
+  const ratio = widthMM / heightMM;
+  const w = Math.max(24, Math.round(ratio >= 1 ? maxEdge : maxEdge * ratio));
+  const h = Math.max(24, Math.round(ratio >= 1 ? maxEdge / ratio : maxEdge));
+  const canvas = globalThis.document?.createElement("canvas");
+  const ctx = canvas?.getContext("2d");
+  if (!canvas || !ctx) return null;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, w, h);
+  drawPlan(ctx, commands, colors, fitView(w, h, widthMM, heightMM, 6));
+  try {
+    const webp = canvas.toDataURL("image/webp", 0.82);
+    if (webp.startsWith("data:image/webp")) return webp;
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;                        // a tainted canvas, in theory; never fail a save over a picture
+  }
+}

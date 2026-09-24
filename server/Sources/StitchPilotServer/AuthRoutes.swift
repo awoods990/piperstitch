@@ -19,14 +19,20 @@ struct ProjectSummary: Content {
     var widthMM: Double
     var heightMM: Double
     var objectCount: Int
+    /// Whether a picture of the design exists. The picture itself is
+    /// fetched per project from /projects/:id/thumbnail -- at 200 projects
+    /// a data: URL each would make listing them a multi-megabyte download.
+    /// False for anything saved before thumbnails existed.
+    var hasThumbnail: Bool
     var createdAt: String
     var updatedAt: String
 }
 
 /// License Admin's row shape (snake_case), mapped to the browser's.
 private struct LicenseAdminProject: Decodable {
-    var id: String; var name: String; var width_mm: Double; var height_mm: Double; var object_count: Int; var created_at: String; var updated_at: String
-    var summary: ProjectSummary { .init(id: id, name: name, widthMM: width_mm, heightMM: height_mm, objectCount: object_count, createdAt: created_at, updatedAt: updated_at) }
+    // SQLite answers `thumbnail IS NOT NULL` with 0 or 1, so this arrives as a number.
+    var id: String; var name: String; var width_mm: Double; var height_mm: Double; var object_count: Int; var has_thumbnail: Int?; var created_at: String; var updated_at: String
+    var summary: ProjectSummary { .init(id: id, name: name, widthMM: width_mm, heightMM: height_mm, objectCount: object_count, hasThumbnail: (has_thumbnail ?? 0) != 0, createdAt: created_at, updatedAt: updated_at) }
 }
 
 func authRoutes(_ api: RoutesBuilder) {
@@ -263,14 +269,37 @@ func authRoutes(_ api: RoutesBuilder) {
         return response
     }
 
+    /// One project's picture, as an image rather than JSON so the browser
+    /// caches it like any other. Immutable for a year: the URL carries the
+    /// project's updatedAt, so a re-save is simply a different URL.
+    projects.get(":id", "thumbnail") { req -> Response in
+        let session = try await requireSession(req)
+        let id = try projectID(req)
+        struct TokenIn: Content { var token: String }
+        struct Out: Decodable { var thumbnail: String? }
+        let out = try await req.licenseAdmin.post("/api/web/projects/thumbnail", TokenIn(token: session.token), query: ["id": id], as: Out.self)
+        guard let dataURL = out.thumbnail,
+              let comma = dataURL.firstIndex(of: ","),
+              let bytes = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...]))
+        else { throw Abort(.notFound) }
+        let response = Response(status: .ok, body: .init(data: bytes))
+        response.headers.replaceOrAdd(name: .contentType, value: dataURL.hasPrefix("data:image/webp") ? "image/webp" : "image/png")
+        response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=31536000, immutable")
+        return response
+    }
+
     projects.put(":id") { req -> [String: Bool] in
         let session = try await requireSession(req)
         let id = try projectID(req)
-        struct Body: Content { var name: String?; var document: AnyJSON }
+        struct Body: Content { var name: String?; var document: AnyJSON; var thumbnail: String? }
         let body = try req.content.decode(Body.self)
-        struct In: Content { var token: String; var id: String; var name: String; var document: AnyJSON }
+        struct In: Content { var token: String; var id: String; var name: String; var document: AnyJSON; var thumbnail: String }
         struct Out: Decodable { var created: Bool }
-        let out = try await req.licenseAdmin.post("/api/web/projects/save", In(token: session.token, id: id, name: body.name ?? "", document: body.document), as: Out.self)
+        // An empty thumbnail means "leave the stored one alone"; License
+        // Admin checks and may still discard what it is given.
+        let out = try await req.licenseAdmin.post("/api/web/projects/save",
+                                                  In(token: session.token, id: id, name: body.name ?? "", document: body.document, thumbnail: body.thumbnail ?? ""),
+                                                  as: Out.self)
         return ["created": out.created]
     }
 

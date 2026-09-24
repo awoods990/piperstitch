@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type EditResponse, type PendingMerge } from "./api";
 import { decodeImage, isSVGFile, rasterizeSVG, type DecodedImage } from "./decode";
+import { thumbnailDataURL } from "./render";
 import type { CandidateAssessment, AccountState, Catalog, CatalogSize, ColorPresetId, DigitizeResponse, EmbroideryObject, FabricType, ImportResponse, MeResponse, Point2D, ProjectSummary, RGBColor, StitchDocument, ThreadColor, LaydownSettings, ThreadWeight, VectorShape } from "./types";
 import { THREAD_WEIGHTS } from "./types";
 import DropZone from "./components/DropZone";
@@ -598,10 +599,18 @@ export default function App() {
       if (ok) { setReturnTo(u.toString()); try { sessionStorage.setItem("piperstitch.returnTo", u.toString()); } catch { /* fine */ } }
     } catch { /* not a URL */ }
   }, []);
+  /** The picture stored with a project, drawn from what is on the canvas
+   *  right now. Null before anything has been digitized, which is fine --
+   *  the list copes with a project that has no picture. */
+  const currentThumbnail = () =>
+    document && digitized
+      ? thumbnailDataURL(digitized.plan.commands, digitized.colors, document.physicalWidthMM, document.physicalHeightMM)
+      : null;
+
   const onSaveProject = () => withBusy("Saving…", async () => {
     if (!document) return;
     const id = projectId ?? crypto.randomUUID();
-    await api.saveProject(id, document.name, document);
+    await api.saveProject(id, document.name, document, currentThumbnail());
     setProjectId(id); setSavedAt(Date.now()); setStatus("Saved to your account.");
   });
   /** "Send to Proofs": save the project (Proofs builds the proof from the
@@ -610,7 +619,7 @@ export default function App() {
   const onSendToProofs = () => withBusy("Opening Proofs…", async () => {
     if (!document) return;
     const id = projectId ?? crypto.randomUUID();
-    await api.saveProject(id, document.name, document);
+    await api.saveProject(id, document.name, document, currentThumbnail());
     setProjectId(id); setSavedAt(Date.now());
     const next = `/proofs/new?project=${encodeURIComponent(id)}&name=${encodeURIComponent(document.name)}`;
     window.location.assign(await api.proofsHandoffURL(next));
@@ -778,7 +787,7 @@ export default function App() {
       {error && <div className="error-bar floating">{error}</div>}
       {notice && <div className="notice-bar floating" onClick={() => setNotice(null)}>{notice}</div>}
       <div className="start-account">{accountMenu}<button className="btn ghost" onClick={() => setSheet("settings")}>⚙ Settings</button><button className="btn ghost" onClick={() => setSheet("help")}>? Help</button><button className="btn ghost" onClick={() => setSheet("getPiper")} title="Put PiperStitch on your Dock, taskbar or home screen">Get Piper</button></div>
-      <DropZone onFile={onFile} busy={busy} projects={me.authEnabled ? projects : null} onOpenProject={onOpenProject} onDeleteProject={onDeleteProject}
+      <DropZone onFile={onFile} busy={busy} projects={me.authEnabled ? projects : null} onOpenProject={onOpenProject} onDeleteProject={onDeleteProject} proofs={proofs}
         showTips={!!prefs.onboarding?.skippedAt && !prefs.startTipsDismissed} onDismissTips={() => setPrefs({ ...prefs, startTipsDismissed: true })} onOpenHelp={() => setSheet("help")} />
       {sheets}
     </>

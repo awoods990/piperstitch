@@ -356,6 +356,11 @@ def list_projects(*, token: str) -> list[dict]:
     return [dict(row) for row in db.list_projects(session["customer_id"])]
 
 
+def project_thumbnail(*, token: str, project_id: str) -> Optional[str]:
+    session = _session(token)
+    return db.get_project_thumbnail(session["customer_id"], project_id)
+
+
 def get_project(*, token: str, project_id: str) -> Optional[dict]:
     session = _session(token)
     row = db.get_project(session["customer_id"], project_id)
@@ -393,7 +398,28 @@ def save_preferences(*, token: str, preferences: dict) -> dict:
     return {"updated_at": updated_at}
 
 
-def save_project(*, token: str, project_id: str, name: str, document: dict) -> dict:
+MAX_THUMBNAIL_CHARS = 64_000            # ~48 KB. A 240px WebP of stitches measures 3-17 KB; PNG of the
+                                        # same runs 21-67 KB, which is why the app sends WebP.
+
+_THUMBNAIL = re.compile(r"^data:image/(?:png|webp);base64,[A-Za-z0-9+/]+={0,2}$")
+
+
+def clean_thumbnail(value: str) -> Optional[str]:
+    """The small picture of the design shown in the project list.
+
+    It arrives as a data URL the browser drew itself, so it is checked
+    rather than trusted: only PNG or WebP, only base64, and small. None
+    means "leave whatever is stored alone" -- a thumbnail is a nicety and
+    must never be the reason a save fails, so anything unexpected is
+    quietly ignored instead of raising.
+    """
+    value = (value or "").strip()
+    if not value or len(value) > MAX_THUMBNAIL_CHARS or not _THUMBNAIL.match(value):
+        return None
+    return value
+
+
+def save_project(*, token: str, project_id: str, name: str, document: dict, thumbnail: str = "") -> dict:
     session = _session(token)
     if not project_id or len(project_id) > 64 or not project_id.replace("-", "").isalnum():
         raise ActivationError("invalid_project", "That project id isn't valid.")
@@ -407,6 +433,7 @@ def save_project(*, token: str, project_id: str, name: str, document: dict) -> d
             customer_id=session["customer_id"], project_id=project_id, name=(name.strip() or "Untitled")[:120], document=encoded,
             width_mm=float(document.get("physicalWidthMM") or 0), height_mm=float(document.get("physicalHeightMM") or 0),
             object_count=len(document.get("objects") or []),
+            thumbnail=clean_thumbnail(thumbnail),
         )
     except PermissionError:
         raise ActivationError("invalid_project", "That project id isn't available.")

@@ -311,3 +311,57 @@ def test_free_trial_signup_gets_its_own_email_whose_link_returns_to_setup(isolat
     web_access.request_code(email="member@example.com")
     body = fake_smtp.sent[-1].get_body(preferencelist=("plain",)).get_content()
     assert "trial=1" not in body and "is your PiperStitch sign-in code" in fake_smtp.sent[-1]["Subject"]
+
+
+# ------------------------------------------------- project thumbnails ---
+
+PNG_1PX = ("data:image/png;base64,"
+           "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+
+def _doc(name="Cap logo"):
+    return {"name": name, "physicalWidthMM": 80, "physicalHeightMM": 40, "objects": [{}, {}]}
+
+
+def test_the_list_says_there_is_a_picture_without_carrying_it(isolated_db, test_keypair, fake_smtp):
+    """200 projects are allowed. A picture each inside the list would make
+    opening the picker a multi-megabyte download, so the list carries a
+    flag and the image is fetched per project, and cached."""
+    s = _sign_in(fake_smtp)
+    web_access.save_project(token=s.token, project_id="p1", name="Cap logo", document=_doc(), thumbnail=PNG_1PX)
+    listed = web_access.list_projects(token=s.token)
+    assert listed[0]["has_thumbnail"] == 1
+    assert "thumbnail" not in listed[0], "the image itself must not ride along with the list"
+    assert web_access.project_thumbnail(token=s.token, project_id="p1") == PNG_1PX
+
+
+def test_one_customer_cannot_fetch_another_customers_picture(isolated_db, test_keypair, fake_smtp):
+    mine = _sign_in(fake_smtp, email="mine@example.com")
+    web_access.save_project(token=mine.token, project_id="p1", name="Cap logo", document=_doc(), thumbnail=PNG_1PX)
+    theirs = _sign_in(fake_smtp, email="theirs@example.com")
+    assert web_access.project_thumbnail(token=theirs.token, project_id="p1") is None
+
+
+def test_a_later_save_without_a_thumbnail_keeps_the_one_already_there(isolated_db, test_keypair, fake_smtp):
+    """An older browser tab, or any client that doesn't send a picture,
+    must not silently blank it."""
+    s = _sign_in(fake_smtp)
+    web_access.save_project(token=s.token, project_id="p1", name="Cap logo", document=_doc(), thumbnail=PNG_1PX)
+    web_access.save_project(token=s.token, project_id="p1", name="Cap logo v2", document=_doc("v2"))
+    listed = web_access.list_projects(token=s.token)
+    assert listed[0]["name"] == "Cap logo v2"
+    assert web_access.project_thumbnail(token=s.token, project_id="p1") == PNG_1PX
+
+
+@pytest.mark.parametrize("junk", [
+    "javascript:alert(1)",
+    "data:text/html;base64,PHNjcmlwdD4=",
+    "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",      # SVG can carry script; not an image we will echo back
+    "data:image/png;base64,not-base64-at-all!!",
+    "data:image/png;base64," + "A" * 70_000,            # past MAX_THUMBNAIL_CHARS
+])
+def test_a_thumbnail_we_dont_like_is_ignored_and_never_fails_the_save(isolated_db, test_keypair, fake_smtp, junk):
+    s = _sign_in(fake_smtp)
+    out = web_access.save_project(token=s.token, project_id="p1", name="Cap logo", document=_doc(), thumbnail=junk)
+    assert out["created"] is True, "a bad picture must not stop the work being saved"
+    assert web_access.project_thumbnail(token=s.token, project_id="p1") is None

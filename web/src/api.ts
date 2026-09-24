@@ -72,8 +72,13 @@ export const api = {
   listProjects: async (): Promise<ProjectSummary[]> => (await check(await fetch(`${BASE}/projects`))).json(),
   getProject: async (id: string): Promise<{ id: string; name: string; updatedAt: string; document: StitchDocument }> =>
     (await check(await fetch(`${BASE}/projects/${id}`))).json(),
-  saveProject: async (id: string, name: string, document: StitchDocument): Promise<{ created: boolean }> => {
-    const res = await fetch(`${BASE}/projects/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, document }) });
+  /** `thumbnail` is a data: URL of the design. Leaving it out keeps
+   *  whatever picture is already stored rather than clearing it. */
+  saveProject: async (id: string, name: string, document: StitchDocument, thumbnail?: string | null): Promise<{ created: boolean }> => {
+    const res = await fetch(`${BASE}/projects/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(thumbnail ? { name, document, thumbnail } : { name, document }),
+    });
     return (await check(res)).json();
   },
   deleteProject: async (id: string) => { await check(await fetch(`${BASE}/projects/${id}`, { method: "DELETE" })); },

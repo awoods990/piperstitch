@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS projects (
     width_mm REAL NOT NULL DEFAULT 0,
     height_mm REAL NOT NULL DEFAULT 0,
     object_count INTEGER NOT NULL DEFAULT 0,
+    thumbnail TEXT,                     -- a small data: URL so the picker can show the design, not just its name
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -640,6 +641,7 @@ def init_db() -> None:
         _add_column_if_missing(conn, "payments", "fee_cents", "INTEGER")            # Stripe's processing fee, when known
         _add_column_if_missing(conn, "payments", "balance_transaction_id", "TEXT")
         _add_column_if_missing(conn, "customers", "marketing_opt_out", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "projects", "thumbnail", "TEXT")   # projects saved before this stay blank until next saved
         _add_column_if_missing(conn, "customers", "last_active_at", "TEXT")   # last web sign-in / app use, for "we miss you"
         # Which product a subscription is for: the app ('core') or PiperStitch Proofs ('proofs').
         _add_column_if_missing(conn, "subscriptions", "product", "TEXT NOT NULL DEFAULT 'core'")
@@ -1555,9 +1557,19 @@ def list_projects(customer_id: int) -> list[sqlite3.Row]:
     """Everything but the document itself -- a list is shown, not loaded."""
     with connection() as conn:
         return conn.execute(
-            "SELECT id, customer_id, name, width_mm, height_mm, object_count, created_at, updated_at FROM projects WHERE customer_id = ? ORDER BY updated_at DESC",
+            "SELECT id, customer_id, name, width_mm, height_mm, object_count, (thumbnail IS NOT NULL) AS has_thumbnail, created_at, updated_at "
+            "FROM projects WHERE customer_id = ? ORDER BY updated_at DESC",
             (customer_id,),
         ).fetchall()
+
+
+def get_project_thumbnail(customer_id: int, project_id: str) -> Optional[str]:
+    """Fetched one at a time and never with the list: at 200 projects a
+    picture each would make listing them a multi-megabyte download, and
+    most are never looked at."""
+    with connection() as conn:
+        row = conn.execute("SELECT thumbnail FROM projects WHERE id = ? AND customer_id = ?", (project_id, customer_id)).fetchone()
+    return row["thumbnail"] if row else None
 
 
 def count_projects(customer_id: int) -> int:
@@ -1586,9 +1598,13 @@ def save_preferences(customer_id: int, preferences: str) -> str:
     return now
 
 
-def save_project(*, customer_id: int, project_id: str, name: str, document: str, width_mm: float, height_mm: float, object_count: int) -> bool:
+def save_project(*, customer_id: int, project_id: str, name: str, document: str, width_mm: float, height_mm: float, object_count: int,
+                 thumbnail: Optional[str] = None) -> bool:
     """Insert or replace. Returns True when created. A project id that
-    belongs to another customer is simply not theirs to overwrite."""
+    belongs to another customer is simply not theirs to overwrite.
+
+    A thumbnail of None leaves whatever is already stored alone -- an
+    older client that does not send one must not blank the picture."""
     now = _now()
     with connection() as conn:
         existing = conn.execute("SELECT customer_id FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -1596,14 +1612,20 @@ def save_project(*, customer_id: int, project_id: str, name: str, document: str,
             raise PermissionError("project belongs to another customer")
         if existing is None:
             conn.execute(
-                "INSERT INTO projects (id, customer_id, name, document, width_mm, height_mm, object_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (project_id, customer_id, name, document, width_mm, height_mm, object_count, now, now),
+                "INSERT INTO projects (id, customer_id, name, document, width_mm, height_mm, object_count, thumbnail, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, customer_id, name, document, width_mm, height_mm, object_count, thumbnail, now, now),
             )
             return True
-        conn.execute(
-            "UPDATE projects SET name = ?, document = ?, width_mm = ?, height_mm = ?, object_count = ?, updated_at = ? WHERE id = ?",
-            (name, document, width_mm, height_mm, object_count, now, project_id),
-        )
+        if thumbnail is None:
+            conn.execute(
+                "UPDATE projects SET name = ?, document = ?, width_mm = ?, height_mm = ?, object_count = ?, updated_at = ? WHERE id = ?",
+                (name, document, width_mm, height_mm, object_count, now, project_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE projects SET name = ?, document = ?, width_mm = ?, height_mm = ?, object_count = ?, thumbnail = ?, updated_at = ? WHERE id = ?",
+                (name, document, width_mm, height_mm, object_count, thumbnail, now, project_id),
+            )
         return False
 
 
