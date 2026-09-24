@@ -1202,6 +1202,38 @@ def test_two_people_with_the_same_name_get_different_links(isolated_db, test_key
             assert "/partners/apply?k=" in loc
 
 
+def test_the_social_images_and_their_captions_are_in_the_kit(isolated_db, test_keypair, fake_smtp):
+    """Nine images and the words to post with them, in every partner's kit
+    from the day they join."""
+    from app import partners
+    partners.seed_kit()
+    kit = db.list_partner_resources()
+    graphics = [r for r in kit if r["kind"] == "graphic"]
+    assert len(graphics) == 9
+    assert all("/assets/social/" in r["url"] and r["url"].endswith(".jpg") for r in graphics)
+    # The order is the order to post them in: the proof leads.
+    assert graphics[0]["title"] == "PNG in. DST out."
+    assert [r["sort_order"] for r in graphics] == sorted(r["sort_order"] for r in graphics)
+
+    docs = [r for r in kit if r["kind"] == "document"]
+    assert len(docs) == 1 and docs[0]["url"].endswith("/partner-social-captions.html")
+    assert "FTC" in docs[0]["description"], "the disclosure is the part they must not drop"
+
+
+def test_seeding_the_kit_twice_adds_nothing_and_tells_nobody(isolated_db, test_keypair, fake_smtp):
+    """Adding nine images would otherwise be nine emails to every partner,
+    so seeding never announces — the admin presses the button when it is
+    worth an email."""
+    from app import partners
+    partner()
+    partners.seed_kit()
+    before = len(db.list_partner_resources())
+    sent_before = len(fake_smtp.sent)
+    partners.seed_kit()
+    assert len(db.list_partner_resources()) == before
+    assert len(fake_smtp.sent) == sent_before, "seeding the kit must not email anyone"
+
+
 def test_the_films_are_in_every_partner_kit(isolated_db, test_keypair, fake_smtp):
     from app import partners
     partner()

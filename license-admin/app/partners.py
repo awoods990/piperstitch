@@ -405,15 +405,64 @@ KIT_VIDEOS = [
 ]
 
 
+#: Nine images at 1080x1350 -- Instagram's best-performing feed size, and
+#: Facebook renders it full width. The order is the order to post them in:
+#: the first four make the argument (it works, it's affordable, it's fast,
+#: it isn't a black box), the rest answer the questions that follow.
+KIT_GRAPHICS = [
+    {"file": "piperstitch-social-png-in-dst-out.jpg", "title": "PNG in. DST out.", "sort_order": 110,
+     "description": "The proof: the screen render beside the real sew-out. The one to lead with."},
+    {"file": "piperstitch-social-24-a-month.jpg", "title": "$24 a month. Not a thousand.", "sort_order": 120,
+     "description": "The price, with the job on the machine."},
+    {"file": "piperstitch-social-logo-at-2pm.jpg", "title": "A logo at 2pm. Stitched by 3.", "sort_order": 130,
+     "description": "The speed, with the finished sew-out."},
+    {"file": "piperstitch-social-real-fonts.jpg", "title": "Real fonts. Not traced text.", "sort_order": 140,
+     "description": "For the reply that says auto-digitizing is a black box."},
+    {"file": "piperstitch-social-thread-library.jpg", "title": "It matches the thread on your shelf.", "sort_order": 150,
+     "description": "Thread, for the question about colour matching."},
+    {"file": "piperstitch-social-setup-in-minutes.jpg", "title": "Set up for your shop in about seven minutes.", "sort_order": 160,
+     "description": "For anyone expecting a week of learning before they can use it."},
+    {"file": "piperstitch-social-proofs-explained.jpg", "title": "Proofs, start to finish.", "sort_order": 170,
+     "description": "The whole of Proofs on one card. The one to pin, or to drop into a comment."},
+    {"file": "piperstitch-social-proof-before-you-hoop.jpg", "title": "They approve it before you hoop.", "sort_order": 180,
+     "description": "Proofs, the short version."},
+    {"file": "piperstitch-social-run-ticket.jpg", "title": "Then it writes the run ticket.", "sort_order": 190,
+     "description": "Proofs, the other short version."},
+]
+
+#: The words to post with the pictures -- including the disclosure line,
+#: which is not optional and which "affiliate link" on its own does not
+#: satisfy.
+KIT_DOCUMENTS = [
+    {"path": "/partner-social-captions.html", "title": "Captions for the social images", "sort_order": 200,
+     "description": "A caption written for each image, the hashtags, and the disclosure the FTC requires — keep that line in."},
+]
+
+
 def seed_kit() -> None:
-    """The films we make, in every partner's kit from the day they join.
-    Added once; an admin can rename, reorder, hide or remove them after
-    that, and this will not put them back."""
+    """What we make, in every partner's kit from the day they join: the
+    films, the social images and the captions to post with them. Added
+    once; an admin can rename, reorder, hide or remove them after that,
+    and this will not put them back.
+
+    Nothing here announces itself. Adding nine images would otherwise mean
+    nine emails to every partner, so the announcement stays a deliberate
+    press of the button in the admin."""
     have = {r["url"] for r in db.list_partner_resources()}
-    for video in KIT_VIDEOS:
-        url = f"{config.WEBSITE_BASE_URL}/assets/video/{video['file']}"
+
+    def add(url: str, *, title: str, kind: str, description: str, sort_order: int) -> None:
         if url not in have:
-            db.add_partner_resource(title=video["title"], url=url, kind="video", description=video["description"], sort_order=video["sort_order"])
+            db.add_partner_resource(title=title, url=url, kind=kind, description=description, sort_order=sort_order)
+
+    for video in KIT_VIDEOS:
+        add(f"{config.WEBSITE_BASE_URL}/assets/video/{video['file']}", title=video["title"], kind="video",
+            description=video["description"], sort_order=video["sort_order"])
+    for graphic in KIT_GRAPHICS:
+        add(f"{config.WEBSITE_BASE_URL}/assets/social/{graphic['file']}", title=graphic["title"], kind="graphic",
+            description=graphic["description"], sort_order=graphic["sort_order"])
+    for doc in KIT_DOCUMENTS:
+        add(f"{config.WEBSITE_BASE_URL}{doc['path']}", title=doc["title"], kind="document",
+            description=doc["description"], sort_order=doc["sort_order"])
 
 
 # ------------------------------------------------------ recruitment (§8) --
