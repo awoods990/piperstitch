@@ -168,6 +168,10 @@ export function fitView(canvasW: number, canvasH: number, widthMM: number, heigh
  *  with. Browsers that cannot encode WebP quietly hand back a PNG, which is
  *  still accepted.
  */
+/** Where a PNG has to stand in for WebP, at a size whose PNG still fits
+ *  inside what License Admin will store. */
+const PNG_FALLBACK_EDGE = 160;
+
 export function thumbnailDataURL(
   commands: WireCommand[],
   colors: ThreadColor[],
@@ -177,20 +181,33 @@ export function thumbnailDataURL(
 ): string | null {
   if (!commands.length || !(widthMM > 0) || !(heightMM > 0)) return null;
   const ratio = widthMM / heightMM;
-  const w = Math.max(24, Math.round(ratio >= 1 ? maxEdge : maxEdge * ratio));
-  const h = Math.max(24, Math.round(ratio >= 1 ? maxEdge / ratio : maxEdge));
-  const canvas = globalThis.document?.createElement("canvas");
-  const ctx = canvas?.getContext("2d");
-  if (!canvas || !ctx) return null;
-  canvas.width = w;
-  canvas.height = h;
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, w, h);
-  drawPlan(ctx, commands, colors, fitView(w, h, widthMM, heightMM, 6));
+
+  const paint = (edge: number): HTMLCanvasElement | null => {
+    const w = Math.max(24, Math.round(ratio >= 1 ? edge : edge * ratio));
+    const h = Math.max(24, Math.round(ratio >= 1 ? edge / ratio : edge));
+    const canvas = globalThis.document?.createElement("canvas");
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return null;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, w, h);
+    drawPlan(ctx, commands, colors, fitView(w, h, widthMM, heightMM, 6));
+    return canvas;
+  };
+
+  const canvas = paint(maxEdge);
+  if (!canvas) return null;
   try {
     const webp = canvas.toDataURL("image/webp", 0.82);
     if (webp.startsWith("data:image/webp")) return webp;
-    return canvas.toDataURL("image/png");
+    // Safari cannot encode WebP from a canvas (checked on 18.6) and hands
+    // back a PNG instead. A PNG of this picture runs to 67 KB where the
+    // WebP was 17 KB, which is over what the server will store -- so the
+    // fallback is drawn smaller rather than sent and quietly dropped. At
+    // 160px a PNG measures 10-32 KB and the box it fills is 56x42.
+    const smaller = maxEdge > PNG_FALLBACK_EDGE ? paint(PNG_FALLBACK_EDGE) : null;
+    return (smaller ?? canvas).toDataURL("image/png");
   } catch {
     return null;                        // a tainted canvas, in theory; never fail a save over a picture
   }
