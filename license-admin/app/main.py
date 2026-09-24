@@ -868,6 +868,46 @@ def api_web_send_file(body: WebSendFileIn, x_api_key: Optional[str] = Header(Non
     return {"sent": True}
 
 
+class OfferIn(BaseModel):
+    code: str = ""
+
+
+@app.post("/api/web/offer")
+def api_web_offer(request: Request, body: OfferIn, x_api_key: Optional[str] = Header(None)):
+    """What a partner's code is worth, asked before anyone has signed in.
+
+    The welcome screen needs this. Someone arriving on a partner's link
+    has been promised thirty days by that partner, and until now the
+    screen in front of them said fourteen -- because the only offer the
+    app could see belonged to an account that did not exist yet.
+
+    Nothing returned here is private: a code, the trial it carries and
+    the partner's first name are exactly what that partner publishes.
+    It is rate-limited anyway, so the endpoint cannot be walked to
+    discover codes, and an inactive partner's code reports nothing --
+    advertising an offer we would not honour at sign-up is worse than
+    showing the standard one.
+    """
+    _require_web_key(x_api_key)
+    if not ratelimit.allow(request, bucket="form"):
+        return {"valid": False}
+    try:
+        promo = promotions.validate(body.code)
+    except promotions.PromoError:
+        return {"valid": False}
+    partner = db.get_promoter(promo["promoter_id"]) if promo["promoter_id"] else None
+    if promo["promoter_id"] and (partner is None or partner["status"] not in ("active", "approved") or not partner["active"]):
+        return {"valid": False}
+    return {
+        "valid": True,
+        "code": promo["code"],
+        "trial_days": referrals.trial_days_for(promo),
+        "proofs": config.PROOFS_FREE_PROOFS + int(promo["proofs_extra"] or 0),
+        "partner": (partner["name"] or "").split(" ")[0] if partner else "",
+        "description": promotions.describe(promo),
+    }
+
+
 @app.post("/api/web/promo/validate")
 def api_web_promo_validate(body: WebPromoIn, x_api_key: Optional[str] = Header(None)):
     _require_web_key(x_api_key)

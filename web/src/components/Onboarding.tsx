@@ -12,7 +12,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import GetPiper from "./GetPiper";
 import { api } from "../api";
-import type { AccountState, Catalog, ColorPresetId, FabricType, ThreadColor } from "../types";
+import { rememberedPromo } from "./Account";
+import type { AccountState, Catalog, ColorPresetId, FabricType, PartnerOffer, ThreadColor } from "../types";
 import type { Preferences, Units } from "../prefs";
 import { hoopGroups } from "../hoops";
 import { size } from "../format";
@@ -77,6 +78,9 @@ function FinalePiper() {
   );
 }
 
+/** What we advertise publicly; a partner's code can beat it. */
+const DEFAULT_TRIAL_DAYS = 14;
+
 const CONFETTI = Array.from({ length: 40 }, (_, i) => {
   const r = (n: number) => ((Math.sin(i * 12.9898 + n * 78.233) * 43758.5453) % 1 + 1) % 1;
   const colors = ["#1a6fd1", "#c0722a", "#2f6b41", "#e0b13b", "#a3312a", "#3b8ee6"];
@@ -90,6 +94,14 @@ export default function Onboarding(props: Props) {
   // Creating the account is the first step when the visitor arrived signed
   // out; it stays in the step count after they're in, so "Step 2 of 6"
   // doesn't turn into "Step 1 of 5" the moment the code is accepted.
+  const [offer, setOffer] = useState<PartnerOffer | null>(null);
+  useEffect(() => {
+    const code = rememberedPromo();
+    if (!code || account) return;
+    let live = true;
+    api.offer(code).then((o) => { if (live && o.valid) setOffer(o); }).catch(() => { /* the standard offer stands */ });
+    return () => { live = false; };
+  }, [account]);
   const [startedSignedOut] = useState(!!props.signUp && !account);
   const needsAccount = startedSignedOut && !account;
   const steps = useMemo(() => stepsFor(products, startedSignedOut), [products, startedSignedOut]);
@@ -214,13 +226,31 @@ export default function Onboarding(props: Props) {
   };
   const toggleHoop = (name: string) => set("ownedHoopNames", draft.ownedHoopNames.includes(name) ? draft.ownedHoopNames.filter((h) => h !== name) : [...draft.ownedHoopNames, name]);
 
-  const proofsFree = account?.proofs?.free_granted ?? 3;
-  const trialDays = account?.trial_days ?? 14;
+  const proofsFree = account?.proofs?.free_granted ?? offer?.proofs ?? 3;
+  // Before there is an account there is still an offer: someone who
+  // followed a partner's link was promised thirty days by that partner,
+  // and this screen used to greet them with fourteen.
+  const trialDays = account?.trial_days ?? offer?.trial_days ?? DEFAULT_TRIAL_DAYS;
+  const unlocked = !account && !!offer && (offer.trial_days ?? 0) > DEFAULT_TRIAL_DAYS;
 
   if (welcome) {
     return (
       <div className="setup onboarding">
         <div className="setup-card welcome-card">
+          {unlocked && (
+            <div className="partner-unlock">
+              <div className="celebrate" aria-hidden="true">
+                {CONFETTI.map((c, i) => <span key={i} className="confetti" style={{ left: c.left, animationDelay: c.delay, animationDuration: c.duration, background: c.color, width: c.size, height: c.size * 0.6, transform: `rotate(${c.rotate})` }} />)}
+              </div>
+              <FinalePiper />
+              <h3 className="unlock-title">{offer?.partner ? `${offer.partner} unlocked this for you` : "Your partner code is in"}</h3>
+              <p className="unlock-sub">
+                Congratulations &mdash; you&rsquo;re starting with <b>{trialDays} days free</b> instead of {DEFAULT_TRIAL_DAYS}
+                {offer?.proofs ? <>, and <b>{offer.proofs} proofs</b> included</> : null}. Nothing to claim and no card
+                needed &mdash; it&rsquo;s already on the account you&rsquo;re about to make.
+              </p>
+            </div>
+          )}
           <div className="welcome-brand">
             <img src="/icon.png" alt="" width={56} height={56} />
             <h2>{needsAccount ? "Welcome — let's start your free trial" : `Welcome to PiperStitch${account?.name ? `, ${account.name.split(" ")[0]}` : ""}`}</h2>

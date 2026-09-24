@@ -501,6 +501,18 @@ a.choice { text-decoration: none; }
 .done { position: relative; z-index: 1; }
 .done-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 4px; }
 .done-piper { border-radius: 20px; animation: piper-pop .6s cubic-bezier(.2,1.4,.4,1) both; }
+/* A partner's code, recognised before sign-up: the one moment in setup
+   where someone is being given something, so it gets Piper's fireworks
+   and the confetti rather than a line of small print. */
+.partner-unlock { position: relative; overflow: hidden; text-align: center; padding: 6px 18px 14px;
+  margin: -6px -6px 18px; border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent, #2f6f4f) 12%, transparent), transparent); }
+.partner-unlock .done-finale { width: 150px; height: 150px; margin: -10px auto -16px; display: block; }
+.unlock-title { position: relative; z-index: 1; margin: 0 0 4px; font-size: 1.12rem; }
+.unlock-sub { position: relative; z-index: 1; margin: 0; font-size: .93rem; line-height: 1.5; opacity: .88; }
+@media (max-width: 760px) { .partner-unlock .done-finale { width: 112px; height: 112px; } }
+@media (prefers-reduced-motion: reduce) { .partner-unlock .celebrate { display: none; } }
+
 .done-finale { width: 240px; height: 240px; margin: -24px 0 -26px; user-select: none; -webkit-user-drag: none; }
 @media (max-width: 760px) { .done-finale { width: 160px; height: 160px; } }
 @keyframes piper-pop { 0% { transform: scale(.4) rotate(-12deg); opacity: 0; } 100% { transform: scale(1) rotate(0); opacity: 1; } }

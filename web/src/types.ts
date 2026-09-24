@@ -228,6 +228,17 @@ export interface ProjectSummary {
   updatedAt: string;
 }
 
+/** A partner's public offer, readable before anyone has signed in: what
+ *  their link promises the person who followed it. */
+export interface PartnerOffer {
+  valid: boolean;
+  code?: string;
+  trial_days?: number;
+  proofs?: number;
+  partner?: string;
+  description?: string;
+}
+
 export interface PromoValidation {
   valid: boolean;
   code?: string;

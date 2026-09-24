@@ -190,6 +190,18 @@ func authRoutes(_ api: RoutesBuilder) {
         return try await req.licenseAdmin.post("/api/web/promo/validate", In(token: session.token, code: body.code), as: PromoValidation.self)
     }
 
+    /// What a partner's code gives, asked before there is an account.
+    /// Deliberately session-free: someone arriving on a partner's link is
+    /// a stranger until they sign in, and the welcome screen has to know
+    /// whether to promise them fourteen days or thirty.
+    auth.post("offer") { req -> PartnerOffer in
+        try requireEnabled(req)
+        struct Body: Content { var code: String }
+        struct In: Content { var code: String }
+        let body = try req.content.decode(Body.self)
+        return try await req.licenseAdmin.post("/api/web/offer", In(code: body.code), as: PartnerOffer.self)
+    }
+
     /// Start (or resume) the PiperStitch Proofs subscription from inside
     /// the app: License Admin's Checkout for the Proofs price, returning
     /// to Proofs' own Settings page when paid.
@@ -307,6 +319,16 @@ func authRoutes(_ api: RoutesBuilder) {
         ), as: Out.self)
         return ["id": out.id]
     }
+}
+
+/// A partner's public offer, as shown to someone who has not signed in.
+struct PartnerOffer: Content {
+    var valid: Bool
+    var code: String?
+    var trial_days: Int?
+    var proofs: Int?
+    var partner: String?
+    var description: String?
 }
 
 struct PromoValidation: Content {

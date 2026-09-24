@@ -120,6 +120,36 @@ def test_self_referral_and_suspended_promoters_are_not_attributed(isolated_db, t
     assert r.status_code == 302 and not r.cookies.get(referrals.COOKIE_NAME)
 
 
+def test_the_offer_is_readable_before_anyone_has_signed_in(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """The welcome screen asks what a code is worth while the visitor is
+    still a stranger. Without this they are shown the standard fourteen
+    days, contradicting the partner who sent them."""
+    monkeypatch.setattr(config, "WEB_API_KEY", "web-key")
+    pid, promo_id = partner()
+    c = TestClient(app)
+    r = c.post("/api/web/offer", json={"code": "KATHLEEN"}, headers={"x-api-key": "web-key"})
+    assert r.status_code == 200
+    offer = r.json()
+    assert offer["valid"] is True and offer["trial_days"] == 30 and offer["partner"] == "Kathleen"
+    assert offer["proofs"] == config.PROOFS_FREE_PROOFS + 7
+
+
+def test_an_unknown_or_suspended_partners_code_offers_nothing(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """Better to show the standard offer than one we would not honour."""
+    monkeypatch.setattr(config, "WEB_API_KEY", "web-key")
+    c = TestClient(app)
+    assert c.post("/api/web/offer", json={"code": "NOPE"}, headers={"x-api-key": "web-key"}).json()["valid"] is False
+
+    pid, _ = partner(name="Suspended Sam", email="sam@example.com", code="SAM", status="suspended")
+    assert c.post("/api/web/offer", json={"code": "SAM"}, headers={"x-api-key": "web-key"}).json()["valid"] is False
+
+
+def test_the_offer_endpoint_still_needs_the_app_key(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    monkeypatch.setattr(config, "WEB_API_KEY", "web-key")
+    partner()
+    assert TestClient(app).post("/api/web/offer", json={"code": "KATHLEEN"}).status_code == 401
+
+
 def test_the_app_is_told_the_longer_trial_a_partner_code_actually_granted(isolated_db, test_keypair, fake_smtp):
     """The database granting thirty days while the app's welcome screen says
     fourteen is how a partner's promise turns into a complaint about us. The
