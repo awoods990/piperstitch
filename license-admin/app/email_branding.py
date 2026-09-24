@@ -103,7 +103,7 @@ def button(label: str, url: str) -> str:
 
 
 def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader: str = "", footer_note: str = "",
-           hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False) -> str:
+           hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "") -> str:
     """Wraps a plain-text body in the PiperStitch shell.
 
     `hero_image` is an absolute URL shown above the words -- Piper's
@@ -134,6 +134,12 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
     # A full-width hero carries its own branding -- the graphic opens with
     # the mark already -- so the shell's masthead stands down rather than
     # showing the logo twice, one above the other.
+    # A line of type above the picture, where the masthead would otherwise
+    # be: it says what the email is about before the graphic has loaded, or
+    # at all if the reader's client never loads it.
+    kicker = (f'<tr><td align="center" style="padding:30px 32px 0 32px;">'
+              f'<div style="font-family:{FONT};font-size:17px;font-weight:700;letter-spacing:-0.005em;'
+              f'line-height:24px;color:{NAVY};">{html.escape(hero_kicker)}</div></td></tr>') if hero_kicker else ""
     masthead = "" if (hero_image and hero_full) else (
         f'<tr><td align="center" style="padding:34px 32px 8px 32px;">'
         f'<img src="{MARK_URL}" width="72" alt="" style="display:block;width:72px;max-width:30%;height:auto;border:0;margin:0 auto;">'
@@ -156,6 +162,7 @@ def render(*, body_text: str, cta_label: str = "", cta_url: str = "", preheader:
 
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#ffffff;border:1px solid {LINE};border-radius:14px;">
   {masthead}
+  {kicker}
   {hero}
   <tr><td style="padding:22px 32px 8px 32px;">
     {blocks}

@@ -1134,6 +1134,8 @@ def test_the_first_recruitment_email_leads_with_the_program_graphic(isolated_db,
     assert 'width="568"' in html, "the graphic should run the width of the card"
     assert "/partners/program?k=" in html.split("partner-introduction-email.jpg")[0], "the graphic links to the full details"
     assert ">Piper<" not in html, "the graphic carries the logo; the shell must not show a second one above it"
+    assert "A New Way to Digitize and Proof" in html, "the email says what it is about above the picture"
+    assert body.startswith("A New Way to Digitize and Proof"), "...and for anyone reading the plain-text part"
     assert "30% of everything they pay" in html, "alt text has to carry the offer for a blocked image"
 
     # The words stand on their own when the picture never loads.

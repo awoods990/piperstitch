@@ -831,7 +831,7 @@ def fill(text: str, vars: dict) -> str:
 
 
 def render_template(row, vars: dict, *, marketing: bool = False, footer_note: str = "", hero_image: str = "", hero_alt: str = "",
-                    hero_url: str = "", hero_full: bool = False) -> tuple[str, str, str]:
+                    hero_url: str = "", hero_full: bool = False, hero_kicker: str = "") -> tuple[str, str, str]:
     """(subject, plain body, html) for a template or sequence-step row."""
     subject = fill(row["subject"], vars)
     body = fill(row["body"], vars)
@@ -844,19 +844,24 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
     # Who sent it, in the plain-text part as well as the HTML one.
     body = body.rstrip() + f"\n\n{config.LEGAL_NAME}, {config.POSTAL_ADDRESS}\n{config.REPLY_TO_EMAIL}"
     html = email_branding.render(body_text=body, cta_label=cta_label, cta_url=cta_url, preheader=preheader, footer_note=footer_note,
-                                 hero_image=hero_image, hero_alt=hero_alt, hero_url=hero_url, hero_full=hero_full)
+                                 hero_image=hero_image, hero_alt=hero_alt, hero_url=hero_url, hero_full=hero_full,
+                                 hero_kicker=hero_kicker)
+    # The kicker lives in the shell rather than the body, so that it shows
+    # once in the HTML; the plain-text part needs its own copy at the top.
+    if hero_kicker:
+        body = f"{hero_kicker}\n\n{body}"
     return subject, body, html
 
 
 def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "",
-                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False) -> None:
+                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "") -> None:
     """Sends one of the editable system emails. Raises EmailSendError on
     failure after logging it."""
     row = db.get_email_template(key)
     if row is None:
         seed(); row = db.get_email_template(key)
     subject, body, html = render_template(row, vars or {}, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt,
-                                         hero_url=hero_url, hero_full=hero_full)
+                                         hero_url=hero_url, hero_full=hero_full, hero_kicker=hero_kicker)
     msg = email_sender._compose(to_email=to_email, subject=subject, body=body, html_body=html, reply_to=reply_to)
     for name, data, ctype in attachments or []:
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")

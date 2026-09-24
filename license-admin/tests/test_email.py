@@ -113,3 +113,25 @@ def test_the_full_width_hero_can_carry_a_link_and_the_small_one_still_works():
     assert 'width="568"' in full and 'href="https://x/p"' in full and 'alt="The offer"' in full
     small = email_branding.render(body_text="Hi", hero_image="https://x/i.jpg", hero_alt="Piper")
     assert 'width="240"' in small and "href=" not in small.split("i.jpg")[0][-120:]
+
+
+def test_the_hero_kicker_appears_once_in_the_html_and_opens_the_text_part():
+    """It says what the email is about before the graphic has loaded, or at
+    all if the reader's client never loads it — so it has to reach the
+    plain-text part too, and exactly once in the HTML."""
+    from app import emails, db
+    db.init_db(); emails.seed()
+    row = db.get_email_template("partner_outreach_1")
+    _, body, html = emails.render_template(row, {"first_name": "Dev"}, hero_image="https://x/i.jpg",
+                                           hero_alt="alt", hero_url="https://x/p", hero_full=True,
+                                           hero_kicker="A New Way to Digitize and Proof")
+    assert html.count("A New Way to Digitize and Proof") == 1
+    assert body.startswith("A New Way to Digitize and Proof")
+    # It sits above the picture, not below it.
+    assert html.index("A New Way to Digitize and Proof") < html.index("i.jpg")
+
+
+def test_no_kicker_means_no_empty_row():
+    from app import email_branding
+    html = email_branding.render(body_text="Hi", hero_image="https://x/i.jpg", hero_full=True)
+    assert "A New Way" not in html

@@ -191,6 +191,7 @@ PARTNER_INTRO_IMAGE = "/assets/partner-introduction-email.jpg"
 #: Read instead of the picture by everyone whose client blocks images, which
 #: on cold mail is most of them on first open -- so it carries the offer, not
 #: a description of a picture.
+PARTNER_INTRO_KICKER = "A New Way to Digitize and Proof"
 PARTNER_INTRO_ALT = ("The PiperStitch Partner Program: get paid every month, for two years. "
                      "$15 the day they subscribe, then 30% of everything they pay for 24 months. "
                      "Founding rate locked for life for the first fifty partners.")
@@ -216,6 +217,7 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
     e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
                   hero_image=f"{config.WEBSITE_BASE_URL}{PARTNER_INTRO_IMAGE}" if lead else "",
                   hero_alt=PARTNER_INTRO_ALT if lead else "", hero_url=url if lead else "", hero_full=lead,
+                  hero_kicker=PARTNER_INTRO_KICKER if lead else "",
                   footer_note=f"You're getting this because we think you'd be a good PiperStitch partner. To hear no more: {opt_out_url}")
     return subject
 
