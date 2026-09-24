@@ -356,10 +356,27 @@ class WebFeedbackIn(BaseModel):
 @app.get("/health")
 def health():
     """For the hosting platform's health check (Railway, a load balancer):
-    the process is up and the database opens. Nothing about Stripe."""
+    the process is up and the database opens. Nothing about Stripe.
+
+    The backup block matches the one Proofs reports. Backups are the thing
+    most likely to fail silently -- a schedule that quietly stopped looks
+    exactly like one that is working -- and answering "did last night's
+    run happen?" should not require signing in to the admin. Dates and
+    sizes only: nothing about the bucket, the keys or anybody's data.
+    """
     with db.connection() as conn:
         conn.execute("SELECT 1")
-    return {"status": "ok"}
+    state = backups.status()
+    last = state["last_ok"]
+    return {
+        "status": "ok",
+        "backup": {
+            "configured": state["configured"],
+            "last_ok": last["created_at"] if last else None,
+            "last_size_mb": round(last["size_bytes"] / 1024 / 1024, 1) if last else None,
+            "stale": state["stale"],
+        },
+    }
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -13,7 +13,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from fastapi.testclient import TestClient
+
 from app import backups, config, db
+from app.main import app
 
 
 def test_the_signature_matches_amazons_documented_example():
@@ -166,3 +169,31 @@ def test_the_query_string_is_signed_in_the_order_amazon_requires():
         "list-type=2&max-keys=1000&prefix=proofs%2F"
     keys = [pair.split("=")[0] for pair in backups.canonical_query({"b": 1, "a": 2, "c": 3}).split("&")]
     assert keys == sorted(keys)
+
+
+def test_health_says_whether_last_nights_backup_happened(isolated_db):
+    """A schedule that quietly stopped looks exactly like one that is
+    working, so the answer to "did it run?" must be readable without
+    signing in. This is the endpoint that answers it."""
+    c = TestClient(app)
+    empty = c.get("/health").json()
+    assert empty["status"] == "ok"
+    assert empty["backup"]["last_ok"] is None and empty["backup"]["stale"] is True
+
+    db.record_backup(service=backups.SERVICE, key="license-admin/2026/x.tar.gz",
+                     size_bytes=5 * 1024 * 1024, digest="d", status="ok", detail="")
+    body = c.get("/health").json()
+    assert body["backup"]["last_ok"] is not None
+    assert body["backup"]["last_size_mb"] == 5.0
+    assert body["backup"]["stale"] is False
+
+
+def test_health_never_names_the_bucket_or_the_keys(isolated_db, monkeypatch):
+    """/health is public. Dates and sizes are fine; where the backups live
+    and what opens them are not."""
+    monkeypatch.setattr(config, "BACKUP_BUCKET", "piperstitch-secret-bucket")
+    monkeypatch.setattr(config, "BACKUP_ENDPOINT", "https://nyc3.digitaloceanspaces.com")
+    monkeypatch.setattr(config, "BACKUP_SECRET_KEY", "super-secret-key")
+    text = TestClient(app).get("/health").text
+    for leak in ("piperstitch-secret-bucket", "digitaloceanspaces", "super-secret-key"):
+        assert leak not in text, f"/health leaked {leak}"
