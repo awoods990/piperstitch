@@ -5,7 +5,19 @@ import StitchPilotCore
 func routes(_ app: Application) throws {
     let api = app.grouped("api", "v1")
 
-    api.get("health") { _ in ["status": "ok"] }
+    // The commit this build came from, so "is my engine change live?" is
+    // a question with an answer from outside. Railway sets the variable on
+    // every deploy; it is absent when running locally.
+    api.get("health") { _ in
+        var body = ["status": "ok"]
+        if let sha = Environment.get("RAILWAY_GIT_COMMIT_SHA"), !sha.isEmpty {
+            body["build"] = String(sha.prefix(7))
+        }
+        if let when = Environment.get("RAILWAY_DEPLOYMENT_ID"), !when.isEmpty {
+            body["deployment"] = String(when.prefix(8))
+        }
+        return body
+    }
 
     // Accounts, billing and saved projects (see Auth.swift). The engine
     // routes below require a signed-in, entitled account whenever License
