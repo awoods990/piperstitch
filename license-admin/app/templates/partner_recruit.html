@@ -21,7 +21,7 @@
     </div>
     <div class="kpi-grid" style="margin-bottom:0">
       <div class="kpi-tile"><div class="kpi-value">{{ plan|selectattr('state', 'equalto', 'sent')|list|length }} of {{ plan|length }}</div><div class="kpi-label">Emails sent</div>
-        <div class="kpi-sub">{% if p.outreach_status == 'active' and p.outreach_next_at %}next due {{ p.outreach_next_at|short_date }}{% elif p.outreach_status == 'replied' %}held while you talk{% else %}nothing scheduled{% endif %}</div></div>
+        <div class="kpi-sub">{% if outreach_paused and p.outreach_status == 'active' %}disconnected &mdash; nothing sends{% elif p.outreach_status == 'active' and p.outreach_next_at %}next due {{ p.outreach_next_at|short_date }}{% elif p.outreach_status == 'replied' %}held while you talk{% else %}nothing scheduled{% endif %}</div></div>
       <div class="kpi-tile"><div class="kpi-value">{{ engagement.opens }}</div><div class="kpi-label">Email opens</div>
         <div class="kpi-sub">{% if engagement.last_open %}last {{ engagement.last_open|short_date }}{% else %}none reported{% endif %}</div></div>
       <div class="kpi-tile"><div class="kpi-value">{{ p.views }}</div><div class="kpi-label">Reached the details page</div>

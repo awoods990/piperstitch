@@ -278,6 +278,29 @@ def require_for_serving() -> list[str]:
         missing.append("SMTP_HOST (or POSTMARK_API_TOKEN)")
     return missing
 
+# Recruitment mail is disconnected. The first batch went out from
+# hello@piperstitch.com, the same address and domain that carries license
+# keys, password resets and proof links, and a cold sequence's complaints
+# land on that shared reputation; the sending address and domain are being
+# moved, and nothing may go out in the meantime -- not the scheduled
+# follow-ups, not a click on the admin page, not the first email of a
+# freshly pasted list, not an invitation.
+#
+# The gate is inside `partners.send_outreach_step` and
+# `partners.register_prospect`, so it holds no matter which path reaches
+# them. Nothing is lost: every prospect keeps its step and its due date,
+# and nothing is written to the outreach log.
+#
+# Someone who registers on the site themselves still gets their own link
+# back -- they asked for it, and it is the reply to their own action.
+#
+# To reconnect, once the new sender is in place: PARTNER_OUTREACH_PAUSED=false.
+# Note that everything overdue then becomes due at once, and the next
+# five-minute tick would send the whole held batch in one burst. Re-space
+# the due dates before lifting this, or send by hand from the recruitment
+# page.
+PARTNER_OUTREACH_PAUSED = _bool("PARTNER_OUTREACH_PAUSED", "true")
+
 # The in-process scheduler (sequence emails, win-back, recurring expenses).
 # Off in tests; on in production.
 SCHEDULER_ENABLED = _bool("SCHEDULER_ENABLED", "true")

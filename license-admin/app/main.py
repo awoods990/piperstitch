@@ -2239,7 +2239,7 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "code_requests": db.list_code_requests(), "resources": db.list_partner_resources(), "partner_feedback": db.list_partner_feedback(limit=25),
         "recruits": db.list_recruits(), "recruit_counts": db.recruitment_counts(), "pending_documents": db.list_partner_documents(pending_only=True),
         "replies": db.prospects_with_unanswered_replies(),
-        "outreach_steps": partners.OUTREACH_STEPS,
+        "outreach_steps": partners.OUTREACH_STEPS, "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
     })
@@ -2251,6 +2251,8 @@ def admin_partner_invite(name: str = Form(""), email: str = Form(""), note: str 
     gated page without them registering first (spec §8)."""
     try:
         prospect_id = partners.register_prospect(name=name, email=email, source="invite", note=note)
+    except partners.OutreachHeld:
+        return _partners_redirect(error="Recruitment email is disconnected while the sending address is moved. Nobody was written to.")
     except partners.PartnerError as e:
         return _partners_redirect(error=e.message)
     return _partners_redirect(message=f"Invitation sent to {email.strip().lower()}. Their link: {partners.program_url(prospect_id)}")
@@ -2492,8 +2494,14 @@ async def admin_partner_recruit(people: str = Form(""), note: str = Form(""), fi
     if not found:
         return _partners_redirect(error="Nothing to send to — one per line, as “Kathleen Reyes <kathleen@example.com>” or “Kathleen Reyes, kathleen@example.com”.", anchor="recruit")
     result = partners.start_outreach(found, note=note)
-    msg = f"Started {result['started']} approach{'' if result['started'] == 1 else 'es'}: {result['sent']} first email{'' if result['sent'] == 1 else 's'} sent"
-    msg += f", {result['queued']} queued for the next few minutes." if result["queued"] else "."
+    if config.PARTNER_OUTREACH_PAUSED:
+        # They are on the list and scheduled, but recruitment mail is
+        # disconnected, so "queued for the next few minutes" would be a lie.
+        msg = (f"Added {result['started']} to the list. Recruitment email is disconnected while the sending address is moved, "
+               "so nobody was written to — they keep their place and go out when it is reconnected.")
+    else:
+        msg = f"Started {result['started']} approach{'' if result['started'] == 1 else 'es'}: {result['sent']} first email{'' if result['sent'] == 1 else 's'} sent"
+        msg += f", {result['queued']} queued for the next few minutes." if result["queued"] else "."
     if result["skipped"]:
         msg += " Skipped: " + "; ".join(result["skipped"][:6]) + ("…" if len(result["skipped"]) > 6 else "") + "."
     if bad:
@@ -2512,7 +2520,7 @@ def admin_partner_recruit_detail(request: Request, prospect_id: int, message: st
     return templates.TemplateResponse(request, "partner_recruit.html", {
         "active_nav": "partners", "p": prospect, "plan": partners.outreach_plan(prospect), "timeline": partners.recruit_timeline(prospect),
         "program_link": partners.program_url(prospect_id), "promoter": promoter, "program": partners,
-        "engagement": db.outreach_engagement(prospect_id),
+        "engagement": db.outreach_engagement(prospect_id), "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
         "message": message or None, "error": error or None,
     })
 
@@ -2533,8 +2541,11 @@ def admin_partner_recruit_send_step(prospect_id: int, step: int, advance: str = 
     prospect = db.get_partner_prospect(prospect_id)
     if prospect is None:
         return _partners_redirect(error="That person isn't on the list.", anchor="recruit")
-    if not partners.send_outreach_step(prospect, step, advance=bool(advance)):
-        return _recruit_redirect(prospect_id, error="That email couldn't be sent — check the mail settings.")
+    try:
+        if not partners.send_outreach_step(prospect, step, advance=bool(advance)):
+            return _recruit_redirect(prospect_id, error="That email couldn't be sent — check the mail settings.")
+    except partners.OutreachHeld:
+        return _recruit_redirect(prospect_id, error="Recruitment email is disconnected while the sending address is moved. Nobody was written to.")
     return _recruit_redirect(prospect_id, message=f"Email {step} sent to {prospect['email']}.")
 
 
@@ -2565,8 +2576,11 @@ def admin_partner_recruit_action(prospect_id: int, action: str = Form("stop")):
         partners.stop_outreach(prospect_id)
         return _partners_redirect(message=f"Stopped writing to {prospect['email']}.", anchor="recruit")
     if action == "send":
-        if partners.send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
-            return _partners_redirect(message=f"Next email sent to {prospect['email']}.", anchor="recruit")
+        try:
+            if partners.send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
+                return _partners_redirect(message=f"Next email sent to {prospect['email']}.", anchor="recruit")
+        except partners.OutreachHeld:
+            return _partners_redirect(error="Recruitment email is disconnected while the sending address is moved. Nobody was written to.", anchor="recruit")
         return _partners_redirect(error="Nothing left to send them — the sequence is finished.", anchor="recruit")
     if action == "restart":
         db.set_prospect_outreach(prospect_id, outreach_step=0, outreach_status="active", outreach_next_at=db.now_iso())

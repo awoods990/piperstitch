@@ -258,6 +258,11 @@ def register_prospect(*, name: str, email: str, organization: str = "", platform
         raise PartnerError("email", "That doesn't look like an email address.")
     prospect_id = db.create_partner_prospect(name=name, email=email, organization=organization, platforms=platforms, source=source, note=note)
     assign_slug(prospect_id, name)
+    # An invitation is outbound recruitment and is held with the rest. A
+    # self-registration is the reply to someone's own action on the site,
+    # so it still goes.
+    if source != "self" and config.PARTNER_OUTREACH_PAUSED:
+        raise OutreachHeld
     try:
         email_sender.send_partner_program_email(to_email=email, partner_name=name, url=program_url(prospect_id), invited=(source == "invite"))
     except email_sender.EmailSendError:
@@ -521,6 +526,16 @@ def parse_recruits(text: str) -> tuple[list[dict], list[str]]:
 SEND_NOW_LIMIT = 10          # beyond this, the scheduler takes the first emails too
 
 
+def _send_first_unless_held(prospect_id: int) -> bool:
+    """The first email of a pasted list, or nothing while held. The person
+    is still added and still scheduled; they simply are not written to
+    until the hold comes off."""
+    try:
+        return send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    except OutreachHeld:
+        return False
+
+
 def start_outreach(people: list[dict], *, note: str = "", send_now_limit: int = SEND_NOW_LIMIT) -> dict:
     """Sends the first email straight away (up to a batch worth, so the
     request doesn't sit on SMTP all afternoon) and leaves the rest to the
@@ -543,7 +558,7 @@ def start_outreach(people: list[dict], *, note: str = "", send_now_limit: int = 
         prospect_id = db.create_partner_prospect(name=person["name"], email=email, source="recruit", note=note)
         db.set_prospect_outreach(prospect_id, outreach_step=0, outreach_status="active", outreach_next_at=db.now_iso(), source="recruit")
         result["started"] += 1
-        if result["sent"] < send_now_limit and send_outreach_step(db.get_partner_prospect(prospect_id), 1):
+        if result["sent"] < send_now_limit and _send_first_unless_held(prospect_id):
             result["sent"] += 1
         else:
             result["queued"] += 1
@@ -554,10 +569,24 @@ def partner_exists(promoter) -> bool:
     return promoter is not None and promoter["status"] in ("applied", "approved", "active", "suspended")
 
 
+class OutreachHeld(Exception):
+    """Raised instead of sending while `config.PARTNER_OUTREACH_PAUSED` is
+    set, so a caller says so plainly rather than reporting a mail failure."""
+
+
 def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
     """One recruitment email. Everything is logged, sent or failed. With
     `advance` off it is a plain resend: the same words again, and the
-    schedule left exactly where it was."""
+    schedule left exactly where it was.
+
+    The single place recruitment mail leaves from, which is why the hold
+    sits here: the scheduler's tick, the send button on a prospect's page,
+    "send the next one" on the list, and the first email of a pasted list
+    all arrive through this function. Held, it sends nothing, writes
+    nothing to the log and leaves the schedule untouched.
+    """
+    if config.PARTNER_OUTREACH_PAUSED:
+        raise OutreachHeld
     spec = next((s for s in OUTREACH_STEPS if s["step"] == step), None)
     if spec is None:
         return False
@@ -583,11 +612,22 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
 
 
 def outreach_check(*, now: Optional[datetime] = None) -> int:
-    """The scheduler's tick for recruitment: send whatever is due."""
+    """The scheduler's tick for recruitment: send whatever is due.
+
+    Held entirely while `PARTNER_OUTREACH_PAUSED` is set (see the note
+    there): no send, no state change, so lifting it picks up exactly
+    where this left off. A send from the recruitment page still goes --
+    that is a deliberate click, not the schedule running itself.
+    """
+    if config.PARTNER_OUTREACH_PAUSED:
+        return 0                                 # ...and `send_outreach_step` refuses anyway
     sent = 0
     for prospect in db.due_outreach((now or _now()).isoformat(timespec="seconds").replace("+00:00", "Z")):
-        if send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
-            sent += 1
+        try:
+            if send_outreach_step(prospect, int(prospect["outreach_step"] or 0) + 1):
+                sent += 1
+        except OutreachHeld:
+            return sent
     return sent
 
 

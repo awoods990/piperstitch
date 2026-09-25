@@ -1387,3 +1387,55 @@ def test_with_no_broadcast_stream_configured_nothing_changes(isolated_db, test_k
     prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
     partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
     assert all(m["MessageStream"] == config.POSTMARK_MESSAGE_STREAM for m in sent)
+
+
+def test_the_hold_disconnects_every_way_recruitment_mail_can_leave(isolated_db, test_keypair, fake_smtp, admin_password_configured, monkeypatch):
+    """While `PARTNER_OUTREACH_PAUSED` is set nothing recruitment-related
+    sends, by any route: the scheduler's tick, the send button on a
+    prospect's page, "send the next one" on the list, the first email of a
+    freshly pasted list, and an invitation. Nobody's step or due date
+    moves, nothing reaches the outreach log, and lifting it resumes
+    exactly where it stopped. Someone registering themselves on the site
+    still gets their own link -- that is the reply to their own action."""
+    from app import partners
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        client.post("/admin/partners/recruit", data={"people": "Kathleen Reyes <kathleen@example.com>", "note": ""}, follow_redirects=False)
+    kath = db.get_partner_prospect_by_email("kathleen@example.com")
+    assert kath["outreach_step"] == 1 and kath["outreach_status"] == "active"
+    due_before, logged_before = kath["outreach_next_at"], len(db.list_outreach_log(kath["id"]))
+    fake_smtp.sent.clear()
+
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", True)
+    later = datetime.now(timezone.utc) + timedelta(days=30)
+    assert partners.outreach_check(now=later) == 0
+
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        assert "disconnected" in client.get(f"/admin/partners/recruit/{kath['id']}").text
+        for response in (
+            client.post(f"/admin/partners/recruit/{kath['id']}/send/1", data={}, follow_redirects=False),
+            client.post(f"/admin/partners/recruit/{kath['id']}", data={"action": "send"}, follow_redirects=False),
+            client.post("/admin/partners/invite", data={"name": "Dev Patel", "email": "dev@example.com", "note": ""}, follow_redirects=False),
+            client.post("/admin/partners/recruit", data={"people": "Mari Okafor <mari@example.com>", "note": ""}, follow_redirects=False),
+        ):
+            assert "disconnected" in response.headers["location"], response.headers["location"]
+    assert not fake_smtp.sent
+
+    # Nobody moved, and nothing was written down as sent or failed.
+    held = db.get_partner_prospect_by_email("kathleen@example.com")
+    assert held["outreach_step"] == 1 and held["outreach_next_at"] == due_before and held["outreach_status"] == "active"
+    assert len(db.list_outreach_log(kath["id"])) == logged_before
+    # Mari was still added and scheduled -- she just has not been written to.
+    mari = db.get_partner_prospect_by_email("mari@example.com")
+    assert mari is not None and mari["outreach_status"] == "active" and not db.list_outreach_log(mari["id"])
+
+    # Someone signing up on the site still hears back.
+    with TestClient(app) as client:
+        client.post("/partners/register", data={"name": "Ada Ruiz", "email": "ada@example.com", "organization": "", "platforms": "", "website": ""})
+    assert [m["To"] for m in fake_smtp.sent] == ["ada@example.com"]
+    fake_smtp.sent.clear()
+
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
+    assert partners.outreach_check(now=later) >= 1
+    assert db.get_partner_prospect_by_email("kathleen@example.com")["outreach_step"] == 2

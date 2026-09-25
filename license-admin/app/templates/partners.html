@@ -60,6 +60,10 @@
   <div class="card" id="recruit">
     <div class="toolbar"><h2 style="margin:0">Recruit partners</h2>
       <span class="muted small">{{ recruit_counts.total }} approached &middot; {{ recruit_counts.active }} in progress &middot; {{ recruit_counts.opened }} opened the details &middot; {{ recruit_counts.applied }} applied{% if recruit_counts.opted_out %} &middot; {{ recruit_counts.opted_out }} said no{% endif %}</span></div>
+    {% if outreach_paused %}<div class="callout" style="background:#fdf3e2; border-color:#f0d9ac; margin-top:0"><strong>Recruitment email is disconnected while the sending address is moved.</strong>
+      Nothing goes out &mdash; not the scheduled follow-ups, not a send from a prospect&rsquo;s page, not the first email of a list pasted below, not an invitation.
+      Everyone keeps their place and their due date, and people can still register themselves on the site.
+      Reconnect with <code>PARTNER_OUTREACH_PAUSED=false</code> once the new sender is live &mdash; re-space the due dates first, or everything overdue goes out at once.</div>{% endif %}
     <p class="muted small" style="margin-top:0">Paste a list or upload a CSV and the approach runs itself: {{ outreach_steps|length }} emails over {{ outreach_steps[-1].delay_days }} days &mdash; the offer, how it works, what it adds up to, and one last note &mdash; each carrying their own link into the program details and a one-click way to stop. It stops by itself the moment they apply or say no.</p>
     <details class="hookset">
       <summary>Open and click tracking &mdash; one URL to paste into Postmark</summary>

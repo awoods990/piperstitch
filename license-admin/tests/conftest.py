@@ -79,6 +79,9 @@ def isolated_db(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setattr(config, "DATABASE_PATH", str(db_path))
     monkeypatch.setattr(config, "SCHEDULER_ENABLED", False)
+    # Recruitment outreach ships held (see config.PARTNER_OUTREACH_PAUSED).
+    # The tests exercise the sequence itself; the hold has its own test.
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
     db.init_db()
     from app import emails
     emails.seed()
