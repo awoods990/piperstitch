@@ -246,12 +246,44 @@ if args.count >= 4, args[1] == "--build-glyph-library" {
         if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil { print("  glyph \(character): \(shape.subPaths.count) sub-paths") }
         do {
             var columns: [SatinColumn] = []
+            if ProcessInfo.processInfo.environment["DEBUG_PIECES"] != nil {
+                let glyphArea = shape.subPaths.reduce(0.0) { $0 + abs(PolygonGeometry.signedArea($1.points)) }
+                let pieceArea = glyphPieces(shape).reduce(0.0) { total, piece in
+                    total + (piece.subPaths.first.map { abs(PolygonGeometry.signedArea($0.points)) } ?? 0)
+                }
+                print(String(format: "  pieces %@: %d pieces, %.1f%% of the glyph's area",
+                             character, glyphPieces(shape).count, glyphArea > 0 ? pieceArea / glyphArea * 100 : 0))
+            }
             for piece in glyphPieces(shape) {
                 // A stray contour in the font (Merriweather's h carries a
                 // 0.3 mm one) is not a piece of the letter; an i's dot at
                 // this size is a few square millimetres.
                 guard let outer = piece.subPaths.first, abs(PolygonGeometry.signedArea(outer.points)) >= 0.5 else { continue }
-                columns += try SatinColumnGenerator.columnPlanWithFallback(for: piece, parameters: parameters)
+                // Digitize the piece both ways and keep the one that
+                // actually covers it. The library is built here, offline,
+                // so this costs build time rather than anybody's stitch-
+                // out -- and it means no letter can come out worse than it
+                // did before, because the old plan is one of the two.
+                let reconstructed = (try? SatinColumnGenerator.columnPlanWithFallback(for: piece, parameters: parameters)) ?? []
+                // Opt-in while the sewing order catches up with the
+                // geometry: the columns this reads off the outline cover
+                // the letter (99%+ where the skeleton managed 80), but
+                // they come out as many small columns and the travel
+                // between them crosses an E's counters. Correct shape,
+                // wrong journey -- so it is not the default yet.
+                let readOff = ProcessInfo.processInfo.environment["GLYPH_COLUMNS"] == "outline"
+                    ? GlyphColumnExtractor.columns(for: piece) : []
+                func score(_ plan: [SatinColumn]) -> Double {
+                    guard !plan.isEmpty else { return -1 }
+                    let measured = GlyphColumnExtractor.coverage(of: plan, in: piece)
+                    return measured.covered - measured.spill * 1.5   // outside the letter is worse than short of it
+                }
+                let readScore = score(readOff), oldScore = score(reconstructed)
+                if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil {
+                    print(String(format: "    piece %@: outline %.3f (%d cols) vs skeleton %.3f (%d cols)",
+                                 character, readScore, readOff.count, oldScore, reconstructed.count))
+                }
+                columns += readScore > oldScore ? readOff : reconstructed
             }
             // A stub the skeleton left (an M's 0.8 mm edge, a demoted
             // junction) is a column with no width and no length: drop it.
@@ -271,8 +303,6 @@ if args.count >= 4, args[1] == "--build-glyph-library" {
             guard count > 0 else { missing.append(character); continue }
             stitchTotal += count
             glyphs[character] = GlyphColumns(advance: glyph.advance, columns: stored)
-        } catch {
-            missing.append(character)
         }
     }
     let font = GlyphColumnFont(fontID: outlines.fontID, digitizedCapHeightMM: capMM, glyphs: glyphs, missing: missing)
