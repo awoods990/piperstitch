@@ -1327,3 +1327,63 @@ def test_a_batch_of_events_is_handled(isolated_db, test_keypair, fake_smtp, monk
             {"RecordType": "Open", "MessageID": "unknown", "ReceivedAt": "2026-09-24T09:02:00Z"},
         ])
     assert r.json()["recorded"] == 2
+
+
+def test_recruitment_mail_goes_out_on_the_broadcast_stream_when_one_exists(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """Cold mail and a customer's sign-in code should not share a sending
+    reputation. Postmark gives a Broadcast stream its own IPs, so a
+    complaint against an approach lands there and not on the address a
+    customer depends on."""
+    import httpx
+    from types import SimpleNamespace
+    from app import partners
+    sent = []
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(config, "POSTMARK_BROADCAST_STREAM", "partner-outreach")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers, timeout: (
+        sent.append(json), SimpleNamespace(status_code=200, text="ok", json=lambda: {"MessageID": "m1"}))[1])
+
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+
+    outreach = [m for m in sent if "partner" in m["Subject"].lower() or "program" in m["Subject"].lower()]
+    assert outreach, f"no recruitment send captured; subjects were {[m['Subject'] for m in sent]}"
+    body = outreach[-1]
+    assert body["MessageStream"] == "partner-outreach"
+    names = {h["Name"] for h in body.get("Headers", [])}
+    assert "List-Unsubscribe" in names and "List-Unsubscribe-Post" in names, \
+        "a broadcast stream needs a one-click way out, and Gmail expects one on bulk mail"
+
+
+def test_transactional_mail_is_untouched_by_the_broadcast_setting(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """A sign-in code must keep going out on the transactional stream even
+    when a broadcast stream exists."""
+    import httpx
+    from types import SimpleNamespace
+    sent = []
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(config, "POSTMARK_BROADCAST_STREAM", "partner-outreach")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers, timeout: (
+        sent.append(json), SimpleNamespace(status_code=200, text="ok", json=lambda: {"MessageID": "m2"}))[1])
+
+    from app import email_sender
+    email_sender.send_activation_code_email(to_email="a@b.co", code="654321", device_name="Mac")
+    assert sent[-1]["MessageStream"] == config.POSTMARK_MESSAGE_STREAM
+    assert "Headers" not in sent[-1], "no unsubscribe header belongs on a sign-in code"
+
+
+def test_with_no_broadcast_stream_configured_nothing_changes(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """The setting is blank until the stream exists in Postmark; sending to
+    a stream that isn't there would fail every recruitment email."""
+    import httpx
+    from types import SimpleNamespace
+    from app import partners
+    sent = []
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(config, "POSTMARK_BROADCAST_STREAM", "")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers, timeout: (
+        sent.append(json), SimpleNamespace(status_code=200, text="ok", json=lambda: {"MessageID": "m3"}))[1])
+
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    assert all(m["MessageStream"] == config.POSTMARK_MESSAGE_STREAM for m in sent)

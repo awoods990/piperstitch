@@ -25,7 +25,8 @@ class PostmarkError(Exception):
     pass
 
 
-def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "", attachments: Optional[list] = None) -> str:
+def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "",
+                        attachments: Optional[list] = None, stream: str = "", headers: Optional[list] = None) -> str:
     """`attachments`: [(filename, bytes, content_type)].
 
     Returns Postmark's MessageID. It is what ties an open or a click
@@ -37,12 +38,14 @@ def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_bod
         "To": to_email,
         "Subject": subject,
         "TextBody": text_body,
-        "MessageStream": config.POSTMARK_MESSAGE_STREAM,
+        "MessageStream": stream or config.POSTMARK_MESSAGE_STREAM,
     }
     if html_body:
         payload["HtmlBody"] = html_body
     if reply_to or config.REPLY_TO_EMAIL:
         payload["ReplyTo"] = reply_to or config.REPLY_TO_EMAIL
+    if headers:
+        payload["Headers"] = headers
     if attachments:
         import base64
         payload["Attachments"] = [{"Name": name, "Content": base64.b64encode(data).decode(), "ContentType": ctype} for name, data, ctype in attachments]

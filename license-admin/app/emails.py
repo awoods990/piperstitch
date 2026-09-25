@@ -854,21 +854,29 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
 
 
 def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "",
-                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "") -> str:
+                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "",
+                broadcast: bool = False, unsubscribe_url: str = "") -> str:
     """Sends one of the editable system emails. Raises EmailSendError on
     failure after logging it. Returns the provider's message id, which is
-    what a later open or click is reported against."""
+    what a later open or click is reported against.
+
+    `broadcast` marks mail that is not transactional -- recruitment, chiefly.
+    When a Broadcast stream is configured it goes out on that instead, which
+    Postmark gives its own IPs, so a complaint against something we sent cold
+    does not land on the reputation a customer's sign-in code depends on."""
     row = db.get_email_template(key)
     if row is None:
         seed(); row = db.get_email_template(key)
     subject, body, html = render_template(row, vars or {}, footer_note=footer_note, hero_image=hero_image, hero_alt=hero_alt,
                                          hero_url=hero_url, hero_full=hero_full, hero_kicker=hero_kicker)
-    msg = email_sender._compose(to_email=to_email, subject=subject, body=body, html_body=html, reply_to=reply_to)
+    msg = email_sender._compose(to_email=to_email, subject=subject, body=body, html_body=html, reply_to=reply_to,
+                                unsubscribe_url=unsubscribe_url)
     for name, data, ctype in attachments or []:
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
         msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream", filename=name)
     try:
-        message_id = email_sender._send_smtp(msg)
+        stream = config.POSTMARK_BROADCAST_STREAM if broadcast else ""
+        message_id = email_sender._send_smtp(msg, stream=stream)
     except email_sender.EmailSendError as e:
         db.log_email(customer_id=customer_id, to_email=to_email, kind=key, subject=subject, status="failed", error=str(e))
         raise

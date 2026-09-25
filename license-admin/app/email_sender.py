@@ -27,7 +27,7 @@ class EmailSendError(Exception):
     subscription update."""
 
 
-def _send_smtp(msg: EmailMessage) -> str:
+def _send_smtp(msg: EmailMessage, *, stream: str = "") -> str:
     """Despite the name, the one send path: Postmark's HTTP API when
     POSTMARK_API_TOKEN is set, plain SMTP otherwise -- or, in development,
     a file in EMAIL_OUTBOX_DIR.
@@ -51,6 +51,7 @@ def _send_smtp(msg: EmailMessage) -> str:
         text_part = msg.get_body(preferencelist=("plain",))
         html_part = msg.get_body(preferencelist=("html",))
         attachments = [(part.get_filename(), part.get_payload(decode=True), part.get_content_type()) for part in msg.iter_attachments()]
+        extra = [{"Name": name, "Value": str(msg[name])} for name in ("List-Unsubscribe", "List-Unsubscribe-Post") if msg[name]]
         try:
             return email_postmark.send_postmark_email(
                 to_email=str(msg["To"]),
@@ -59,6 +60,8 @@ def _send_smtp(msg: EmailMessage) -> str:
                 html_body=html_part.get_content() if html_part else "",
                 reply_to=str(msg["Reply-To"]) if msg["Reply-To"] else "",
                 attachments=attachments or None,
+                stream=stream,
+                headers=extra or None,
             )
         except email_postmark.PostmarkError as e:
             raise EmailSendError(str(e)) from e
@@ -79,13 +82,20 @@ def _send_smtp(msg: EmailMessage) -> str:
     return ""                       # plain SMTP reports nothing back to tie events to
 
 
-def _compose(*, to_email: str, subject: str, body: str, html_body: str, reply_to: str = "") -> EmailMessage:
+def _compose(*, to_email: str, subject: str, body: str, html_body: str, reply_to: str = "", unsubscribe_url: str = "") -> EmailMessage:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = config.SMTP_FROM
     msg["To"] = to_email
     if reply_to or config.REPLY_TO_EMAIL:
         msg["Reply-To"] = reply_to or config.REPLY_TO_EMAIL
+    if unsubscribe_url:
+        # Gmail and Yahoo expect these on bulk mail, and a Broadcast stream
+        # requires a way out. One-Click means the reader's client can stop it
+        # without opening anything, which is the difference between an
+        # unsubscribe and a spam complaint.
+        msg["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     msg.set_content(body)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
@@ -220,6 +230,7 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
     subject = e.fill(row["subject"], vars)
     lead = key == "partner_outreach_1"
     message_id = e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
+                  broadcast=True, unsubscribe_url=opt_out_url,
                   hero_image=f"{config.WEBSITE_BASE_URL}{PARTNER_INTRO_IMAGE}" if lead else "",
                   hero_alt=PARTNER_INTRO_ALT if lead else "", hero_url=url if lead else "", hero_full=lead,
                   hero_kicker=PARTNER_INTRO_KICKER if lead else "",

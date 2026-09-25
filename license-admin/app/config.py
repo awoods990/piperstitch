@@ -145,6 +145,14 @@ POSTMARK_API_TOKEN = os.environ.get("POSTMARK_API_TOKEN", "")
 # Falls back to SMTP_FROM if blank.
 POSTMARK_FROM = os.environ.get("POSTMARK_FROM", "")
 POSTMARK_MESSAGE_STREAM = os.environ.get("POSTMARK_MESSAGE_STREAM", "outbound")
+# Cold recruitment mail does not belong in the same stream as sign-in codes
+# and proof links. Postmark gives a Broadcast stream its own IP pool, so a
+# complaint against an approach we sent does not settle on the address a
+# customer needs to receive. Blank means "no separate stream yet" and
+# everything keeps going out as it does today -- set it once the stream
+# exists in Postmark, or the sends would fail against a stream that isn't
+# there.
+POSTMARK_BROADCAST_STREAM = os.environ.get("POSTMARK_BROADCAST_STREAM", "")
 # Replies to recruitment email land back here when Postmark's inbound
 # stream is pointed at /webhooks/inbound-email/<this token>. Unset means
 # the endpoint isn't there at all.
