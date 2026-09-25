@@ -1549,3 +1549,77 @@ def test_without_a_mailbox_configured_recruitment_still_goes_through_postmark(is
     prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
     partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
     assert sent, "it should still have gone out through Postmark"
+
+
+# ------------------------------------------------- the outreach mailbox ---
+
+
+def test_the_mailbox_is_set_from_the_admin_and_the_password_is_sealed(isolated_db, test_keypair, fake_smtp, admin_password_configured, monkeypatch):
+    """Set here rather than on the host, so it can be changed and tested
+    without a redeploy — and the password is sealed with the same key that
+    seals partners' tax forms."""
+    from app import outreach_mailbox
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        client.post("/admin/partners/mailbox", data={
+            "host": "smtp.office365.com", "port": "587", "username": "ashley@trypiperstitch.com",
+            "password": "hunter2", "from_email": "Ashley <ashley@trypiperstitch.com>",
+            "reply_to": "replies@trypiperstitch.com"}, follow_redirects=False)
+
+    s = outreach_mailbox.settings()
+    assert s["source"] == "admin" and s["host"] == "smtp.office365.com" and s["has_password"]
+    assert "password" not in s, "the form must never be handed the secret back"
+    raw = db.get_setting("outreach_mailbox")
+    assert "hunter2" not in raw, "the password must not sit in the database in the clear"
+    assert outreach_mailbox._password() == "hunter2"
+
+
+def test_editing_the_mailbox_without_retyping_the_password_keeps_it(isolated_db, test_keypair, fake_smtp, admin_password_configured):
+    from app import outreach_mailbox
+    outreach_mailbox.save(host="smtp.gmail.com", port=587, username="a@b.co", password="secret",
+                          from_email="A <a@b.co>", reply_to="")
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        client.post("/admin/partners/mailbox", data={
+            "host": "smtp.gmail.com", "port": "587", "username": "a@b.co", "password": "",
+            "from_email": "A <a@b.co>", "reply_to": "replies@b.co"}, follow_redirects=False)
+    assert outreach_mailbox._password() == "secret"
+    assert outreach_mailbox.settings()["reply_to"] == "replies@b.co"
+
+
+def test_the_admin_mailbox_beats_the_environment_and_can_be_given_back(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    from app import outreach_mailbox
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_HOST", "smtp.from-env.com")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_FROM", "Env <env@example.com>")
+    assert outreach_mailbox.settings()["host"] == "smtp.from-env.com"
+
+    outreach_mailbox.save(host="smtp.office365.com", port=587, username="a@b.co", password="p",
+                          from_email="A <a@b.co>", reply_to="")
+    assert outreach_mailbox.settings()["host"] == "smtp.office365.com"
+
+    outreach_mailbox.forget()
+    assert outreach_mailbox.settings()["host"] == "smtp.from-env.com", "clearing it falls back to the environment"
+
+
+def test_recruitment_goes_out_of_the_admin_set_mailbox(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    import smtplib
+    from app import outreach_mailbox, partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    outreach_mailbox.save(host="smtp.office365.com", port=587, username="ashley@trypiperstitch.com",
+                          password="p", from_email="Ashley <ashley@trypiperstitch.com>", reply_to="")
+    seen = {}
+
+    class Mailbox:
+        def __init__(self, host, port, timeout=None): seen["host"] = host
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def starttls(self): pass
+        def login(self, u, p): seen["user"], seen["pass"] = u, p
+        def send_message(self, msg): seen["from"] = str(msg["From"])
+
+    monkeypatch.setattr(smtplib, "SMTP", Mailbox)
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    assert seen["host"] == "smtp.office365.com" and seen["pass"] == "p"
+    assert "trypiperstitch.com" in seen["from"]

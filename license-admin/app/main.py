@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import activation, analytics, auth, backups, config, db, documents, email_sender, emails, errors, finance, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
+from . import activation, analytics, auth, backups, config, db, documents, email_sender, emails, errors, finance, outreach_mailbox, partners, project_view, promotions, ratelimit, referrals, stripe_client, subscriptions, web_access, website_publish
 
 log = logging.getLogger("license_admin")
 
@@ -2239,7 +2239,8 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "code_requests": db.list_code_requests(), "resources": db.list_partner_resources(), "partner_feedback": db.list_partner_feedback(limit=25),
         "recruits": db.list_recruits(), "recruit_counts": db.recruitment_counts(), "pending_documents": db.list_partner_documents(pending_only=True),
         "replies": db.prospects_with_unanswered_replies(),
-        "outreach_steps": partners.OUTREACH_STEPS, "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
+        "outreach_steps": partners.OUTREACH_STEPS, "mailbox": outreach_mailbox.settings(),
+        "outreach_paused": config.PARTNER_OUTREACH_PAUSED, "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
     })
@@ -2475,6 +2476,35 @@ def admin_partner_resource_announce(resource_id: int):
     except partners.PartnerError as e:
         return _partners_redirect(error=e.message, anchor="kit")
     return _partners_redirect(message=f"Queued — {waiting} partner{'' if waiting == 1 else 's'} will hear within a few minutes.", anchor="kit")
+
+
+@app.post("/admin/partners/mailbox", dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox(host: str = Form(""), port: str = Form("587"), username: str = Form(""),
+                           password: str = Form(""), from_email: str = Form(""), reply_to: str = Form(""),
+                           clear: str = Form("")):
+    """The mailbox recruitment goes out of, set here rather than on the host
+    so it can be changed and tested without a redeploy."""
+    if clear:
+        outreach_mailbox.forget()
+        return _partners_redirect(message="Recruitment is back on Postmark, and on whatever the environment says.", anchor="recruit")
+    if not (host.strip() and username.strip() and from_email.strip()):
+        return _partners_redirect(error="The server, the username and the sender are all needed.", anchor="recruit")
+    outreach_mailbox.save(host=host, port=int(port) if port.strip().isdigit() else 587, username=username,
+                          password=password, from_email=from_email, reply_to=reply_to)
+    problem = outreach_mailbox.check()
+    if problem:
+        return _partners_redirect(error=f"Saved, but the mailbox didn't accept it. {problem}", anchor="recruit")
+    return _partners_redirect(message="Saved, and the mailbox signed in. Recruitment will go out through it.", anchor="recruit")
+
+
+@app.post("/admin/partners/mailbox/test", dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox_test():
+    """Sign in to the mailbox without sending anything, so a wrong password
+    is found here rather than by a prospect never hearing from us."""
+    problem = outreach_mailbox.check()
+    if problem:
+        return _partners_redirect(error=problem, anchor="recruit")
+    return _partners_redirect(message=f"Signed in to {outreach_mailbox.settings()['host']}. Recruitment can go out through it.", anchor="recruit")
 
 
 @app.post("/admin/partners/recruit", dependencies=[Depends(auth.require_admin)])

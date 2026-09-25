@@ -193,10 +193,8 @@ PARTNER_OUTREACH_SMTP_PORT = _int("PARTNER_OUTREACH_SMTP_PORT", 587)
 PARTNER_OUTREACH_SMTP_USERNAME = os.environ.get("PARTNER_OUTREACH_SMTP_USERNAME", "")
 PARTNER_OUTREACH_SMTP_PASSWORD = os.environ.get("PARTNER_OUTREACH_SMTP_PASSWORD", "")
 
-
-def outreach_mailbox_configured() -> bool:
-    """A mailbox of our own is ready to carry recruitment mail."""
-    return bool(PARTNER_OUTREACH_SMTP_HOST and PARTNER_OUTREACH_SMTP_USERNAME and PARTNER_OUTREACH_FROM)
+# Whether one is actually usable is decided in outreach_mailbox.py, which
+# also reads the admin's own settings; these remain the fallback.
 # Replies to recruitment email land back here when Postmark's inbound
 # stream is pointed at /webhooks/inbound-email/<this token>. Unset means
 # the endpoint isn't there at all.

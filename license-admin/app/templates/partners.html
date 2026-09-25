@@ -65,6 +65,45 @@
       Everyone keeps their place and their due date, and people can still register themselves on the site.
       Reconnect with <code>PARTNER_OUTREACH_PAUSED=false</code> once the new sender is live &mdash; re-space the due dates first, or everything overdue goes out at once.</div>{% endif %}
     <p class="muted small" style="margin-top:0">Paste a list or upload a CSV and the approach runs itself: {{ outreach_steps|length }} emails over {{ outreach_steps[-1].delay_days }} days &mdash; the offer, how it works, what it adds up to, and one last note &mdash; each carrying their own link into the program details and a one-click way to stop. It stops by itself the moment they apply or say no.</p>
+    {% if outreach_paused %}<p class="action-hint" style="margin-bottom:10px"><b>Recruitment is held.</b> Nothing goes out &mdash; not the scheduled follow-ups, not a send from this page &mdash; until <span class="mono">PARTNER_OUTREACH_PAUSED</span> is set to false. Set the mailbox up first, then lift it.</p>{% endif %}
+    <details class="hookset"{% if mailbox.source == 'environment' and not mailbox.host %} open{% endif %}>
+      <summary>Where recruitment sends from &mdash; {% if mailbox.host %}{{ mailbox.host }}{% else %}Postmark (not moved yet){% endif %}</summary>
+      <p>Postmark&rsquo;s terms allow only mail people asked for, and one spam complaint in a hundred cold sends is ten
+         times their stated limit &mdash; against the account that also carries sign-in codes and proof links. Sending
+         recruitment out of a mailbox you own keeps the two apart.</p>
+      <p class="muted small"><b>Google Workspace:</b> <span class="mono">smtp.gmail.com</span>, port 587, an App Password
+         (the account needs 2-Step Verification for one to exist). <b>Microsoft 365:</b>
+         <span class="mono">smtp.office365.com</span>, port 587, the mailbox password, with SMTP AUTH enabled for that
+         mailbox &mdash; Microsoft turns that off by default at the end of December 2026.</p>
+      <form method="post" action="/admin/partners/mailbox">
+        <div class="row">
+          <div><label>Server</label><input type="text" name="host" value="{{ mailbox.host }}" placeholder="smtp.office365.com"></div>
+          <div style="flex:0 0 110px"><label>Port</label><input type="text" name="port" value="{{ mailbox.port }}"></div>
+        </div>
+        <div class="row">
+          <div><label>Username</label><input type="text" name="username" value="{{ mailbox.username }}" placeholder="ashley@yourdomain.com"></div>
+          <div><label>Password {% if mailbox.has_password %}<span class="muted">&mdash; one is stored; leave blank to keep it</span>{% endif %}</label>
+            <input type="password" name="password" autocomplete="new-password" placeholder="{{ '••••••••' if mailbox.has_password else '' }}"></div>
+        </div>
+        <div class="row">
+          <div><label>Send as</label><input type="text" name="from_email" value="{{ mailbox.from_email }}" placeholder="Ashley at PiperStitch &lt;ashley@yourdomain.com&gt;"></div>
+          <div><label>Replies go to <span class="muted">&mdash; leave blank and replies land in the mailbox instead of here</span></label>
+            <input type="text" name="reply_to" value="{{ mailbox.reply_to }}"></div>
+        </div>
+        <div class="actions" style="margin-top:10px">
+          <button class="btn primary" type="submit">Save and sign in</button>
+        </div>
+      </form>
+      <div class="actions" style="margin-top:8px">
+        <form method="post" action="/admin/partners/mailbox/test"><button class="btn">Test the sign-in</button></form>
+        {% if mailbox.source == 'admin' %}<form method="post" action="/admin/partners/mailbox"><input type="hidden" name="clear" value="1"><button class="btn ghost">Back to Postmark</button></form>{% endif %}
+      </div>
+      <p class="muted small"><b>What it costs.</b> A mailbox hands back no message id, so opens and clicks stop being
+         recorded for anything sent this way. Replies keep reaching this page only while &ldquo;replies go to&rdquo; points at
+         Postmark&rsquo;s inbound address; point it at a real inbox and you read them there instead. Send 10&ndash;20 a day
+         from one mailbox &mdash; more looks like bulk to Google and Microsoft both.</p>
+    </details>
+
     <details class="hookset">
       <summary>Open and click tracking &mdash; one URL to paste into Postmark</summary>
       <p>Postmark reports an open or a click back to us here. Until this URL is in place, the

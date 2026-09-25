@@ -37,18 +37,13 @@ def _send_via_outreach_mailbox(msg: EmailMessage) -> str:
     a mailbox reports no message id, so opens and clicks stop being
     recorded for anything sent this way.
     """
+    from . import outreach_mailbox
+
     try:
-        if config.PARTNER_OUTREACH_SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(config.PARTNER_OUTREACH_SMTP_HOST, config.PARTNER_OUTREACH_SMTP_PORT, timeout=20) as smtp:
-                smtp.login(config.PARTNER_OUTREACH_SMTP_USERNAME, config.PARTNER_OUTREACH_SMTP_PASSWORD)
-                smtp.send_message(msg)
-        else:
-            with smtplib.SMTP(config.PARTNER_OUTREACH_SMTP_HOST, config.PARTNER_OUTREACH_SMTP_PORT, timeout=20) as smtp:
-                smtp.starttls()
-                smtp.login(config.PARTNER_OUTREACH_SMTP_USERNAME, config.PARTNER_OUTREACH_SMTP_PASSWORD)
-                smtp.send_message(msg)
+        with outreach_mailbox.connect() as smtp:
+            smtp.send_message(msg)
     except (smtplib.SMTPException, OSError) as e:
-        raise EmailSendError(f"{config.PARTNER_OUTREACH_SMTP_HOST}: {e}") from e
+        raise EmailSendError(f"{outreach_mailbox.settings()['host']}: {e}") from e
     return ""
 
 
@@ -63,8 +58,10 @@ def _send_smtp(msg: EmailMessage, *, stream: str = "", from_email: str = "", mai
     Returns the provider's message id where there is one (Postmark), and an
     empty string otherwise. Opens and clicks are reported against that id
     later, so it is the only thread tying an event back to a send."""
-    if mailbox and config.outreach_mailbox_configured() and not config.EMAIL_OUTBOX_DIR:
-        return _send_via_outreach_mailbox(msg)
+    if mailbox and not config.EMAIL_OUTBOX_DIR:
+        from . import outreach_mailbox
+        if outreach_mailbox.configured():
+            return _send_via_outreach_mailbox(msg)
     if config.EMAIL_OUTBOX_DIR:
         import logging, time
         from pathlib import Path
@@ -254,13 +251,15 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
 
     The first step leads with the programme graphic, full width and linked
     to the details; the later steps are words alone."""
-    from . import db
-    if not config.PARTNER_OUTREACH_FROM:
-        # See config.PARTNER_OUTREACH_FROM: no fallback to SMTP_FROM, on
-        # purpose. Cold mail does not go out over the address that carries
-        # license keys, and the way to guarantee that is to have no send
-        # path that can reach it by default.
-        raise EmailSendError("Recruitment email has no sender of its own yet — set PARTNER_OUTREACH_FROM to an address on the outreach domain.")
+    from . import db, outreach_mailbox
+    mailbox = outreach_mailbox.settings()
+    if not mailbox["from_email"]:
+        # No fallback to SMTP_FROM, on purpose. Cold mail does not go out
+        # over the address that carries license keys, and the way to
+        # guarantee that is to have no send path that can reach it by
+        # default.
+        raise EmailSendError("Recruitment email has no sender of its own yet — set the outreach mailbox on the Partners page, "
+                             "or PARTNER_OUTREACH_FROM to an address on the outreach domain.")
     e = _emails()
     vars = _partner_vars(partner_name, to_email, url=url, apply_url=apply_url, opt_out_url=opt_out_url,
                          video_url=video_url, join_url=join_url, trial_url=trial_url or f"{config.WEB_APP_URL}/?trial=1")
@@ -271,7 +270,7 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
     lead = key == "partner_outreach_1"
     message_id = e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
                   broadcast=True, unsubscribe_url=opt_out_url,
-                  from_email=config.PARTNER_OUTREACH_FROM, reply_to=config.PARTNER_OUTREACH_REPLY_TO,
+                  from_email=mailbox["from_email"], reply_to=mailbox["reply_to"],
                   hero_image=f"{config.WEBSITE_BASE_URL}{PARTNER_INTRO_IMAGE}" if lead else "",
                   hero_alt=PARTNER_INTRO_ALT if lead else "", hero_url=url if lead else "", hero_full=lead,
                   hero_kicker=PARTNER_INTRO_KICKER if lead else "",
