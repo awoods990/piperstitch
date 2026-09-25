@@ -606,6 +606,56 @@ do {
     print("Objects: \(objects.count)  Stitches: \(plan.stitchCount)  Colors: \(colors.count)  Color changes: \(plan.colorChangeCount)  Trims: \(plan.trimCount)")
     print("Max stitch length: \(String(format: "%.2f", plan.maxStitchLength()))mm  Total thread: \(String(format: "%.0f", plan.totalStitchLength))mm  Est. run time: \(RunTimeEstimator.estimate(plan).formatted) at \(Int(RunTimeEstimator.defaultStitchesPerMinute)) spm")
     print("Readiness: \(report.score)/100 (\(report.isReadyToSew ? "Ready to Sew" : "Review Recommended"))")
+    if ProcessInfo.processInfo.environment["DEBUG_SHAPELOSS"] != nil {
+        for (index, pieces) in fittedPieces.enumerated() where !pieces.isEmpty {
+            let before = pieces.reduce(0.0) { total, piece in
+                total + piece.subPaths.reduce(0.0) { $0 + abs(PolygonGeometry.signedArea($1.points)) }
+            }
+            // Objects carry no back-reference, so match on overlap: the
+            // object whose box sits inside this piece's.
+            let box = pieces[0].boundingBox
+            let after = objects.filter { object in
+                let b = object.shape.boundingBox
+                return b.minX >= box.minX - 0.5 && b.maxX <= box.maxX + 0.5 && b.minY >= box.minY - 0.5 && b.maxY <= box.maxY + 0.5
+            }.reduce(0.0) { total, object in
+                total + object.shape.subPaths.reduce(0.0) { $0 + abs(PolygonGeometry.signedArea($1.points)) }
+            }
+            if before > 1, after < before * 0.97 {
+                print(String(format: "  shape %d: %.1f mm2 imported -> %.1f mm2 in objects (%.0f%% lost before any stitch)",
+                             index, before, after, (before - after) / before * 100))
+            }
+        }
+    }
+    // A design-level coverage check: every stitch against the artwork as
+    // imported, not against each object's own (possibly already reduced)
+    // shape. Tells apart "the generator missed" from "the shape lost its
+    // ends before any generator saw it".
+    if ProcessInfo.processInfo.environment["DEBUG_COVERAGE"] != nil {
+        var runs: [[Point2D]] = []
+        var current: [Point2D] = []
+        for command in plan.commands {
+            switch command {
+            case .stitch(let p): current.append(p)
+            default:
+                if current.count > 1 { runs.append(current) }
+                current = []
+            }
+        }
+        if current.count > 1 { runs.append(current) }
+        for (index, pieces) in fittedPieces.enumerated() where !pieces.isEmpty {
+            guard !droppedShapeIndices.contains(index) else { continue }
+            for piece in pieces {
+                let missing = CoverageBackstop.missingRegions(in: piece, covered: runs)
+                let area = missing.reduce(0.0) { $0 + ($1.subPaths.first.map { abs(PolygonGeometry.signedArea($0.points)) } ?? 0) }
+                let whole = piece.subPaths.reduce(0.0) { $0 + abs(PolygonGeometry.signedArea($1.points)) }
+                if area > 0.5, whole > 0 {
+                    let box = piece.boundingBox
+                    print(String(format: "  uncovered: shape %d, %.1f of %.1f mm2 (%.0f%%) bare, at (%.0f,%.0f)-(%.0f,%.0f)",
+                                 index, area, whole, area / whole * 100, box.minX, box.minY, box.maxX, box.maxY))
+                }
+            }
+        }
+    }
     if ProcessInfo.processInfo.environment["PROFILE"] != nil { printProfile(plan) }
     if ProcessInfo.processInfo.environment["DUMP_PLAN"] != nil {
         for (i, c) in plan.commands.enumerated() {

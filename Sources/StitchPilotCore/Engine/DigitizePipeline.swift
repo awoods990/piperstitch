@@ -276,7 +276,7 @@ public enum DigitizePipeline {
         var mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM) + hairlineRuns
         // Whatever the plan was, check it against the shape it was for and
         // sew what it missed -- see `CoverageBackstop`.
-        mainRuns += coverageBackstopRuns(for: object, covering: mainRuns, breakThresholdMM: breakThresholdMM)
+        applyCoverageBackstop(to: &mainRuns, for: object, breakThresholdMM: breakThresholdMM)
         guard object.isApplique else { return mainRuns }
         // Placement + tack-down sew first, as their own separate runs --
         // `flattenWithColors` already trims and jumps between an object's
@@ -292,11 +292,17 @@ public enum DigitizePipeline {
     /// The parts of an object its own stitching never reached, sewn. A
     /// running stitch is a line and covers nothing by design, so it is not
     /// asked; everything meant to be solid is.
-    private static func coverageBackstopRuns(for object: EmbroideryObject, covering runs: [[Point2D]],
-                                             breakThresholdMM: Double) -> [[Point2D]] {
-        guard CoverageBackstop.isEnabled, !runs.isEmpty else { return [] }
+    ///
+    /// Appends in place rather than returning the new runs: a pocket next
+    /// to stitching is joined onto the run that is already there, so the
+    /// fill lands *inside* an existing run and there is no suffix to
+    /// return. Returning one silently discarded exactly the fills that
+    /// worked best -- the ones that cost no trim.
+    private static func applyCoverageBackstop(to runs: inout [[Point2D]], for object: EmbroideryObject,
+                                              breakThresholdMM: Double) {
+        guard CoverageBackstop.isEnabled, !runs.isEmpty else { return }
         switch object.stitchType {
-        case .runningStitch, .tripleRun: return []
+        case .runningStitch, .tripleRun: return
         case .satin, .tatamiFill: break
         }
         // A pocket sits inside stitching that is already there, so the
@@ -306,9 +312,9 @@ public enum DigitizePipeline {
         // gaps were.
         let polygons = object.shape.subPaths.map { $0.points }
         var joined = runs
-        let before = joined.count
         for pocket in CoverageBackstop.missingRegions(in: object.shape, covered: runs) {
             let mark = joined.count
+            let tailBefore = joined.last?.count ?? 0
             for run in TatamiFillGenerator.generateRuns(for: pocket, parameters: object.parameters,
                                                         breakThresholdMM: breakThresholdMM) {
                 appendJoiningIfCovered(run, to: &joined, polygons: polygons, breakThresholdMM: breakThresholdMM)
@@ -318,12 +324,21 @@ public enum DigitizePipeline {
             // machine operator more than the gap costs the eye, and a
             // design's trim count is itself something we report on.
             let area = pocket.subPaths.first.map { abs(PolygonGeometry.signedArea($0.points)) } ?? 0
-            if joined.count > mark, area < CoverageBackstop.worthATrimMM2 {
+            let needsTrim = joined.count > mark
+            if needsTrim, area < CoverageBackstop.worthATrimMM2 {
                 joined.removeSubrange(mark...)
+                if joined.count == mark, joined.indices.contains(mark - 1) {
+                    joined[mark - 1] = Array(joined[mark - 1].prefix(tailBefore))
+                }
+            }
+            if ProcessInfo.processInfo.environment["DEBUG_BACKSTOP"] != nil {
+                let box = pocket.boundingBox
+                print(String(format: "    pocket %.1f mm2 (%.1f x %.1f) at (%.1f,%.1f) %@",
+                             area, box.width, box.height, box.minX, box.minY,
+                             needsTrim ? (area < CoverageBackstop.worthATrimMM2 ? "SKIPPED (needs a trim, too small)" : "filled, after a trim") : "filled"))
             }
         }
-        guard joined.count >= before else { return [] }
-        return Array(joined.dropFirst(runs.count))
+        runs = joined
     }
 
     private static func rawMainStitchRuns(for object: EmbroideryObject, breakThresholdMM: Double) throws -> [[Point2D]] {
