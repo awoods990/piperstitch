@@ -111,6 +111,59 @@ public enum GlyphColumnExtractor {
             out.append(SatinColumn(railA: run.map { $0.a }, railB: run.map { $0.b }))
             claimed.append(contentsOf: middles)
         }
+        return ordered(out, polygons: polygons)
+    }
+
+    /// Sew the columns in an order a hand would use: whichever is nearest
+    /// to where the last one finished, reversed if that end is nearer.
+    ///
+    /// They come out of the search in the order they claimed their ground,
+    /// which is by how stroke-like they are and so spatially arbitrary --
+    /// an E's middle bar, then its foot, then its stem. Every jump that
+    /// leaves the ink is a thread cut, and sewing them in reading order
+    /// turns most of those jumps into a short walk under stitching that is
+    /// already there.
+    private static func ordered(_ columns: [SatinColumn], polygons: [[Point2D]]) -> [SatinColumn] {
+        guard columns.count > 2 else { return columns }
+        // What decides a thread cut is not how far the next column is but
+        // whether the walk to it stays in the ink -- `joinedRuns` joins a
+        // hop that stays on the shape however long it is, and cuts one
+        // that leaves it however short. Ordering by distance alone made it
+        // worse: the nearest column is often across a counter.
+        func walkable(_ from: Point2D, _ to: Point2D) -> Bool {
+            let steps = 8
+            for i in 0...steps {
+                let t = Double(i) / Double(steps)
+                let point = Point2D(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
+                if !PolygonGeometry.pointInPolygons(point, polygons: polygons) { return false }
+            }
+            return true
+        }
+        func start(_ c: SatinColumn) -> Point2D { c.railA.first ?? Point2D(0, 0) }
+        func end(_ c: SatinColumn) -> Point2D { c.railB.last ?? c.railA.last ?? Point2D(0, 0) }
+        func reversed(_ c: SatinColumn) -> SatinColumn {
+            SatinColumn(railA: c.railA.reversed(), railB: c.railB.reversed(), travelOut: c.travelOut)
+        }
+        var remaining = columns
+        var out: [SatinColumn] = [remaining.removeFirst()]
+        while !remaining.isEmpty {
+            let here = end(out[out.count - 1])
+            var bestIndex = 0, bestFlip = false
+            var best = (walk: false, distance: Double.infinity)
+            for (index, candidate) in remaining.enumerated() {
+                for flip in [false, true] {
+                    let target = flip ? end(candidate) : start(candidate)
+                    let distance = here.distance(to: target)
+                    let walk = walkable(here, target)
+                    // A walk beats any jump; between two of a kind, nearer.
+                    if (walk && !best.walk) || (walk == best.walk && distance < best.distance) {
+                        best = (walk, distance); bestIndex = index; bestFlip = flip
+                    }
+                }
+            }
+            let picked = remaining.remove(at: bestIndex)
+            out.append(bestFlip ? reversed(picked) : picked)
+        }
         return out
     }
 

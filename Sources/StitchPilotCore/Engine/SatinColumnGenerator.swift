@@ -3296,15 +3296,33 @@ extension SatinColumnGenerator {
         return joinedRuns(pieces, polygons: polygons)
     }
 
+    /// How far a connector may travel around inside the shape rather than
+    /// be cut. Beyond this the walk costs more thread than the trim costs
+    /// time, and it has to cross ground the stitching may not cover.
+    private static let routedConnectorLimitMM = 12.0
+
     private static func joinedRuns(_ pieces: [[Point2D]], polygons: [[Point2D]]) -> [[Point2D]] {
         var runs: [[Point2D]] = []
         for piece in pieces where !piece.isEmpty {
-            if let last = runs.last?.last,
-               last.distance(to: piece[0]) <= DigitizePipeline.visibleConnectorMM || hopStaysOnShape(from: last, to: piece[0], polygons: polygons) {
+            guard let last = runs.last?.last else { runs.append(piece); continue }
+            if last.distance(to: piece[0]) <= DigitizePipeline.visibleConnectorMM
+                || hopStaysOnShape(from: last, to: piece[0], polygons: polygons) {
                 runs[runs.count - 1].append(contentsOf: piece)
-            } else {
-                runs.append(piece)
+                continue
             }
+            // The straight line leaves the shape -- a T's bar to its stem
+            // goes out over the corner -- but the ink itself connects the
+            // two, so the thread can walk around inside it. Cutting here
+            // cost a trim per letter for no reason other than that nobody
+            // looked for the way round.
+            if let route = TatamiFillGenerator.routeAlongBoundary(from: last, to: piece[0], polygons: polygons,
+                                                                  insetMM: 0.3, allowWaypoints: true,
+                                                                  maxLengthMM: routedConnectorLimitMM) {
+                runs[runs.count - 1].append(contentsOf: route)
+                runs[runs.count - 1].append(contentsOf: piece)
+                continue
+            }
+            runs.append(piece)
         }
         return runs
     }

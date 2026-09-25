@@ -265,14 +265,10 @@ if args.count >= 4, args[1] == "--build-glyph-library" {
                 // out -- and it means no letter can come out worse than it
                 // did before, because the old plan is one of the two.
                 let reconstructed = (try? SatinColumnGenerator.columnPlanWithFallback(for: piece, parameters: parameters)) ?? []
-                // Opt-in while the sewing order catches up with the
-                // geometry: the columns this reads off the outline cover
-                // the letter (99%+ where the skeleton managed 80), but
-                // they come out as many small columns and the travel
-                // between them crosses an E's counters. Correct shape,
-                // wrong journey -- so it is not the default yet.
-                let readOff = ProcessInfo.processInfo.environment["GLYPH_COLUMNS"] == "outline"
-                    ? GlyphColumnExtractor.columns(for: piece) : []
+                // GLYPH_COLUMNS=skeleton goes back to inferring them, for
+                // comparing the two on a font.
+                let readOff = ProcessInfo.processInfo.environment["GLYPH_COLUMNS"] == "skeleton"
+                    ? [] : GlyphColumnExtractor.columns(for: piece)
                 func score(_ plan: [SatinColumn]) -> Double {
                     guard !plan.isEmpty else { return -1 }
                     let measured = GlyphColumnExtractor.coverage(of: plan, in: piece)
@@ -369,7 +365,7 @@ if args.count >= 4, args[1] == "--glyph-sheet" {
         print("Render failed"); exit(1)
     }
     try png.write(to: URL(fileURLWithPath: args[3]))
-    print("\(font.fontID) at \(capMM) mm: \(objects.count) glyphs, \(plan.stitchCount) stitches -> \(args[3])")
+    print("\(font.fontID) at \(capMM) mm: \(objects.count) glyphs, \(plan.stitchCount) stitches, \(plan.trimCount) trims -> \(args[3])")
     exit(0)
 }
 
@@ -430,7 +426,7 @@ if args.count >= 5, args[1] == "--lettering-preview" {
     let widthMM = combined.width + 10, heightMM = combined.height + 10
     let doc = StitchDocument(name: text, physicalWidthMM: widthMM, physicalHeightMM: heightMM, objects: objects)
     let plan = try DigitizePipeline.flatten(doc)
-    print("Stitch count: \(plan.stitchCount)")
+    print("Stitch count: \(plan.stitchCount), trims: \(plan.trimCount)")
     var options = StitchRenderer.Options()
     options.pixelsPerMM = previewPixelsPerMM
     guard let pngData = StitchRenderer.renderPNGData(plan, widthMM: widthMM, heightMM: heightMM, colors: [.generic(RGBColor(hex: 0x1144AA))], options: options) else {
