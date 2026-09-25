@@ -116,7 +116,7 @@ export default function SetupFlow(props: Props) {
   // Letter heights at the chosen size, and the size at which the smallest
   // line would sew as traced.
   const scale = props.sourceBounds ? textLineScale(props.sourceBounds, a.widthMM, a.heightMM) : 0;
-  const minCap = minimumCapHeightMM(a.threadWeight);
+  const minCap = minimumCapHeightMM(a.threadWeight, props.catalog.minimumCapHeightMM);
   const capMM = (line: TextLine) => line.capHeightPixels * scale;
   const smallLines = textLines.filter((l) => capMM(l) < minCap);
   const widthForAllText = useMemo(() => {

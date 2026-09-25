@@ -176,6 +176,8 @@ export interface Catalog {
   underlayTypes: UnderlayType[];
   exportFormats: string[];
   defaultParameters: StitchGenerationParameters;
+  /** Shortest capital that sews, per thread weight, from the engine. */
+  minimumCapHeightMM?: Record<string, number>;
 }
 
 // --- accounts (server/Sources/StitchPilotServer/Auth.swift) ---

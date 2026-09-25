@@ -4,11 +4,20 @@
 
 import type { BoundingBox, ThreadWeight } from "./types";
 
-export function minimumCapHeightMM(weight: ThreadWeight): number {
+/**
+ * The engine serves these on the catalog; pass them in. The fallback is
+ * only for the moment before the catalog has loaded -- this file used to
+ * hold the numbers itself, the engine's floor was raised, and for a week
+ * the setup promised customers that a 4.5 mm line would sew as traced
+ * while the engine had already decided it would not.
+ */
+export function minimumCapHeightMM(weight: ThreadWeight, fromEngine?: Record<string, number>): number {
+  const served = fromEngine?.[weight];
+  if (typeof served === "number" && served > 0) return served;
   switch (weight) {
-    case "wt30": return 5;
-    case "wt60": case "wt80": return 3;
-    default: return 4;
+    case "wt30": return 6;
+    case "wt60": case "wt80": return 4;
+    default: return 5;
   }
 }
 

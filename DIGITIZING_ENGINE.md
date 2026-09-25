@@ -1260,8 +1260,8 @@ traced is kept unless the user says otherwise.
 
 **Leaving it out whole.** `DocumentBuilder.build` (server) and the CLI
 drop every line whose cap height at the chosen size is under
-`TextLineFinder.minimumCapHeightMM` (4 mm for 40-weight, 3 mm for 60 and
-80, 5 mm for 30) and record the count on `StitchDocument.
+`TextLineFinder.minimumCapHeightMM` (5 mm for 40-weight, 4 mm for 60 and
+80, 6 mm for 30 -- raised September 2026, see the note there) and record the count on `StitchDocument.
 omittedTextLines`; `QualityAnalyzer` says so and points at the Text step.
 Fragments were the worst outcome in the batch; a clean omission with a
 reason is strictly better. Sarasota at 100 mm: 117 objects and 38 trims

@@ -121,7 +121,10 @@ func routes(_ app: Application) throws {
             fillPatterns: FillPattern.allCases.map { CatalogNamed(id: $0.rawValue, displayName: $0.displayName) },
             underlayTypes: UnderlayType.allCases.map(\.rawValue),
             exportFormats: ExportFormat.allCases.map(\.rawValue),
-            defaultParameters: StitchGenerationParameters()
+            defaultParameters: StitchGenerationParameters(),
+            minimumCapHeightMM: Dictionary(uniqueKeysWithValues: ThreadWeight.allCases.map {
+                ($0.rawValue, TextLineFinder.minimumCapHeightMM(for: $0))
+            })
         )
     }
 

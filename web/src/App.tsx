@@ -325,7 +325,7 @@ export default function App() {
     if (!decisions) return doc;
     const bounds = imp.response.source.bounds;
     const scale = textLineScale(bounds, a.widthMM, a.heightMM);
-    const minCap = minimumCapHeightMM(a.threadWeight);
+    const minCap = minimumCapHeightMM(a.threadWeight, catalog?.minimumCapHeightMM);
     for (let i = 0; i < lines.length; i++) {
       const d = decisions[i], line = lines[i];
       if (d.action !== "retype" || !d.text.trim()) continue;

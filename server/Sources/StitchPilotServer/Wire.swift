@@ -171,6 +171,12 @@ struct CatalogResponse: Content {
     var underlayTypes: [String]
     var exportFormats: [String]
     var defaultParameters: StitchGenerationParameters
+    /// The shortest capital that sews, per thread weight. Served rather
+    /// than duplicated in the client: the web app kept its own copy, the
+    /// engine's floor was raised, and for a week the setup told customers
+    /// a 4.5 mm line would sew as traced while the engine had already
+    /// decided it would not.
+    var minimumCapHeightMM: [String: Double]
 }
 
 extension StitchGenerationParameters: Content {}
