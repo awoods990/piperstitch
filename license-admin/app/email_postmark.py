@@ -26,7 +26,8 @@ class PostmarkError(Exception):
 
 
 def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "",
-                        attachments: Optional[list] = None, stream: str = "", headers: Optional[list] = None) -> str:
+                        attachments: Optional[list] = None, stream: str = "", headers: Optional[list] = None,
+                        from_email: str = "") -> str:
     """`attachments`: [(filename, bytes, content_type)].
 
     Returns Postmark's MessageID. It is what ties an open or a click
@@ -34,7 +35,7 @@ def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_bod
     address alone could not tell which of four sequence emails was the
     one they opened."""
     payload = {
-        "From": config.POSTMARK_FROM or config.SMTP_FROM,
+        "From": from_email or config.POSTMARK_FROM or config.SMTP_FROM,
         "To": to_email,
         "Subject": subject,
         "TextBody": text_body,

@@ -27,7 +27,7 @@ class EmailSendError(Exception):
     subscription update."""
 
 
-def _send_smtp(msg: EmailMessage, *, stream: str = "") -> str:
+def _send_smtp(msg: EmailMessage, *, stream: str = "", from_email: str = "") -> str:
     """Despite the name, the one send path: Postmark's HTTP API when
     POSTMARK_API_TOKEN is set, plain SMTP otherwise -- or, in development,
     a file in EMAIL_OUTBOX_DIR.
@@ -62,6 +62,9 @@ def _send_smtp(msg: EmailMessage, *, stream: str = "") -> str:
                 attachments=attachments or None,
                 stream=stream,
                 headers=extra or None,
+                # Postmark builds its own payload rather than posting the
+                # composed message, so the sender has to travel separately.
+                from_email=from_email,
             )
         except email_postmark.PostmarkError as e:
             raise EmailSendError(str(e)) from e
@@ -82,10 +85,11 @@ def _send_smtp(msg: EmailMessage, *, stream: str = "") -> str:
     return ""                       # plain SMTP reports nothing back to tie events to
 
 
-def _compose(*, to_email: str, subject: str, body: str, html_body: str, reply_to: str = "", unsubscribe_url: str = "") -> EmailMessage:
+def _compose(*, to_email: str, subject: str, body: str, html_body: str, reply_to: str = "", unsubscribe_url: str = "",
+             from_email: str = "") -> EmailMessage:
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = config.SMTP_FROM
+    msg["From"] = from_email or config.SMTP_FROM
     msg["To"] = to_email
     if reply_to or config.REPLY_TO_EMAIL:
         msg["Reply-To"] = reply_to or config.REPLY_TO_EMAIL
@@ -221,6 +225,12 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
     The first step leads with the programme graphic, full width and linked
     to the details; the later steps are words alone."""
     from . import db
+    if not config.PARTNER_OUTREACH_FROM:
+        # See config.PARTNER_OUTREACH_FROM: no fallback to SMTP_FROM, on
+        # purpose. Cold mail does not go out over the address that carries
+        # license keys, and the way to guarantee that is to have no send
+        # path that can reach it by default.
+        raise EmailSendError("Recruitment email has no sender of its own yet — set PARTNER_OUTREACH_FROM to an address on the outreach domain.")
     e = _emails()
     vars = _partner_vars(partner_name, to_email, url=url, apply_url=apply_url, opt_out_url=opt_out_url,
                          video_url=video_url, join_url=join_url, trial_url=trial_url or f"{config.WEB_APP_URL}/?trial=1")
@@ -231,6 +241,7 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
     lead = key == "partner_outreach_1"
     message_id = e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
                   broadcast=True, unsubscribe_url=opt_out_url,
+                  from_email=config.PARTNER_OUTREACH_FROM, reply_to=config.PARTNER_OUTREACH_REPLY_TO,
                   hero_image=f"{config.WEBSITE_BASE_URL}{PARTNER_INTRO_IMAGE}" if lead else "",
                   hero_alt=PARTNER_INTRO_ALT if lead else "", hero_url=url if lead else "", hero_full=lead,
                   hero_kicker=PARTNER_INTRO_KICKER if lead else "",

@@ -153,6 +153,22 @@ POSTMARK_MESSAGE_STREAM = os.environ.get("POSTMARK_MESSAGE_STREAM", "outbound")
 # exists in Postmark, or the sends would fail against a stream that isn't
 # there.
 POSTMARK_BROADCAST_STREAM = os.environ.get("POSTMARK_BROADCAST_STREAM", "")
+
+# The recruitment sequence's own sender, on its own domain. Cold mail and
+# the mail a customer needs -- license keys, sign-in codes, proof links --
+# must not share a reputation, and they share one the moment they share a
+# domain: a complaint against an approach settles on the domain, not on
+# the address. So this is deliberately NOT a fallback to SMTP_FROM. Blank
+# means recruitment has no sender of its own and refuses to send, which is
+# the safe direction: reconnecting the sequence without having moved it
+# would otherwise quietly put cold mail back on hello@piperstitch.com.
+#
+# Set it to a sender on the outreach domain once that domain is live and
+# has its own SPF, DKIM and DMARC -- e.g. "Ashley at PiperStitch
+# <ashley@trypiperstitch.com>". Replies fall back to REPLY_TO_EMAIL, so
+# they keep reaching the inbox that is read today unless this is also set.
+PARTNER_OUTREACH_FROM = os.environ.get("PARTNER_OUTREACH_FROM", "")
+PARTNER_OUTREACH_REPLY_TO = os.environ.get("PARTNER_OUTREACH_REPLY_TO", "")
 # Replies to recruitment email land back here when Postmark's inbound
 # stream is pointed at /webhooks/inbound-email/<this token>. Unset means
 # the endpoint isn't there at all.

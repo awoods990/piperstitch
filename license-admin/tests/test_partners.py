@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, db, promotions, referrals, stripe_client, subscriptions, web_access
+from app import config, db, email_sender, promotions, referrals, stripe_client, subscriptions, web_access
 from app.main import app
 from conftest import stripe_subscription
 from test_web_access import _code_from
@@ -1439,3 +1439,43 @@ def test_the_hold_disconnects_every_way_recruitment_mail_can_leave(isolated_db, 
     monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
     assert partners.outreach_check(now=later) >= 1
     assert db.get_partner_prospect_by_email("kathleen@example.com")["outreach_step"] == 2
+
+
+def test_recruitment_sends_from_its_own_address_and_refuses_without_one(isolated_db, test_keypair, fake_smtp, admin_password_configured, monkeypatch):
+    """Cold mail leaves from PARTNER_OUTREACH_FROM, not from the address
+    that carries license keys, and there is no fallback: with no sender of
+    its own the sequence refuses rather than reaching for SMTP_FROM.
+    Replies go to PARTNER_OUTREACH_REPLY_TO when set, and to the inbox that
+    is read today when it is not. Nothing else moves address."""
+    from app import partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_FROM", "Ashley at PiperStitch <ashley@outreach.example>")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_REPLY_TO", "ashley@outreach.example")
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        client.post("/admin/partners/recruit", data={"people": "Kathleen Reyes <kathleen@example.com>", "note": ""}, follow_redirects=False)
+    cold = [m for m in fake_smtp.sent if m["To"] == "kathleen@example.com"][0]
+    assert cold["From"] == "Ashley at PiperStitch <ashley@outreach.example>"
+    assert cold["Reply-To"] == "ashley@outreach.example"
+
+    # A customer's sign-in code is untouched by any of it.
+    fake_smtp.sent.clear()
+    email_sender.send_activation_code_email(to_email="customer@example.com", code="123456", device_name="Studio Mac")
+    assert fake_smtp.sent[0]["From"] == config.SMTP_FROM
+
+    # Replies fall back to the inbox that is read today.
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_REPLY_TO", "")
+    fake_smtp.sent.clear()
+    partners.send_outreach_step(db.get_partner_prospect_by_email("kathleen@example.com"), 2)
+    assert fake_smtp.sent[0]["Reply-To"] == config.REPLY_TO_EMAIL
+
+    # With no sender of its own it refuses, and says so where you can see it.
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_FROM", "")
+    fake_smtp.sent.clear()
+    kath = db.get_partner_prospect_by_email("kathleen@example.com")
+    step_before, due_before = kath["outreach_step"], kath["outreach_next_at"]
+    assert partners.send_outreach_step(kath, 3) is False
+    assert not fake_smtp.sent
+    held = db.get_partner_prospect_by_email("kathleen@example.com")
+    assert held["outreach_step"] == step_before and held["outreach_next_at"] == due_before
+    last = db.list_outreach_log(kath["id"])[-1]     # the log runs oldest first
+    assert last["status"] == "failed" and "sender of its own" in last["error"]
