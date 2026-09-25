@@ -15,7 +15,7 @@
         <a class="button small secondary" href="/admin/customers/{{ customer.id }}/email">Write an email</a>
         <form method="post" action="/admin/customers/{{ customer.id }}/account-link"><button class="small secondary" type="submit">Send account link</button></form>
         {% if validity.entitled %}<form method="post" action="/admin/customers/{{ customer.id }}/resend-welcome"><button class="small secondary" type="submit">Resend welcome</button></form>{% endif %}
-        <form method="post" action="/admin/customers/{{ customer.id }}/delete" onsubmit="return confirm('Delete this customer and all their records here? A live paid subscription must be cancelled first. This cannot be undone.');"><button class="small danger" type="submit">Delete</button></form>
+        <form method="post" action="/admin/customers/{{ customer.id }}/delete" onsubmit="return confirm('Delete this customer and everything of theirs here? What was paid stays in the books with their name taken off it. A subscription that is still charging must be cancelled first. This cannot be undone.');"><button class="small danger" type="submit">Delete</button></form>
       </div>
     </div>
 

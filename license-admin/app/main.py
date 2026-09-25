@@ -1895,8 +1895,15 @@ def delete_customer(customer_id: int):
     if record is None:
         return RedirectResponse("/admin/registrations", status_code=303)
     validity = subscriptions.validity_for(customer_id)
-    if validity.entitled and validity.status != "comp":
-        return _customer_redirect(customer_id, error="This customer has a live paid subscription — cancel it first, so nobody keeps being charged for a record that no longer exists.")
+    # Already set to end is enough: nobody is charged again, so there is no
+    # reason to make someone wait until the period runs out before they can
+    # tidy the record away. Before this, cancelling and then deleting met
+    # "cancel it first" -- advice they had just taken.
+    if validity.entitled and validity.status != "comp" and not validity.cancel_at_period_end:
+        return _customer_redirect(customer_id, error=(
+            "This subscription is still running and will charge again — cancel it first, with the button on this "
+            "page, so nobody keeps paying for a record that no longer exists. Cancelling at the end of the period "
+            "is enough; you can delete straight after."))
     db.delete_customer(customer_id)
     return RedirectResponse(f"/admin/registrations?message={quote_plus('Deleted ' + record['email'] + '.')}", status_code=303)
 

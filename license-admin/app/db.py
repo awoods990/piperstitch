@@ -892,18 +892,77 @@ def list_customers(query: str = "", limit: int = 300) -> list[sqlite3.Row]:
         return conn.execute(f"{_CUSTOMERS_WITH_STATUS} ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
 
 
+# Everything that exists only because a customer did goes when they do.
+# These three are kept and unlinked instead, because they are the record of
+# money: deleting a payment refunds nothing, it only rewrites last
+# quarter's revenue, which the monthly figures read straight out of this
+# table. Their personal columns are cleared, so what stays is an amount and
+# a date with nobody's name on it.
+_KEEP_UNLINKED = {
+    "payments": (),
+    "promo_payouts": (),
+    "checkout_sessions": ("customer_name", "customer_email"),
+}
+
+
+def _customer_linked_tables(conn) -> list[str]:
+    """Every table with a foreign key to customers, dependents first.
+
+    Read from the schema rather than listed by hand, because a list is
+    only right on the day it is written."""
+    names = [r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+    refers = {}
+    for table in names:
+        targets = {fk["table"] for fk in conn.execute(f"PRAGMA foreign_key_list({table})")}
+        if "customers" in targets:
+            refers[table] = targets
+    order: list[str] = []
+    seen: set = set()
+
+    def visit(table: str) -> None:
+        if table in seen:
+            return
+        seen.add(table)
+        for other, targets in refers.items():     # whoever points at us goes first
+            if other != table and table in targets:
+                visit(other)
+        order.append(table)
+
+    for table in refers:
+        visit(table)
+    return order
+
+
 def delete_customer(customer_id: int) -> None:
-    """Removes a lead/customer record and everything hanging off it. A
-    Stripe subscription is NOT cancelled by this — that's a billing action
-    the admin takes explicitly (see subscriptions.cancel) — so deleting a
-    record with a live subscription is refused by the route, not here."""
+    """Removes a customer record and everything hanging off it. A Stripe
+    subscription is NOT cancelled by this — that's a billing action the
+    admin takes explicitly (see subscriptions.cancel) — so deleting a
+    record that would keep charging is refused by the route, not here.
+
+    The tables are found from the schema. The list that used to be here
+    named five of them and the schema had grown to seventeen; foreign keys
+    are enforced, so one row left behind doesn't leave a mess, it makes
+    SQLite refuse the whole delete. Every customer has at least one logged
+    email, which meant no customer could be deleted at all.
+    """
     with connection() as conn:
-        conn.execute("DELETE FROM devices WHERE customer_id = ?", (customer_id,))
-        conn.execute("DELETE FROM account_links WHERE customer_id = ?", (customer_id,))
-        conn.execute("DELETE FROM subscription_events WHERE customer_id = ?", (customer_id,))
-        conn.execute("DELETE FROM payments WHERE customer_id = ?", (customer_id,))
-        conn.execute("DELETE FROM subscriptions WHERE customer_id = ?", (customer_id,))
-        conn.execute("UPDATE checkout_sessions SET customer_id = NULL WHERE customer_id = ?", (customer_id,))
+        linked = _customer_linked_tables(conn)
+        going = [t for t in linked if t not in _KEEP_UNLINKED]
+        for table, scrub in _KEEP_UNLINKED.items():
+            if table not in linked:
+                continue
+            columns = ", ".join(["customer_id = NULL"] + [f"{c} = ''" for c in scrub])
+            conn.execute(f"UPDATE {table} SET {columns} WHERE customer_id = ?", (customer_id,))
+        for table in _KEEP_UNLINKED:               # a kept row may still point at one that is going
+            if table not in linked:
+                continue
+            for fk in conn.execute(f"PRAGMA foreign_key_list({table})"):
+                if fk["table"] in going:
+                    conn.execute(f"UPDATE {table} SET {fk['from']} = NULL WHERE {fk['from']} IN "
+                                 f"(SELECT id FROM {fk['table']} WHERE customer_id = ?)", (customer_id,))
+        for table in going:
+            conn.execute(f"DELETE FROM {table} WHERE customer_id = ?", (customer_id,))
         conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
 
 

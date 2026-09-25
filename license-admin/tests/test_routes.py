@@ -439,3 +439,58 @@ def test_launching_is_written_into_the_event_log(admin):
 def test_a_stranger_cannot_launch(client, admin_password_configured):
     client.post("/admin/launch")
     assert db.get_setting("launched_at") is None
+
+
+def test_a_customer_with_ordinary_history_can_actually_be_deleted(isolated_db, fake_smtp):
+    """The delete cleared five tables and the schema had grown to
+    seventeen. Foreign keys are enforced, so one row left behind did not
+    leave a mess -- SQLite refused the whole delete. Every customer has a
+    logged welcome email, so in practice none of them could be removed.
+    The test that existed deleted a bare lead with no history, which is
+    the one case that worked."""
+    cid = _subscribed_customer()                      # subscription, payment, welcome email
+    with db.connection() as conn:
+        conn.execute("INSERT INTO web_sessions (customer_id, token_hash, created_at, expires_at) VALUES (?,?,?,?)",
+                     (cid, "hash", db.now_iso(), db.now_iso()))
+        assert conn.execute("SELECT COUNT(*) FROM email_log WHERE customer_id = ?", (cid,)).fetchone()[0] > 0
+
+    db.delete_customer(cid)
+
+    assert db.get_customer(cid) is None
+    with db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM email_log WHERE customer_id = ?", (cid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM web_sessions WHERE customer_id = ?", (cid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM subscriptions WHERE customer_id = ?", (cid,)).fetchone()[0] == 0
+        assert list(conn.execute("PRAGMA foreign_key_check")) == [], "and nothing dangling behind it"
+
+
+def test_deleting_a_customer_does_not_rewrite_last_quarters_revenue(isolated_db, fake_smtp):
+    """Deleting a payment refunds nothing; it only changes what the
+    monthly figures say was earned. The money stays, with the person cut
+    out of it."""
+    cid = _subscribed_customer()
+    with db.connection() as conn:
+        conn.execute("INSERT INTO payments (customer_id, stripe_invoice_id, amount_cents, status, paid_at, created_at) "
+                     "VALUES (?,?,?,?,?,?)", (cid, "in_keep", 2400, "paid", db.now_iso(), db.now_iso()))
+        before = conn.execute("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE status='paid'").fetchone()[0]
+
+    db.delete_customer(cid)
+
+    with db.connection() as conn:
+        after = conn.execute("SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE status='paid'").fetchone()[0]
+        assert after == before, "the takings are unchanged"
+        kept = conn.execute("SELECT customer_id FROM payments WHERE stripe_invoice_id = 'in_keep'").fetchone()
+        assert kept["customer_id"] is None, "and no longer point at anybody"
+
+
+def test_a_subscription_already_set_to_end_no_longer_blocks_deleting_the_record(admin, monkeypatch):
+    """Cancelling at the end of the period, then deleting, used to be met
+    with 'cancel it first' -- advice the admin had just taken. Nobody is
+    charged again once it is set to end, so there is nothing to wait for."""
+    cid = _subscribed_customer()
+    sub = db.get_subscription_by_stripe_id("sub_123")
+    db.update_subscription_status(sub["id"], status="active", cancel_at_period_end=True)
+
+    r = admin.post(f"/admin/customers/{cid}/delete", follow_redirects=False)
+    assert "error=" not in r.headers["location"], r.headers["location"]
+    assert db.get_customer(cid) is None
