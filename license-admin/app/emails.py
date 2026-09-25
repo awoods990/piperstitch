@@ -879,7 +879,9 @@ def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, v
         msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream", filename=name)
     try:
         stream = config.POSTMARK_BROADCAST_STREAM if broadcast else ""
-        message_id = email_sender._send_smtp(msg, stream=stream, from_email=from_email)
+        # A mailbox of our own wins over a Postmark stream when both are
+        # set: it is the more separated of the two.
+        message_id = email_sender._send_smtp(msg, stream=stream, from_email=from_email, mailbox=broadcast)
     except email_sender.EmailSendError as e:
         db.log_email(customer_id=customer_id, to_email=to_email, kind=key, subject=subject, status="failed", error=str(e))
         raise

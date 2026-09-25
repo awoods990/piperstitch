@@ -27,14 +27,44 @@ class EmailSendError(Exception):
     subscription update."""
 
 
-def _send_smtp(msg: EmailMessage, *, stream: str = "", from_email: str = "") -> str:
+def _send_via_outreach_mailbox(msg: EmailMessage) -> str:
+    """Out of a mailbox we own -- Google Workspace or Microsoft 365 -- rather
+    than through Postmark.
+
+    Cold mail then leaves the way a person's mail leaves: from a real
+    mailbox on the outreach domain, with none of it touching the reputation
+    a customer's sign-in code depends on. Nothing comes back, though --
+    a mailbox reports no message id, so opens and clicks stop being
+    recorded for anything sent this way.
+    """
+    try:
+        if config.PARTNER_OUTREACH_SMTP_PORT == 465:
+            with smtplib.SMTP_SSL(config.PARTNER_OUTREACH_SMTP_HOST, config.PARTNER_OUTREACH_SMTP_PORT, timeout=20) as smtp:
+                smtp.login(config.PARTNER_OUTREACH_SMTP_USERNAME, config.PARTNER_OUTREACH_SMTP_PASSWORD)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(config.PARTNER_OUTREACH_SMTP_HOST, config.PARTNER_OUTREACH_SMTP_PORT, timeout=20) as smtp:
+                smtp.starttls()
+                smtp.login(config.PARTNER_OUTREACH_SMTP_USERNAME, config.PARTNER_OUTREACH_SMTP_PASSWORD)
+                smtp.send_message(msg)
+    except (smtplib.SMTPException, OSError) as e:
+        raise EmailSendError(f"{config.PARTNER_OUTREACH_SMTP_HOST}: {e}") from e
+    return ""
+
+
+def _send_smtp(msg: EmailMessage, *, stream: str = "", from_email: str = "", mailbox: bool = False) -> str:
     """Despite the name, the one send path: Postmark's HTTP API when
     POSTMARK_API_TOKEN is set, plain SMTP otherwise -- or, in development,
     a file in EMAIL_OUTBOX_DIR.
 
+    `mailbox` is recruitment mail, which goes out of a mailbox of our own
+    when one is configured, whatever the rest of the platform uses.
+
     Returns the provider's message id where there is one (Postmark), and an
     empty string otherwise. Opens and clicks are reported against that id
     later, so it is the only thread tying an event back to a send."""
+    if mailbox and config.outreach_mailbox_configured() and not config.EMAIL_OUTBOX_DIR:
+        return _send_via_outreach_mailbox(msg)
     if config.EMAIL_OUTBOX_DIR:
         import logging, time
         from pathlib import Path

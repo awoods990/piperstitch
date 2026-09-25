@@ -1479,3 +1479,73 @@ def test_recruitment_sends_from_its_own_address_and_refuses_without_one(isolated
     assert held["outreach_step"] == step_before and held["outreach_next_at"] == due_before
     last = db.list_outreach_log(kath["id"])[-1]     # the log runs oldest first
     assert last["status"] == "failed" and "sender of its own" in last["error"]
+
+
+def test_recruitment_can_leave_through_a_mailbox_we_own(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """A Google or Microsoft mailbox instead of Postmark: cold mail goes out
+    the way a person's mail goes out, and Postmark carries only the mail
+    customers depend on."""
+    import smtplib
+    from app import partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_FROM", "Ashley <ashley@trypiperstitch.com>")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_HOST", "smtp.office365.com")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_USERNAME", "ashley@trypiperstitch.com")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_PASSWORD", "secret")
+
+    seen = {}
+
+    class Mailbox:
+        def __init__(self, host, port, timeout=None): seen["host"] = host; seen["port"] = port
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def starttls(self): seen["tls"] = True
+        def login(self, u, p): seen["user"] = u
+        def send_message(self, msg): seen["msg"] = msg
+
+    monkeypatch.setattr(smtplib, "SMTP", Mailbox)
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+
+    assert seen["host"] == "smtp.office365.com" and seen["port"] == 587 and seen.get("tls")
+    assert seen["user"] == "ashley@trypiperstitch.com"
+    assert "trypiperstitch.com" in str(seen["msg"]["From"]), "it must go out as the outreach sender"
+    assert "List-Unsubscribe" in seen["msg"], "a way out rides along however it is sent"
+
+
+def test_a_sign_in_code_never_uses_the_outreach_mailbox(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """The whole point is separation: transactional mail keeps its own path
+    even when the outreach mailbox is configured."""
+    import httpx, smtplib
+    from types import SimpleNamespace
+    from app import email_sender
+    sent = []
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_FROM", "Ashley <ashley@trypiperstitch.com>")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_HOST", "smtp.office365.com")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_USERNAME", "ashley@trypiperstitch.com")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers, timeout: (
+        sent.append(json), SimpleNamespace(status_code=200, text="ok", json=lambda: {"MessageID": "m"}))[1])
+
+    def boom(*a, **k):
+        raise AssertionError("a sign-in code must not go out of the outreach mailbox")
+    monkeypatch.setattr(smtplib, "SMTP", boom)
+
+    email_sender.send_activation_code_email(to_email="a@b.co", code="654321", device_name="Mac")
+    assert sent and "654321" in sent[-1]["TextBody"]
+
+
+def test_without_a_mailbox_configured_recruitment_still_goes_through_postmark(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    import httpx
+    from types import SimpleNamespace
+    from app import partners
+    sent = []
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_SMTP_HOST", "")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers, timeout: (
+        sent.append(json), SimpleNamespace(status_code=200, text="ok", json=lambda: {"MessageID": "m"}))[1])
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    assert sent, "it should still have gone out through Postmark"

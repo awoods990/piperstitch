@@ -169,6 +169,34 @@ POSTMARK_BROADCAST_STREAM = os.environ.get("POSTMARK_BROADCAST_STREAM", "")
 # they keep reaching the inbox that is read today unless this is also set.
 PARTNER_OUTREACH_FROM = os.environ.get("PARTNER_OUTREACH_FROM", "")
 PARTNER_OUTREACH_REPLY_TO = os.environ.get("PARTNER_OUTREACH_REPLY_TO", "")
+
+# Recruitment can also leave through a mailbox you own rather than through
+# Postmark: a Google Workspace or Microsoft 365 account on the outreach
+# domain. Cold mail then goes out the way a person's mail goes out, and
+# Postmark carries only the transactional mail customers depend on.
+#
+#   Google Workspace : smtp.gmail.com, 587, an App Password (the account
+#                      needs 2-Step Verification for one to exist).
+#   Microsoft 365    : smtp.office365.com, 587, the mailbox password, with
+#                      SMTP AUTH enabled for that mailbox.
+#
+# Microsoft disables basic auth for SMTP by default at the end of December
+# 2026 -- an admin can re-enable it -- and is expected to remove it during
+# 2027. So this route has a known expiry; Google's App Passwords do not.
+#
+# Unset means recruitment keeps going through Postmark, on whichever stream
+# POSTMARK_BROADCAST_STREAM names. PARTNER_OUTREACH_FROM is the sender
+# either way, and both providers reject a From that isn't the mailbox or an
+# alias it may send as.
+PARTNER_OUTREACH_SMTP_HOST = os.environ.get("PARTNER_OUTREACH_SMTP_HOST", "")
+PARTNER_OUTREACH_SMTP_PORT = _int("PARTNER_OUTREACH_SMTP_PORT", 587)
+PARTNER_OUTREACH_SMTP_USERNAME = os.environ.get("PARTNER_OUTREACH_SMTP_USERNAME", "")
+PARTNER_OUTREACH_SMTP_PASSWORD = os.environ.get("PARTNER_OUTREACH_SMTP_PASSWORD", "")
+
+
+def outreach_mailbox_configured() -> bool:
+    """A mailbox of our own is ready to carry recruitment mail."""
+    return bool(PARTNER_OUTREACH_SMTP_HOST and PARTNER_OUTREACH_SMTP_USERNAME and PARTNER_OUTREACH_FROM)
 # Replies to recruitment email land back here when Postmark's inbound
 # stream is pointed at /webhooks/inbound-email/<this token>. Unset means
 # the endpoint isn't there at all.
