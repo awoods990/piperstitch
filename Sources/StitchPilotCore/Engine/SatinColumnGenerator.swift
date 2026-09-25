@@ -1260,6 +1260,53 @@ public enum SatinColumnGenerator {
         do { _ = try branchingPlan(for: shape, parameters: parameters); return nil } catch { return "\(error)" }
     }
 
+    /// A medial axis stops about half a stroke width short of a flat
+    /// stroke end — that is what a medial axis is — so rails cast from its
+    /// last sample leave the end of every arm bare. On a typed glyph,
+    /// where the outline is the font's own and the result ought to be
+    /// exact with it, that showed as an E whose three arms and an F whose
+    /// two stopped short of their slabs: 71% of the F's area carried any
+    /// stitching at all.
+    ///
+    /// So a free end — a degree-1 node, never a junction — walks on along
+    /// the segment's own end tangent until the outline stops it. The reach
+    /// is capped at three quarters of the local stroke width: half a width
+    /// is the shortfall a flat cap causes, and staying near it means a
+    /// rounded terminal gains its rounding rather than a spike.
+    private static func extendedToTip(polyline: [Point2D], widthsMM: [Double], atStart: Bool,
+                                      shapePolygons: [[Point2D]]) -> (polyline: [Point2D], widthsMM: [Double]) {
+        guard polyline.count >= 2, polyline.count == widthsMM.count, !shapePolygons.isEmpty else { return (polyline, widthsMM) }
+        let tip = atStart ? polyline[0] : polyline[polyline.count - 1]
+        let width = atStart ? widthsMM[0] : widthsMM[widthsMM.count - 1]
+        guard width > 0 else { return (polyline, widthsMM) }
+        // The tangent over the last stroke width, not over the last pair of
+        // samples: a skeleton's final step is a pixel diagonal and points
+        // wherever the thinning happened to leave it.
+        let ordered = atStart ? Array(polyline) : Array(polyline.reversed())
+        var reference = ordered[ordered.count - 1]
+        for point in ordered where tip.distance(to: point) >= min(width, tipZoneLengthMM) {
+            reference = point
+            break
+        }
+        let direction = tip - reference
+        guard direction.length > 1e-9 else { return (polyline, widthsMM) }
+        let unit = Point2D(direction.x / direction.length, direction.y / direction.length)
+        let reach = width * 0.75
+        let step = max(0.05, min(0.15, reach / 6))
+        var added: [Point2D] = []
+        var distance = step
+        while distance <= reach {
+            let candidate = Point2D(tip.x + unit.x * distance, tip.y + unit.y * distance)
+            guard PolygonGeometry.pointInPolygons(candidate, polygons: shapePolygons) else { break }
+            added.append(candidate)
+            distance += step
+        }
+        guard !added.isEmpty else { return (polyline, widthsMM) }
+        let widths = [Double](repeating: width, count: added.count)
+        return atStart ? (Array(added.reversed()) + polyline, widths + widthsMM)
+                       : (polyline + added, widthsMM + widths)
+    }
+
     /// Routes to `computeSegmentRingRails` for a self-loop edge (a
     /// hole's own skeleton loop) and `computeSegmentRails` for every
     /// other segment — see `computeSegmentRingRails`'s own doc comment
@@ -1267,7 +1314,8 @@ public enum SatinColumnGenerator {
     /// rather than the tangent-walk one every other segment uses.
     private static func railsForEdge(_ edge: StrokeTopologyAnalyzer.Edge, shapePolygons: [[Point2D]], parameters: StitchGenerationParameters,
                                      buttsAtStart: Bool = false, buttsAtEnd: Bool = false,
-                                     mouthReachStart: Double = 0, mouthReachEnd: Double = 0) throws -> (railA: [Point2D], railB: [Point2D]) {
+                                     mouthReachStart: Double = 0, mouthReachEnd: Double = 0,
+                                     freeStart: Bool = false, freeEnd: Bool = false) throws -> (railA: [Point2D], railB: [Point2D]) {
         // A hairline is widened to what the thread can show, not to the
         // classification floor (`minSatinWidthMM` says whether a stroke may
         // be satin at all; 1.0 mm on a 0.65 mm letter stroke is a blot).
@@ -1295,9 +1343,22 @@ public enum SatinColumnGenerator {
         // and a rail cast straight across the mouth follows that bend
         // into a twist; both halves at a mouth are cast from the
         // direction past it.
-        return try computeSegmentRails(polyline: edge.polyline, widthsMM: edge.widthsMM, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth,
-                                       straightenStart: buttsAtStart || mouthReachStart > 0, straightenEnd: buttsAtEnd || mouthReachEnd > 0,
-                                       mouthReachStart: mouthReachStart, mouthReachEnd: mouthReachEnd)
+        var polyline = edge.polyline, widths = edge.widthsMM
+        if freeStart { (polyline, widths) = extendedToTip(polyline: polyline, widthsMM: widths, atStart: true, shapePolygons: shapePolygons) }
+        if freeEnd { (polyline, widths) = extendedToTip(polyline: polyline, widthsMM: widths, atStart: false, shapePolygons: shapePolygons) }
+        func rails(_ line: [Point2D], _ w: [Double]) throws -> (railA: [Point2D], railB: [Point2D]) {
+            try computeSegmentRails(polyline: line, widthsMM: w, shapePolygons: shapePolygons, minimumWidthMM: minimumWidth,
+                                    straightenStart: buttsAtStart || mouthReachStart > 0, straightenEnd: buttsAtEnd || mouthReachEnd > 0,
+                                    mouthReachStart: mouthReachStart, mouthReachEnd: mouthReachEnd)
+        }
+        // Reaching for the tip must never cost a column. The added samples
+        // lengthen the centerline, and the rail fit needs a hit on most of
+        // it; where the extra samples are the ones that miss, the segment
+        // used to be satin and would become fill, which is a worse answer
+        // than a slightly short arm. So a failed reach falls back to the
+        // skeleton's own ends.
+        if polyline.count != edge.polyline.count, let reached = try? rails(polyline, widths) { return reached }
+        return try rails(edge.polyline, edge.widthsMM)
     }
 
     /// Generates satin stitches for a branching shape by decomposing it
@@ -1537,7 +1598,17 @@ public enum SatinColumnGenerator {
     nonisolated(unsafe) private static var tolerateTwists = false
     private static let tolerateTwistsLock = NSLock()
 
+    /// Reaching a stroke out to its tip must never cost a column. Where
+    /// the longer centerline makes a plan that used to fit stop fitting,
+    /// the letter falls back to tatami — and a filled letter is a much
+    /// worse answer than a slightly short arm. So the plan is tried
+    /// reaching, and if that fails, tried again exactly as it was before.
     private static func branchingPlan(for shape: VectorShape, parameters: StitchGenerationParameters) throws -> BranchingPlan {
+        do { return try branchingPlan(for: shape, parameters: parameters, reachTips: true) }
+        catch { return try branchingPlan(for: shape, parameters: parameters, reachTips: false) }
+    }
+
+    private static func branchingPlan(for shape: VectorShape, parameters: StitchGenerationParameters, reachTips: Bool) throws -> BranchingPlan {
         guard !shape.subPaths.isEmpty else {
             throw SatinGenerationError.shapeNotSuitable("no outline was provided")
         }
@@ -1604,9 +1675,17 @@ public enum SatinColumnGenerator {
                 }
                 return node.widthMM / 2 + ownWidth / 2 + 0.3
             }
+            // A node that is not a junction is a free stroke end, and the
+            // skeleton stops short of it — see `extendedToTip`.
+            func isFreeEnd(_ nodeID: Int) -> Bool {
+                guard edge.startNodeID != edge.endNodeID else { return false }
+                return topology.nodes.first { $0.id == nodeID }.map { !$0.isJunction } ?? false
+            }
             let (railA, railB) = try railsForEdge(edge, shapePolygons: polygons, parameters: parameters,
                                                   buttsAtStart: buttsInto(edge.startNodeID), buttsAtEnd: buttsInto(edge.endNodeID),
-                                                  mouthReachStart: mouthReach(edge.startNodeID), mouthReachEnd: mouthReach(edge.endNodeID))
+                                                  mouthReachStart: mouthReach(edge.startNodeID), mouthReachEnd: mouthReach(edge.endNodeID),
+                                                  freeStart: reachTips && isFreeEnd(edge.startNodeID),
+                                                  freeEnd: reachTips && isFreeEnd(edge.endNodeID))
             guard let crossings = computeSegmentCrossings(railA: railA, railB: railB, parameters: parameters),
                   !crossings.expandedA.isEmpty else {
                 // A stub of skeleton too short to carry a single crossing
