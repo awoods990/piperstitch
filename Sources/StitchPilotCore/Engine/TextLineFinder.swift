@@ -53,13 +53,22 @@ public enum TextLineFinder {
     /// Ink coverage of a letter's own box from which the line reads as bold.
     public static let boldInkFraction = 0.42
 
-    /// The shortest capital that sews as lettering, by thread weight: about
-    /// 4 mm for 40-weight, 3 mm for the fine threads, 5 mm for 30-weight.
+    /// The shortest capital that sews as lettering, by thread weight: 5 mm
+    /// for 40-weight, 4 mm for the fine threads, 6 mm for 30-weight.
+    ///
+    /// Raised a millimetre in September 2026, on the evidence of a serif
+    /// tagline at 4.6 mm -- comfortably over the old 4 mm floor, and mush
+    /// on the fabric. The old numbers were the point below which letters
+    /// fragment; these are the point below which they stop being worth
+    /// sewing, which is the question a customer is actually asking. The
+    /// floor costs less than it used to, because a line that misses it
+    /// narrowly is now grown into range rather than simply dropped -- see
+    /// `SmallTextRescue`.
     public static func minimumCapHeightMM(for weight: ThreadWeight) -> Double {
         switch weight {
-        case .wt30: return 5.0
-        case .wt40: return 4.0
-        case .wt60, .wt80: return 3.0
+        case .wt30: return 6.0
+        case .wt40: return 5.0
+        case .wt60, .wt80: return 4.0
         }
     }
 

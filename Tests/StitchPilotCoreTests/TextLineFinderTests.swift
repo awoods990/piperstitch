@@ -122,9 +122,9 @@ struct TextLineFinderTests {
     }
 
     @Test func minimumCapHeightFollowsThreadWeight() {
-        #expect(TextLineFinder.minimumCapHeightMM(for: .wt40) == 4)
-        #expect(TextLineFinder.minimumCapHeightMM(for: .wt60) == 3)
-        #expect(TextLineFinder.minimumCapHeightMM(for: .wt30) == 5)
+        #expect(TextLineFinder.minimumCapHeightMM(for: .wt40) == 5)
+        #expect(TextLineFinder.minimumCapHeightMM(for: .wt60) == 4)
+        #expect(TextLineFinder.minimumCapHeightMM(for: .wt30) == 6)
     }
 
     @Test func omittedTextLinesSurviveTheDocumentRoundTripAndAreReported() throws {
