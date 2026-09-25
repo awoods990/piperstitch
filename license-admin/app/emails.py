@@ -855,7 +855,8 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
 
 def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "",
                 hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "",
-                broadcast: bool = False, unsubscribe_url: str = "", from_email: str = "") -> str:
+                broadcast: bool = False, unsubscribe_url: str = "", from_email: str = "",
+                mailbox: Optional[dict] = None) -> str:
     """Sends one of the editable system emails. Raises EmailSendError on
     failure after logging it. Returns the provider's message id, which is
     what a later open or click is reported against.
@@ -881,7 +882,7 @@ def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, v
         stream = config.POSTMARK_BROADCAST_STREAM if broadcast else ""
         # A mailbox of our own wins over a Postmark stream when both are
         # set: it is the more separated of the two.
-        message_id = email_sender._send_smtp(msg, stream=stream, from_email=from_email, mailbox=broadcast)
+        message_id = email_sender._send_smtp(msg, stream=stream, from_email=from_email, mailbox=mailbox)
     except email_sender.EmailSendError as e:
         db.log_email(customer_id=customer_id, to_email=to_email, kind=key, subject=subject, status="failed", error=str(e))
         raise

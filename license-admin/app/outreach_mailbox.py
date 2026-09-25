@@ -1,130 +1,171 @@
-"""The mailbox recruitment mail goes out of, owned by the admin.
+"""The mailboxes recruitment goes out of.
 
 Cold outreach does not belong on the same path as a customer's sign-in
-code: Postmark's own terms allow only mail people asked for, and a single
-complaint on a hundred cold sends is ten times their stated limit. So
-recruitment can leave instead through a mailbox we own -- a Google
-Workspace or Microsoft 365 account on the outreach domain -- and the rest
-of the platform keeps using Postmark.
+code: Postmark's terms allow only mail people asked for, and one complaint
+in a hundred cold sends is ten times their stated limit -- against the
+account that also carries licence keys and proof links. So recruitment
+leaves instead through mailboxes we own, on a domain kept apart from
+piperstitch.com.
 
-The settings live in the database rather than only in environment
-variables so they can be changed, and tested, from the recruitment page
-without a redeploy. The password is sealed with the same key that seals
-partners' tax forms; environment variables remain as the fallback, so an
-existing deployment keeps working untouched.
+More than one mailbox, because Google and Microsoft both begin reading a
+single mailbox as bulk somewhere above twenty a day, and because a
+particular prospect may deserve a particular sender. Each carries its own
+daily cap; a send that would breach it waits for tomorrow rather than
+going out and teaching the provider that this mailbox sends in bursts.
 
+Passwords are sealed with the same key that seals partners' tax forms.
 What this costs: a mailbox hands back no message id, so opens and clicks
-stop being recorded for anything sent this way. Replies still reach the
-platform as long as the reply-to stays pointed at Postmark's inbound
-address -- which is why that field is here rather than assumed.
+stop being recorded for anything sent this way. Replies reach whatever
+each mailbox's reply-to says -- the mailbox itself, or Postmark's inbound
+address to keep them showing on the recruit page.
 """
 
 from __future__ import annotations
 
 import json
 import smtplib
+from datetime import datetime, timezone
 from typing import Optional
 
 from . import config, db, documents
 
-SETTING = "outreach_mailbox"
-FIELDS = ("host", "port", "username", "from_email", "reply_to")
+LEGACY_SETTING = "outreach_mailbox"
 
 
-def _stored() -> Optional[dict]:
-    raw = db.get_setting(SETTING)
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return None
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def settings() -> dict:
-    """What to send through: the admin's settings when they exist, the
-    environment otherwise. The password is left sealed here; only
-    `_password()` opens it, so it never rides along in a template."""
-    saved = _stored()
-    if saved:
-        return {
-            "host": saved.get("host", ""),
-            "port": int(saved.get("port") or 587),
-            "username": saved.get("username", ""),
-            "from_email": saved.get("from_email", ""),
-            "reply_to": saved.get("reply_to", ""),
-            "source": "admin",
-            "has_password": bool(saved.get("password")),
-        }
+def _row_to_dict(row) -> dict:
     return {
-        "host": config.PARTNER_OUTREACH_SMTP_HOST,
-        "port": config.PARTNER_OUTREACH_SMTP_PORT,
-        "username": config.PARTNER_OUTREACH_SMTP_USERNAME,
-        "from_email": config.PARTNER_OUTREACH_FROM,
-        "reply_to": config.PARTNER_OUTREACH_REPLY_TO,
-        "source": "environment",
-        "has_password": bool(config.PARTNER_OUTREACH_SMTP_PASSWORD),
+        "id": row["id"], "label": row["label"], "host": row["host"], "port": row["port"],
+        "username": row["username"], "from_email": row["from_email"], "reply_to": row["reply_to"],
+        "daily_cap": row["daily_cap"], "active": bool(row["active"]),
+        "last_ok_at": row["last_ok_at"], "last_error": row["last_error"],
+        "has_password": bool(row["password"]),
     }
 
 
-def _password() -> str:
-    saved = _stored()
-    if saved is None:
-        return config.PARTNER_OUTREACH_SMTP_PASSWORD
-    sealed = saved.get("password") or ""
-    if not sealed:
+def adopt_legacy() -> None:
+    """The single mailbox this page used to hold becomes the first row, so
+    an admin who set one up before does not find it gone."""
+    if db.list_outreach_mailboxes():
+        return
+    raw = db.get_setting(LEGACY_SETTING)
+    saved = None
+    if raw:
+        try:
+            saved = json.loads(raw)
+        except ValueError:
+            saved = None
+    if saved and saved.get("host"):
+        db.add_outreach_mailbox(label=saved.get("username") or saved["host"], host=saved["host"],
+                                port=int(saved.get("port") or 587), username=saved.get("username", ""),
+                                password=saved.get("password", ""), from_email=saved.get("from_email", ""),
+                                reply_to=saved.get("reply_to", ""))
+        db.set_setting(LEGACY_SETTING, "")
+    elif config.PARTNER_OUTREACH_SMTP_HOST and config.PARTNER_OUTREACH_FROM:
+        db.add_outreach_mailbox(label=config.PARTNER_OUTREACH_SMTP_USERNAME or config.PARTNER_OUTREACH_SMTP_HOST,
+                                host=config.PARTNER_OUTREACH_SMTP_HOST, port=config.PARTNER_OUTREACH_SMTP_PORT,
+                                username=config.PARTNER_OUTREACH_SMTP_USERNAME,
+                                password=documents.seal(config.PARTNER_OUTREACH_SMTP_PASSWORD.encode()) if config.PARTNER_OUTREACH_SMTP_PASSWORD else "",
+                                from_email=config.PARTNER_OUTREACH_FROM, reply_to=config.PARTNER_OUTREACH_REPLY_TO)
+
+
+def mailboxes(*, active_only: bool = False) -> list[dict]:
+    usage = db.mailbox_usage(_today())
+    out = []
+    for row in db.list_outreach_mailboxes(active_only=active_only):
+        item = _row_to_dict(row)
+        item["sent_today"] = usage.get(row["id"], 0)
+        item["room_today"] = max(0, item["daily_cap"] - item["sent_today"])
+        out.append(item)
+    return out
+
+
+def configured() -> bool:
+    return any(m["host"] and m["username"] and m["from_email"] and m["has_password"] for m in mailboxes(active_only=True))
+
+
+def password_for(mailbox_id: int) -> str:
+    row = db.get_outreach_mailbox(mailbox_id)
+    if row is None or not row["password"]:
         return ""
     try:
-        return documents.open_(sealed).decode()
+        return documents.open_(row["password"]).decode()
     except Exception:  # noqa: BLE001 - a key that no longer opens it must not crash a send
         return ""
 
 
-def configured() -> bool:
-    s = settings()
-    return bool(s["host"] and s["username"] and s["from_email"] and (s["has_password"] or not s["host"]))
+def save(mailbox_id: Optional[int], *, label: str, host: str, port: int, username: str, password: str,
+         from_email: str, reply_to: str, daily_cap: int) -> int:
+    """A blank password keeps the one already stored: editing a reply-to
+    should not mean retyping a secret the form never shows back."""
+    sealed = documents.seal(password.encode()) if password else None
+    if mailbox_id:
+        fields = {"label": label[:80], "host": host.strip(), "port": port, "username": username.strip(),
+                  "from_email": from_email.strip(), "reply_to": reply_to.strip(), "daily_cap": daily_cap}
+        if sealed is not None:
+            fields["password"] = sealed
+        db.update_outreach_mailbox(mailbox_id, **fields)
+        return mailbox_id
+    return db.add_outreach_mailbox(label=label[:80] or username, host=host.strip(), port=port,
+                                   username=username.strip(), password=sealed or "",
+                                   from_email=from_email.strip(), reply_to=reply_to.strip(), daily_cap=daily_cap)
 
 
-def save(*, host: str, port: int, username: str, password: str, from_email: str, reply_to: str) -> None:
-    """A blank password keeps the one already stored: the form never shows
-    it back, so an admin editing the reply-to should not have to retype a
-    secret to avoid wiping it."""
-    existing = _stored() or {}
-    sealed = existing.get("password", "")
-    if password:
-        sealed = documents.seal(password.encode())
-    db.set_setting(SETTING, json.dumps({
-        "host": host.strip(), "port": int(port or 587), "username": username.strip(),
-        "password": sealed, "from_email": from_email.strip(), "reply_to": reply_to.strip(),
-    }))
+def choose(prospect) -> Optional[dict]:
+    """Which mailbox carries this approach.
+
+    An explicit assignment wins, because someone chose it on purpose -- but
+    it still waits when that mailbox has had its day's worth. Otherwise the
+    one with the most room left today, so the load spreads rather than one
+    mailbox carrying everything.
+    """
+    ready = [m for m in mailboxes(active_only=True) if m["host"] and m["username"] and m["from_email"] and m["has_password"]]
+    if not ready:
+        return None
+    assigned = prospect["mailbox_id"] if "mailbox_id" in prospect.keys() else None
+    if assigned:
+        picked = next((m for m in ready if m["id"] == assigned), None)
+        return picked if picked and picked["room_today"] > 0 else None
+    with_room = [m for m in ready if m["room_today"] > 0]
+    if not with_room:
+        return None
+    return max(with_room, key=lambda m: (m["room_today"], -m["id"]))
 
 
-def forget() -> None:
-    """Back to Postmark, and to whatever the environment says."""
-    db.set_setting(SETTING, "")
-
-
-def connect() -> smtplib.SMTP:
-    s = settings()
-    if s["port"] == 465:
-        smtp = smtplib.SMTP_SSL(s["host"], s["port"], timeout=20)
+def connect(mailbox: dict) -> smtplib.SMTP:
+    password = password_for(mailbox["id"])
+    if mailbox["port"] == 465:
+        smtp = smtplib.SMTP_SSL(mailbox["host"], mailbox["port"], timeout=20)
     else:
-        smtp = smtplib.SMTP(s["host"], s["port"], timeout=20)
+        smtp = smtplib.SMTP(mailbox["host"], mailbox["port"], timeout=20)
         smtp.starttls()
-    smtp.login(s["username"], _password())
+    smtp.login(mailbox["username"], password)
     return smtp
 
 
-def check() -> str:
-    """Open a connection and sign in, without sending anything. Returns ''
-    when it worked, or what went wrong in words an admin can act on."""
-    if not configured():
-        return "Fill in the host, the username, the password and the sender first."
+def check(mailbox_id: int) -> str:
+    """Sign in without sending. '' when it worked; otherwise words an admin
+    can act on. The outcome is kept on the row so the list shows it."""
+    row = db.get_outreach_mailbox(mailbox_id)
+    if row is None:
+        return "That mailbox isn't here any more."
+    mailbox = _row_to_dict(row)
+    if not (mailbox["host"] and mailbox["username"] and mailbox["has_password"]):
+        return "It needs a server, a username and a password before it can sign in."
     try:
-        with connect():
-            return ""
+        with connect(mailbox):
+            pass
     except smtplib.SMTPAuthenticationError:
-        return ("The mailbox refused the sign-in. Google needs an App Password (and 2-Step Verification "
-                "on the account); Microsoft 365 needs SMTP AUTH enabled for that mailbox.")
+        problem = ("Sign-in refused. Google needs an App Password with 2-Step Verification on the account; "
+                   "Microsoft 365 needs SMTP AUTH enabled for this mailbox.")
+        db.update_outreach_mailbox(mailbox_id, last_error=problem)
+        return problem
     except (smtplib.SMTPException, OSError) as e:
-        return f"Couldn't reach {settings()['host']}: {e}"
+        problem = f"Couldn't reach {mailbox['host']}: {e}"
+        db.update_outreach_mailbox(mailbox_id, last_error=problem)
+        return problem
+    db.update_outreach_mailbox(mailbox_id, last_ok_at=db.now_iso(), last_error="")
+    return ""

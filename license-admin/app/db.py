@@ -395,6 +395,26 @@ CREATE TABLE IF NOT EXISTS partner_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_partner_documents_promoter ON partner_documents(promoter_id);
 
+CREATE TABLE IF NOT EXISTS outreach_mailboxes (
+    -- The mailboxes recruitment goes out of. More than one because Google
+    -- and Microsoft both start reading a single mailbox as bulk somewhere
+    -- above twenty a day, and because different approaches want different
+    -- senders.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 587,
+    username TEXT NOT NULL,
+    password TEXT NOT NULL DEFAULT '',        -- sealed, like a partner's tax form
+    from_email TEXT NOT NULL,
+    reply_to TEXT NOT NULL DEFAULT '',        -- where their answer goes: this mailbox, or back here
+    daily_cap INTEGER NOT NULL DEFAULT 20,
+    active INTEGER NOT NULL DEFAULT 1,
+    last_ok_at TEXT,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS partner_outreach_log (
     -- Every recruitment email we sent, so the whole approach is on the
     -- record rather than in someone's sent folder.
@@ -653,6 +673,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "customers", "marketing_opt_out", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "projects", "thumbnail", "TEXT")   # projects saved before this stay blank until next saved
         _add_column_if_missing(conn, "partner_prospects", "slug", "TEXT")
+        _add_column_if_missing(conn, "partner_prospects", "mailbox_id", "INTEGER REFERENCES outreach_mailboxes(id)")
+        _add_column_if_missing(conn, "partner_outreach_log", "mailbox_id", "INTEGER")
         for col, defn in (("message_id", "TEXT"), ("opened_at", "TEXT"), ("open_count", "INTEGER NOT NULL DEFAULT 0"),
                           ("clicked_at", "TEXT"), ("click_count", "INTEGER NOT NULL DEFAULT 0")):
             _add_column_if_missing(conn, "partner_outreach_log", col, defn)
@@ -2148,6 +2170,72 @@ def list_recruits(limit: int = 300) -> list[sqlite3.Row]:
             "FROM partner_prospects p WHERE p.outreach_status != '' ORDER BY COALESCE(p.applied_at, p.last_seen_at, p.created_at) DESC LIMIT ?", (limit,)).fetchall()
 
 
+# ------------------------------------------------- outreach mailboxes --
+
+
+def list_outreach_mailboxes(*, active_only: bool = False) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM outreach_mailboxes"
+    if active_only:
+        sql += " WHERE active = 1"
+    with connection() as conn:
+        return conn.execute(sql + " ORDER BY active DESC, label").fetchall()
+
+
+def get_outreach_mailbox(mailbox_id: int) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM outreach_mailboxes WHERE id = ?", (mailbox_id,)).fetchone()
+
+
+def add_outreach_mailbox(*, label: str, host: str, port: int, username: str, password: str,
+                         from_email: str, reply_to: str = "", daily_cap: int = 20) -> int:
+    with connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO outreach_mailboxes (label, host, port, username, password, from_email, reply_to, daily_cap, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (label[:80], host, port, username, password, from_email, reply_to, daily_cap, _now()))
+        return cur.lastrowid
+
+
+def update_outreach_mailbox(mailbox_id: int, **fields) -> None:
+    allowed = {"label", "host", "port", "username", "password", "from_email", "reply_to", "daily_cap", "active", "last_ok_at", "last_error"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    with connection() as conn:
+        conn.execute(f"UPDATE outreach_mailboxes SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
+                     (*sets.values(), mailbox_id))
+
+
+def delete_outreach_mailbox(mailbox_id: int) -> None:
+    """Prospects pointed at it fall back to the rotation rather than losing
+    their place in the sequence."""
+    with connection() as conn:
+        conn.execute("UPDATE partner_prospects SET mailbox_id = NULL WHERE mailbox_id = ?", (mailbox_id,))
+        conn.execute("DELETE FROM outreach_mailboxes WHERE id = ?", (mailbox_id,))
+
+
+def set_prospect_mailbox(prospect_id: int, mailbox_id: Optional[int]) -> None:
+    with connection() as conn:
+        conn.execute("UPDATE partner_prospects SET mailbox_id = ? WHERE id = ?", (mailbox_id, prospect_id))
+
+
+def outreach_sent_today(mailbox_id: int, *, day: str) -> int:
+    """How many this mailbox has sent today, for the cap that keeps Google
+    and Microsoft from reading it as bulk."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM partner_outreach_log WHERE mailbox_id = ? AND status = 'sent' AND created_at >= ?",
+            (mailbox_id, day)).fetchone()[0]
+
+
+def mailbox_usage(day: str) -> dict:
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT mailbox_id, COUNT(*) AS n FROM partner_outreach_log "
+            "WHERE status = 'sent' AND created_at >= ? AND mailbox_id IS NOT NULL GROUP BY mailbox_id", (day,)).fetchall()
+    return {r["mailbox_id"]: r["n"] for r in rows}
+
+
 def record_email_event(message_id: str, *, kind: str, when: str) -> bool:
     """One open or click reported by Postmark. True when it matched a
     recruitment email we sent.
@@ -2176,10 +2264,12 @@ def outreach_engagement(prospect_id: int) -> dict:
     return {"opens": row["opens"], "clicks": row["clicks"], "last_open": row["last_open"], "last_click": row["last_click"]}
 
 
-def log_outreach(*, prospect_id: int, step: int, subject: str, status: str = "sent", error: str = "", message_id: str = "") -> int:
+def log_outreach(*, prospect_id: int, step: int, subject: str, status: str = "sent", error: str = "", message_id: str = "",
+                 mailbox_id: Optional[int] = None) -> int:
     with connection() as conn:
-        cur = conn.execute("INSERT INTO partner_outreach_log (prospect_id, step, subject, status, error, message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (prospect_id, step, subject[:200], status, error[:300], message_id or None, _now()))
+        cur = conn.execute("INSERT INTO partner_outreach_log (prospect_id, step, subject, status, error, message_id, mailbox_id, created_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           (prospect_id, step, subject[:200], status, error[:300], message_id or None, mailbox_id, _now()))
         return cur.lastrowid
 
 

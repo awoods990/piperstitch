@@ -29,6 +29,20 @@
       <div class="kpi-tile{% if p.outreach_status == 'replied' %} warn{% endif %}"><div class="kpi-value">{{ timeline|selectattr('kind', 'equalto', 'reply')|list|length }}</div><div class="kpi-label">Replies</div><div class="kpi-sub">from them to us</div></div>
       <div class="kpi-tile"><div class="kpi-value">{{ p.created_at|short_date }}</div><div class="kpi-label">Approached</div><div class="kpi-sub">{{ p.source }}</div></div>
     </div>
+    <div class="actions" style="margin-top:12px">
+      <form method="post" action="/admin/partners/recruit/{{ p.id }}/mailbox" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="margin:0">Approach them from</label>
+        <select name="mailbox_id">
+          <option value="">whichever mailbox has room that day</option>
+          {% for m in mailboxes %}
+          <option value="{{ m.id }}" {% if p.mailbox_id == m.id %}selected{% endif %}{% if not m.active %} disabled{% endif %}>
+            {{ m.label }} &middot; {{ m.from_email }}{% if not m.active %} (paused){% endif %}</option>
+          {% endfor %}
+        </select>
+        <button class="btn small">Set</button>
+        {% if not mailboxes %}<span class="hint">No mailboxes yet &mdash; <a href="/admin/partners#mailboxes">add one</a> and recruitment stops going out over Postmark.</span>{% endif %}
+      </form>
+    </div>
   </div>
 
   <div class="two-col">

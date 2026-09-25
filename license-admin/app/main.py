@@ -45,6 +45,7 @@ async def _lifespan(app: FastAPI):
     db.init_db()
     emails.seed()
     partners.seed_kit()
+    outreach_mailbox.adopt_legacy()
     missing = config.require_for_serving()
     if missing:
         log.warning("License Admin is running with missing configuration: %s — see .env.example", ", ".join(missing))
@@ -2239,7 +2240,7 @@ def admin_partners(request: Request, status: str = "", message: str = "", error:
         "code_requests": db.list_code_requests(), "resources": db.list_partner_resources(), "partner_feedback": db.list_partner_feedback(limit=25),
         "recruits": db.list_recruits(), "recruit_counts": db.recruitment_counts(), "pending_documents": db.list_partner_documents(pending_only=True),
         "replies": db.prospects_with_unanswered_replies(),
-        "outreach_steps": partners.OUTREACH_STEPS, "mailbox": outreach_mailbox.settings(),
+        "outreach_steps": partners.OUTREACH_STEPS, "mailboxes": outreach_mailbox.mailboxes(),
         "outreach_paused": config.PARTNER_OUTREACH_PAUSED, "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
         "payable_total": sum(r["totals"]["payable_cents"] for r in rows), "owed_total": sum(r["totals"]["owed_cents"] for r in rows),
         "message": message or None, "error": error or None,
@@ -2479,32 +2480,60 @@ def admin_partner_resource_announce(resource_id: int):
 
 
 @app.post("/admin/partners/mailbox", dependencies=[Depends(auth.require_admin)])
-def admin_outreach_mailbox(host: str = Form(""), port: str = Form("587"), username: str = Form(""),
-                           password: str = Form(""), from_email: str = Form(""), reply_to: str = Form(""),
-                           clear: str = Form("")):
-    """The mailbox recruitment goes out of, set here rather than on the host
-    so it can be changed and tested without a redeploy."""
-    if clear:
-        outreach_mailbox.forget()
-        return _partners_redirect(message="Recruitment is back on Postmark, and on whatever the environment says.", anchor="recruit")
+def admin_outreach_mailbox_save(mailbox_id: str = Form(""), label: str = Form(""), host: str = Form(""),
+                                port: str = Form("587"), username: str = Form(""), password: str = Form(""),
+                                from_email: str = Form(""), reply_to: str = Form(""), daily_cap: str = Form("20")):
+    """Add or edit one of the mailboxes recruitment goes out of. Set here
+    rather than on the host, so it can be changed and tested without a
+    redeploy."""
     if not (host.strip() and username.strip() and from_email.strip()):
-        return _partners_redirect(error="The server, the username and the sender are all needed.", anchor="recruit")
-    outreach_mailbox.save(host=host, port=int(port) if port.strip().isdigit() else 587, username=username,
-                          password=password, from_email=from_email, reply_to=reply_to)
-    problem = outreach_mailbox.check()
+        return _partners_redirect(error="A mailbox needs a server, a username and a sender.", anchor="mailboxes")
+    existing = int(mailbox_id) if mailbox_id.strip().isdigit() else None
+    new_id = outreach_mailbox.save(
+        existing, label=label or username, host=host,
+        port=int(port) if port.strip().isdigit() else 587, username=username, password=password,
+        from_email=from_email, reply_to=reply_to,
+        daily_cap=int(daily_cap) if daily_cap.strip().isdigit() else 20)
+    problem = outreach_mailbox.check(new_id)
     if problem:
-        return _partners_redirect(error=f"Saved, but the mailbox didn't accept it. {problem}", anchor="recruit")
-    return _partners_redirect(message="Saved, and the mailbox signed in. Recruitment will go out through it.", anchor="recruit")
+        return _partners_redirect(error=f"Saved, but it didn't sign in. {problem}", anchor="mailboxes")
+    return _partners_redirect(message=f"Saved, and {host.strip()} signed in.", anchor="mailboxes")
 
 
-@app.post("/admin/partners/mailbox/test", dependencies=[Depends(auth.require_admin)])
-def admin_outreach_mailbox_test():
-    """Sign in to the mailbox without sending anything, so a wrong password
-    is found here rather than by a prospect never hearing from us."""
-    problem = outreach_mailbox.check()
+@app.post("/admin/partners/mailbox/{mailbox_id}/test", dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox_test(mailbox_id: int):
+    """Sign in without sending, so a wrong password is found here rather
+    than by a prospect never hearing from us."""
+    problem = outreach_mailbox.check(mailbox_id)
     if problem:
-        return _partners_redirect(error=problem, anchor="recruit")
-    return _partners_redirect(message=f"Signed in to {outreach_mailbox.settings()['host']}. Recruitment can go out through it.", anchor="recruit")
+        return _partners_redirect(error=problem, anchor="mailboxes")
+    row = db.get_outreach_mailbox(mailbox_id)
+    return _partners_redirect(message=f"Signed in to {row['host']} as {row['username']}.", anchor="mailboxes")
+
+
+@app.post("/admin/partners/mailbox/{mailbox_id}/active", dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox_active(mailbox_id: int, active: str = Form("")):
+    db.update_outreach_mailbox(mailbox_id, active=1 if active == "1" else 0)
+    return _partners_redirect(message="Paused." if active != "1" else "Back in the rotation.", anchor="mailboxes")
+
+
+@app.post("/admin/partners/mailbox/{mailbox_id}/delete", dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox_delete(mailbox_id: int):
+    """Anyone assigned to it returns to the rotation rather than losing
+    their place in the sequence."""
+    db.delete_outreach_mailbox(mailbox_id)
+    return _partners_redirect(message="Removed. Anyone assigned to it is back in the rotation.", anchor="mailboxes")
+
+
+@app.post("/admin/partners/recruit/{prospect_id}/mailbox", dependencies=[Depends(auth.require_admin)])
+def admin_prospect_mailbox(prospect_id: int, mailbox_id: str = Form("")):
+    """Which mailbox approaches this person. Blank means the rotation."""
+    chosen = int(mailbox_id) if mailbox_id.strip().isdigit() else None
+    db.set_prospect_mailbox(prospect_id, chosen)
+    if chosen:
+        row = db.get_outreach_mailbox(chosen)
+        return _recruit_redirect(prospect_id, message=f"Their approach goes out from {row['from_email'] if row else 'that mailbox'}.")
+    return _recruit_redirect(prospect_id, message="Back to whichever mailbox has room that day.")
 
 
 @app.post("/admin/partners/recruit", dependencies=[Depends(auth.require_admin)])
@@ -2550,7 +2579,7 @@ def admin_partner_recruit_detail(request: Request, prospect_id: int, message: st
     return templates.TemplateResponse(request, "partner_recruit.html", {
         "active_nav": "partners", "p": prospect, "plan": partners.outreach_plan(prospect), "timeline": partners.recruit_timeline(prospect),
         "program_link": partners.program_url(prospect_id), "promoter": promoter, "program": partners,
-        "engagement": db.outreach_engagement(prospect_id), "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
+        "engagement": db.outreach_engagement(prospect_id), "mailboxes": outreach_mailbox.mailboxes(), "outreach_paused": config.PARTNER_OUTREACH_PAUSED,
         "message": message or None, "error": error or None,
     })
 

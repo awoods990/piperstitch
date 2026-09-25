@@ -22,7 +22,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
-from . import config, db, documents, email_sender, promotions
+from . import config, db, documents, email_sender, outreach_mailbox, promotions
 
 log = logging.getLogger("license_admin.partners")
 
@@ -591,15 +591,26 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
     if spec is None:
         return False
     url = program_url(prospect["id"])
+    # Which mailbox carries it. With mailboxes set up and none having room
+    # left today, this waits: going out anyway would teach Google and
+    # Microsoft to read us as a sender that works in bursts. With none set
+    # up at all it falls through to Postmark, which is where recruitment
+    # was before any of this existed.
+    mailbox = outreach_mailbox.choose(prospect)
+    if mailbox is None and outreach_mailbox.configured():
+        raise OutreachHeld
     try:
         subject, message_id = email_sender.send_partner_outreach_email(
+            mailbox=mailbox,
             to_email=prospect["email"], partner_name=prospect["name"], key=spec["key"], url=url,
             apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]), video_url=video_url(prospect["id"]),
             join_url=join_url(prospect))
     except email_sender.EmailSendError as e:
-        db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
+        db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e),
+                        mailbox_id=mailbox["id"] if mailbox else None)
         return False
-    db.log_outreach(prospect_id=prospect["id"], step=step, subject=subject, message_id=message_id)
+    db.log_outreach(prospect_id=prospect["id"], step=step, subject=subject, message_id=message_id,
+                    mailbox_id=mailbox["id"] if mailbox else None)
     if not advance:
         return True
     nxt = next((s for s in OUTREACH_STEPS if s["step"] == step + 1), None)
