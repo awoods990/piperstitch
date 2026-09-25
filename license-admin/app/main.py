@@ -1207,6 +1207,36 @@ async def inbound_email(token: str, request: Request):
 # ------------------------------------------------------- partner links ---
 
 
+@app.post("/webhooks/postmark/{token}")
+async def postmark_events(request: Request, token: str):
+    """Opens and clicks, as Postmark reports them.
+
+    Matched on the message id we kept when we sent, so an open belongs to
+    the email that earned it rather than merely to the person. Always
+    answers 200: an event we cannot match is not an error, and a webhook
+    that returns failures is a webhook Postmark retries forever.
+    """
+    if not hmac.compare_digest(token, partners.postmark_webhook_token()):
+        raise HTTPException(status_code=404)
+    try:
+        payload = await request.json()
+    except ValueError:
+        return {"ok": True, "recorded": 0}
+    events = payload if isinstance(payload, list) else [payload]
+    kinds = {"Open": "open", "Click": "click"}
+    recorded = 0
+    for event in events[:500]:
+        if not isinstance(event, dict):
+            continue
+        kind = kinds.get(str(event.get("RecordType") or ""))
+        if kind is None:
+            continue
+        when = str(event.get("ReceivedAt") or "")[:40] or db.now_iso()
+        if db.record_email_event(str(event.get("MessageID") or ""), kind=kind, when=when):
+            recorded += 1
+    return {"ok": True, "recorded": recorded}
+
+
 @app.get("/join/{slug}")
 def partner_join(request: Request, slug: str):
     """A prospect's short personal invitation: /join/ada-lovelace.
@@ -2482,6 +2512,7 @@ def admin_partner_recruit_detail(request: Request, prospect_id: int, message: st
     return templates.TemplateResponse(request, "partner_recruit.html", {
         "active_nav": "partners", "p": prospect, "plan": partners.outreach_plan(prospect), "timeline": partners.recruit_timeline(prospect),
         "program_link": partners.program_url(prospect_id), "promoter": promoter, "program": partners,
+        "engagement": db.outreach_engagement(prospect_id),
         "message": message or None, "error": error or None,
     })
 

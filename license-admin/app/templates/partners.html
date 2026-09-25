@@ -61,6 +61,22 @@
     <div class="toolbar"><h2 style="margin:0">Recruit partners</h2>
       <span class="muted small">{{ recruit_counts.total }} approached &middot; {{ recruit_counts.active }} in progress &middot; {{ recruit_counts.opened }} opened the details &middot; {{ recruit_counts.applied }} applied{% if recruit_counts.opted_out %} &middot; {{ recruit_counts.opted_out }} said no{% endif %}</span></div>
     <p class="muted small" style="margin-top:0">Paste a list or upload a CSV and the approach runs itself: {{ outreach_steps|length }} emails over {{ outreach_steps[-1].delay_days }} days &mdash; the offer, how it works, what it adds up to, and one last note &mdash; each carrying their own link into the program details and a one-click way to stop. It stops by itself the moment they apply or say no.</p>
+    <details class="hookset">
+      <summary>Open and click tracking &mdash; one URL to paste into Postmark</summary>
+      <p>Postmark reports an open or a click back to us here. Until this URL is in place, the
+         columns below count only people who reached the details page &mdash; which is a click-through,
+         not an open, and a much smaller number.</p>
+      <p><b>Postmark &rarr; your server &rarr; Webhooks &rarr; Add webhook.</b> Paste this, and tick
+         <b>Open</b> and <b>Link Click</b>:</p>
+      <p><input type="text" readonly value="{{ program.postmark_webhook_url() }}"
+                onclick="this.select()" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12.5px"></p>
+      <p class="muted small">Tracking has to be switched on for the server as well (Postmark &rarr; Settings
+         &rarr; Tracking). The URL is its own password, so treat it like one &mdash; and it changes if
+         SESSION_SECRET is ever rotated, in which case paste the new one here.</p>
+      <p class="muted small"><b>Read opens as directional, not true.</b> They work by a hidden pixel:
+         Apple Mail Privacy Protection loads it whether or not anyone looked, and clients that block
+         images never load it at all. Clicks are the honest number.</p>
+    </details>
     <form method="post" action="/admin/partners/recruit" enctype="multipart/form-data">
       <label>Who to approach <span class="muted">one per line: “Kathleen Reyes &lt;kathleen@example.com&gt;” or “Kathleen Reyes, kathleen@example.com”</span></label>
       <textarea name="people" rows="4" placeholder="Kathleen Reyes <kathleen@example.com>&#10;Dev Patel, dev@example.com"></textarea>

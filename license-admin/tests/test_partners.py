@@ -1247,3 +1247,83 @@ def test_the_films_are_in_every_partner_kit(isolated_db, test_keypair, fake_smtp
         token = _body(fake_smtp.sent[-1]).split("/partners/portal/open?token=")[1].split()[0]
         page = portal.get(f"/partners/portal/open?token={token}", follow_redirects=True).text
         assert "The Partner Program, in two minutes" in page and "piperstitch-animated-introduction.mp4" in page
+
+
+# --------------------------------------------- opens and clicks from Postmark ---
+
+
+def _postmark(monkeypatch, message_id: str = "pm-msg-1"):
+    """Send through Postmark, returning a known MessageID."""
+    import httpx
+    from types import SimpleNamespace
+    monkeypatch.setattr(config, "POSTMARK_API_TOKEN", "pm-token")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers, timeout: SimpleNamespace(
+        status_code=200, text="ok", json=lambda: {"MessageID": message_id}))
+
+
+def test_an_open_is_recorded_against_the_email_that_earned_it(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """Matching on the address alone could not tell which of four sequence
+    emails was opened. The message id can."""
+    from app import partners
+    _postmark(monkeypatch, "pm-step-1")
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+
+    with TestClient(app) as guest:
+        hook = f"/webhooks/postmark/{partners.postmark_webhook_token()}"
+        r = guest.post(hook, json={"RecordType": "Open", "MessageID": "pm-step-1", "ReceivedAt": "2026-09-24T12:00:00Z"})
+        assert r.status_code == 200 and r.json()["recorded"] == 1
+        guest.post(hook, json={"RecordType": "Click", "MessageID": "pm-step-1", "ReceivedAt": "2026-09-24T12:05:00Z"})
+
+    plan = partners.outreach_plan(db.get_partner_prospect(prospect_id))
+    step1 = next(s for s in plan if s["step"] == 1)
+    assert step1["opens"] == 1 and step1["clicks"] == 1 and step1["tracked"] is True
+    assert all(s["opens"] == 0 for s in plan if s["step"] != 1), "the open belongs to step 1 alone"
+    assert db.outreach_engagement(prospect_id)["opens"] == 1
+
+
+def test_a_second_open_is_counted_but_the_first_time_is_kept(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """A second open days later is the interesting one; the first is often
+    a mail client fetching images before anyone has looked."""
+    from app import partners
+    _postmark(monkeypatch, "pm-two")
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    with TestClient(app) as guest:
+        hook = f"/webhooks/postmark/{partners.postmark_webhook_token()}"
+        guest.post(hook, json={"RecordType": "Open", "MessageID": "pm-two", "ReceivedAt": "2026-09-24T09:00:00Z"})
+        guest.post(hook, json={"RecordType": "Open", "MessageID": "pm-two", "ReceivedAt": "2026-09-26T09:00:00Z"})
+    e = db.outreach_engagement(prospect_id)
+    assert e["opens"] == 2
+    assert e["last_open"].startswith("2026-09-24"), "opened_at is the first open, not the latest"
+
+
+def test_the_webhook_refuses_a_wrong_token_and_shrugs_at_the_rest(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    from app import partners
+    with TestClient(app) as guest:
+        bad = guest.post("/webhooks/postmark/not-the-token", json={"RecordType": "Open", "MessageID": "x"})
+        assert bad.status_code == 404, "the URL is the credential"
+
+        hook = f"/webhooks/postmark/{partners.postmark_webhook_token()}"
+        # An id we never sent, a record type we don't handle, and junk: all
+        # fine. A webhook that returns errors is one Postmark retries forever.
+        for payload in ({"RecordType": "Open", "MessageID": "never-sent"},
+                        {"RecordType": "Bounce", "MessageID": "x"},
+                        {"nonsense": True}):
+            r = guest.post(hook, json=payload)
+            assert r.status_code == 200 and r.json()["recorded"] == 0
+
+
+def test_a_batch_of_events_is_handled(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """Postmark can post several at once."""
+    from app import partners
+    _postmark(monkeypatch, "pm-batch")
+    prospect_id = partners.register_prospect(name="Dev Patel", email="dev@example.com", source="recruit")
+    partners.send_outreach_step(db.get_partner_prospect(prospect_id), 1)
+    with TestClient(app) as guest:
+        r = guest.post(f"/webhooks/postmark/{partners.postmark_webhook_token()}", json=[
+            {"RecordType": "Open", "MessageID": "pm-batch", "ReceivedAt": "2026-09-24T09:00:00Z"},
+            {"RecordType": "Click", "MessageID": "pm-batch", "ReceivedAt": "2026-09-24T09:01:00Z"},
+            {"RecordType": "Open", "MessageID": "unknown", "ReceivedAt": "2026-09-24T09:02:00Z"},
+        ])
+    assert r.json()["recorded"] == 2

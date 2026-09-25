@@ -25,8 +25,13 @@ class PostmarkError(Exception):
     pass
 
 
-def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "", attachments: Optional[list] = None) -> None:
-    """`attachments`: [(filename, bytes, content_type)]."""
+def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_body: str = "", reply_to: str = "", attachments: Optional[list] = None) -> str:
+    """`attachments`: [(filename, bytes, content_type)].
+
+    Returns Postmark's MessageID. It is what ties an open or a click
+    reported later to the exact email that earned it -- matching on the
+    address alone could not tell which of four sequence emails was the
+    one they opened."""
     payload = {
         "From": config.POSTMARK_FROM or config.SMTP_FROM,
         "To": to_email,
@@ -53,3 +58,9 @@ def send_postmark_email(*, to_email: str, subject: str, text_body: str, html_bod
         raise PostmarkError(str(e)) from e
     if response.status_code != 200:
         raise PostmarkError(f"Postmark returned {response.status_code}: {response.text}")
+    try:
+        return str(response.json().get("MessageID") or "")
+    except (ValueError, AttributeError):
+        # The mail went out; only the id for matching a later open is lost,
+        # and that must never turn a successful send into a failure.
+        return ""

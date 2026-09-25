@@ -27,10 +27,14 @@ class EmailSendError(Exception):
     subscription update."""
 
 
-def _send_smtp(msg: EmailMessage) -> None:
+def _send_smtp(msg: EmailMessage) -> str:
     """Despite the name, the one send path: Postmark's HTTP API when
     POSTMARK_API_TOKEN is set, plain SMTP otherwise -- or, in development,
-    a file in EMAIL_OUTBOX_DIR."""
+    a file in EMAIL_OUTBOX_DIR.
+
+    Returns the provider's message id where there is one (Postmark), and an
+    empty string otherwise. Opens and clicks are reported against that id
+    later, so it is the only thread tying an event back to a send."""
     if config.EMAIL_OUTBOX_DIR:
         import logging, time
         from pathlib import Path
@@ -40,7 +44,7 @@ def _send_smtp(msg: EmailMessage) -> None:
         path = outbox / f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.eml"
         path.write_bytes(bytes(msg))
         logging.getLogger("license_admin").info("EMAIL_OUTBOX_DIR: wrote %s (%s -> %s)", path.name, msg["Subject"], msg["To"])
-        return
+        return ""
     if config.POSTMARK_API_TOKEN:
         from . import email_postmark
 
@@ -48,7 +52,7 @@ def _send_smtp(msg: EmailMessage) -> None:
         html_part = msg.get_body(preferencelist=("html",))
         attachments = [(part.get_filename(), part.get_payload(decode=True), part.get_content_type()) for part in msg.iter_attachments()]
         try:
-            email_postmark.send_postmark_email(
+            return email_postmark.send_postmark_email(
                 to_email=str(msg["To"]),
                 subject=str(msg["Subject"]),
                 text_body=text_part.get_content() if text_part else "",
@@ -58,7 +62,6 @@ def _send_smtp(msg: EmailMessage) -> None:
             )
         except email_postmark.PostmarkError as e:
             raise EmailSendError(str(e)) from e
-        return
     try:
         if config.SMTP_USE_SSL:
             with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, timeout=15) as smtp:
@@ -73,6 +76,7 @@ def _send_smtp(msg: EmailMessage) -> None:
                 smtp.send_message(msg)
     except (smtplib.SMTPException, OSError) as e:
         raise EmailSendError(str(e)) from e
+    return ""                       # plain SMTP reports nothing back to tie events to
 
 
 def _compose(*, to_email: str, subject: str, body: str, html_body: str, reply_to: str = "") -> EmailMessage:
@@ -198,10 +202,11 @@ PARTNER_INTRO_ALT = ("The PiperStitch Partner Program: get paid every month, for
 
 
 def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, url: str, apply_url: str, opt_out_url: str,
-                                video_url: str = "", trial_url: str = "", join_url: str = "") -> str:
+                                video_url: str = "", trial_url: str = "", join_url: str = "") -> tuple[str, str]:
     """One step of the recruitment sequence. Returns the subject line, for
-    the outreach log. Cold mail, so the opt-out rides in the footer as
-    well as the body.
+    the outreach log, and the provider's message id, which is what a later
+    open or click is reported against. Cold mail, so the opt-out rides in
+    the footer as well as the body.
 
     The first step leads with the programme graphic, full width and linked
     to the details; the later steps are words alone."""
@@ -214,12 +219,12 @@ def send_partner_outreach_email(*, to_email: str, partner_name: str, key: str, u
         e.seed(); row = db.get_email_template(key)
     subject = e.fill(row["subject"], vars)
     lead = key == "partner_outreach_1"
-    e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
+    message_id = e.send_system(key, to_email=to_email, customer_id=None, vars=vars,
                   hero_image=f"{config.WEBSITE_BASE_URL}{PARTNER_INTRO_IMAGE}" if lead else "",
                   hero_alt=PARTNER_INTRO_ALT if lead else "", hero_url=url if lead else "", hero_full=lead,
                   hero_kicker=PARTNER_INTRO_KICKER if lead else "",
                   footer_note=f"You're getting this because we think you'd be a good PiperStitch partner. To hear no more: {opt_out_url}")
-    return subject
+    return subject, message_id
 
 
 def send_partner_kit_email(*, to_email: str, partner_name: str, title: str, description: str, url: str, kind: str = "video") -> None:

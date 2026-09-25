@@ -480,6 +480,22 @@ OUTREACH_STEPS = [
 RECRUIT_LINE = re.compile(r"^\s*(?P<name>[^,<]+?)\s*(?:[,<]\s*)(?P<email>[^>,\s]+@[^>,\s]+?)>?\s*$")
 
 
+def postmark_webhook_token() -> str:
+    """The secret in the webhook URL, derived from SESSION_SECRET.
+
+    Postmark signs nothing, so the URL is the credential. Deriving it means
+    there is no new secret to set anywhere -- but it also means rotating
+    SESSION_SECRET changes this URL, and the new one has to be pasted into
+    Postmark or the events stop arriving.
+    """
+    secret = (config.SESSION_SECRET or "development-only").encode()
+    return hmac.new(secret, b"postmark-events", hashlib.sha256).hexdigest()[:32]
+
+
+def postmark_webhook_url() -> str:
+    return f"{config.PUBLIC_BASE_URL}/webhooks/postmark/{postmark_webhook_token()}"
+
+
 def opt_out_url(prospect_id: int) -> str:
     return f"{config.PUBLIC_BASE_URL}/partners/no-thanks?k={quote(program_token(prospect_id), safe='')}"
 
@@ -547,14 +563,14 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
         return False
     url = program_url(prospect["id"])
     try:
-        subject = email_sender.send_partner_outreach_email(
+        subject, message_id = email_sender.send_partner_outreach_email(
             to_email=prospect["email"], partner_name=prospect["name"], key=spec["key"], url=url,
             apply_url=apply_url(prospect["id"]), opt_out_url=opt_out_url(prospect["id"]), video_url=video_url(prospect["id"]),
             join_url=join_url(prospect))
     except email_sender.EmailSendError as e:
         db.log_outreach(prospect_id=prospect["id"], step=step, subject=spec["key"], status="failed", error=str(e))
         return False
-    db.log_outreach(prospect_id=prospect["id"], step=step, subject=subject)
+    db.log_outreach(prospect_id=prospect["id"], step=step, subject=subject, message_id=message_id)
     if not advance:
         return True
     nxt = next((s for s in OUTREACH_STEPS if s["step"] == step + 1), None)
@@ -634,8 +650,16 @@ def outreach_plan(prospect) -> list[dict]:
         state = "sent" if spec["step"] in sent_steps else ("next" if spec["step"] == int(prospect["outreach_step"] or 0) + 1 else "to come")
         if prospect["outreach_status"] in ("stopped", "opted_out", "replied") and state == "next":
             state = "held"
+        rows = [r for r in db.list_outreach_log(prospect["id"]) if r["step"] == spec["step"] and r["direction"] == "out"]
+        keys = rows[0].keys() if rows else ()
         plan.append({**spec, "state": state, "sent_at": row["created_at"] if row else None, "subject": row["subject"] if row else "",
-                     "sent_count": sum(1 for r in db.list_outreach_log(prospect["id"]) if r["step"] == spec["step"] and r["direction"] == "out" and r["status"] == "sent")})
+                     "sent_count": sum(1 for r in rows if r["status"] == "sent"),
+                     # Opens and clicks as Postmark reports them, per step: the
+                     # useful question is which email earned the click, not
+                     # whether the person ever clicked anything.
+                     "opens": sum(int(r["open_count"] or 0) for r in rows) if "open_count" in keys else 0,
+                     "clicks": sum(int(r["click_count"] or 0) for r in rows) if "click_count" in keys else 0,
+                     "tracked": any(r["message_id"] for r in rows) if "message_id" in keys else False})
     return plan
 
 

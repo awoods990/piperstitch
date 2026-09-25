@@ -22,7 +22,10 @@
     <div class="kpi-grid" style="margin-bottom:0">
       <div class="kpi-tile"><div class="kpi-value">{{ plan|selectattr('state', 'equalto', 'sent')|list|length }} of {{ plan|length }}</div><div class="kpi-label">Emails sent</div>
         <div class="kpi-sub">{% if p.outreach_status == 'active' and p.outreach_next_at %}next due {{ p.outreach_next_at|short_date }}{% elif p.outreach_status == 'replied' %}held while you talk{% else %}nothing scheduled{% endif %}</div></div>
-      <div class="kpi-tile"><div class="kpi-value">{{ p.views }}</div><div class="kpi-label">Opened the details</div><div class="kpi-sub">{% if p.last_seen_at %}last {{ p.last_seen_at|short_date }}{% else %}not yet{% endif %}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ engagement.opens }}</div><div class="kpi-label">Email opens</div>
+        <div class="kpi-sub">{% if engagement.last_open %}last {{ engagement.last_open|short_date }}{% else %}none reported{% endif %}</div></div>
+      <div class="kpi-tile"><div class="kpi-value">{{ p.views }}</div><div class="kpi-label">Reached the details page</div>
+        <div class="kpi-sub">{% if p.last_seen_at %}last {{ p.last_seen_at|short_date }}{% else %}not yet{% endif %}</div></div>
       <div class="kpi-tile{% if p.outreach_status == 'replied' %} warn{% endif %}"><div class="kpi-value">{{ timeline|selectattr('kind', 'equalto', 'reply')|list|length }}</div><div class="kpi-label">Replies</div><div class="kpi-sub">from them to us</div></div>
       <div class="kpi-tile"><div class="kpi-value">{{ p.created_at|short_date }}</div><div class="kpi-label">Approached</div><div class="kpi-sub">{{ p.source }}</div></div>
     </div>
@@ -39,7 +42,8 @@
           <tr>
             <td class="muted small">{{ 'at once' if step.delay_days == 0 else '+' ~ step.delay_days ~ 'd' }}</td>
             <td><a href="/admin/emails/system/{{ step.key }}">{{ step.subject or step.key.replace('partner_outreach_', 'Email ') }}</a>
-              {% if step.sent_at %}<br><span class="muted small">sent {{ step.sent_at|short_date }}{% if step.sent_count > 1 %} &middot; {{ step.sent_count }} times{% endif %}</span>{% endif %}</td>
+              {% if step.sent_at %}<br><span class="muted small">sent {{ step.sent_at|short_date }}{% if step.sent_count > 1 %} &middot; {{ step.sent_count }} times{% endif %}
+                {%- if step.tracked %} &middot; {{ step.opens }} open{{ '' if step.opens == 1 else 's' }}, {{ step.clicks }} click{{ '' if step.clicks == 1 else 's' }}{% endif %}</span>{% endif %}</td>
             <td>{% if step.state == 'sent' %}<span class="pill yes">sent</span>
               {% elif step.state == 'next' %}<span class="pill trialing">next{% if p.outreach_next_at %}, {{ p.outreach_next_at|short_date }}{% endif %}</span>
               {% elif step.state == 'held' %}<span class="pill past_due">held</span>

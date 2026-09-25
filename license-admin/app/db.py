@@ -404,9 +404,18 @@ CREATE TABLE IF NOT EXISTS partner_outreach_log (
     subject TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'sent',      -- sent | failed
     error TEXT NOT NULL DEFAULT '',
+    message_id TEXT,                          -- Postmark's id, so an open can be tied to which email
+    opened_at TEXT,                           -- first open; see the caveats in the admin
+    open_count INTEGER NOT NULL DEFAULT 0,
+    clicked_at TEXT,
+    click_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_partner_outreach_prospect ON partner_outreach_log(prospect_id);
+-- The message_id index is created after the migration below adds the
+-- column: on a database that predates it, CREATE TABLE IF NOT EXISTS
+-- leaves the old table alone and an index here would name a column that
+-- does not exist yet.
 
 CREATE TABLE IF NOT EXISTS partner_code_requests (
     -- A partner asking for another code (one per channel is the usual
@@ -644,6 +653,11 @@ def init_db() -> None:
         _add_column_if_missing(conn, "customers", "marketing_opt_out", "INTEGER NOT NULL DEFAULT 0")
         _add_column_if_missing(conn, "projects", "thumbnail", "TEXT")   # projects saved before this stay blank until next saved
         _add_column_if_missing(conn, "partner_prospects", "slug", "TEXT")
+        for col, defn in (("message_id", "TEXT"), ("opened_at", "TEXT"), ("open_count", "INTEGER NOT NULL DEFAULT 0"),
+                          ("clicked_at", "TEXT"), ("click_count", "INTEGER NOT NULL DEFAULT 0")):
+            _add_column_if_missing(conn, "partner_outreach_log", col, defn)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_outreach_message ON partner_outreach_log(message_id)")
+        _add_column_if_missing(conn, "email_log", "message_id", "TEXT")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_slug ON partner_prospects(slug) WHERE slug IS NOT NULL")
         _add_column_if_missing(conn, "customers", "last_active_at", "TEXT")   # last web sign-in / app use, for "we miss you"
         # Which product a subscription is for: the app ('core') or PiperStitch Proofs ('proofs').
@@ -2134,10 +2148,38 @@ def list_recruits(limit: int = 300) -> list[sqlite3.Row]:
             "FROM partner_prospects p WHERE p.outreach_status != '' ORDER BY COALESCE(p.applied_at, p.last_seen_at, p.created_at) DESC LIMIT ?", (limit,)).fetchall()
 
 
-def log_outreach(*, prospect_id: int, step: int, subject: str, status: str = "sent", error: str = "") -> int:
+def record_email_event(message_id: str, *, kind: str, when: str) -> bool:
+    """One open or click reported by Postmark. True when it matched a
+    recruitment email we sent.
+
+    Counted rather than merely flagged: a second open days later is the
+    interesting one, and the first is often a mail client fetching images
+    before a human has seen anything.
+    """
+    if not message_id:
+        return False
+    column, at = ("open_count", "opened_at") if kind == "open" else ("click_count", "clicked_at")
     with connection() as conn:
-        cur = conn.execute("INSERT INTO partner_outreach_log (prospect_id, step, subject, status, error, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                           (prospect_id, step, subject[:200], status, error[:300], _now()))
+        cur = conn.execute(
+            f"UPDATE partner_outreach_log SET {column} = {column} + 1, {at} = COALESCE({at}, ?) WHERE message_id = ?",
+            (when, message_id))
+        return cur.rowcount > 0
+
+
+def outreach_engagement(prospect_id: int) -> dict:
+    """Opens and clicks for one prospect, across every email we sent them."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(open_count), 0) AS opens, COALESCE(SUM(click_count), 0) AS clicks, "
+            "MAX(opened_at) AS last_open, MAX(clicked_at) AS last_click "
+            "FROM partner_outreach_log WHERE prospect_id = ? AND status = 'sent'", (prospect_id,)).fetchone()
+    return {"opens": row["opens"], "clicks": row["clicks"], "last_open": row["last_open"], "last_click": row["last_click"]}
+
+
+def log_outreach(*, prospect_id: int, step: int, subject: str, status: str = "sent", error: str = "", message_id: str = "") -> int:
+    with connection() as conn:
+        cur = conn.execute("INSERT INTO partner_outreach_log (prospect_id, step, subject, status, error, message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (prospect_id, step, subject[:200], status, error[:300], message_id or None, _now()))
         return cur.lastrowid
 
 
@@ -2882,9 +2924,10 @@ def reset_email_template(key: str) -> None:
         conn.execute("UPDATE email_templates SET edited = 0 WHERE key = ?", (key,))
 
 
-def log_email(*, customer_id: Optional[int], to_email: str, kind: str, subject: str, status: str, error: str = "") -> None:
+def log_email(*, customer_id: Optional[int], to_email: str, kind: str, subject: str, status: str, error: str = "", message_id: str = "") -> None:
     with connection() as conn:
-        conn.execute("INSERT INTO email_log (customer_id, to_email, kind, subject, status, error, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (customer_id, to_email, kind, subject, status, error[:500], _now()))
+        conn.execute("INSERT INTO email_log (customer_id, to_email, kind, subject, status, error, message_id, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (customer_id, to_email, kind, subject, status, error[:500], message_id or None, _now()))
 
 
 def list_email_log(customer_id: int, limit: int = 30) -> list[sqlite3.Row]:

@@ -854,9 +854,10 @@ def render_template(row, vars: dict, *, marketing: bool = False, footer_note: st
 
 
 def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, vars: Optional[dict] = None, reply_to: str = "", attachments: Optional[list] = None, footer_note: str = "",
-                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "") -> None:
+                hero_image: str = "", hero_alt: str = "", hero_url: str = "", hero_full: bool = False, hero_kicker: str = "") -> str:
     """Sends one of the editable system emails. Raises EmailSendError on
-    failure after logging it."""
+    failure after logging it. Returns the provider's message id, which is
+    what a later open or click is reported against."""
     row = db.get_email_template(key)
     if row is None:
         seed(); row = db.get_email_template(key)
@@ -867,11 +868,12 @@ def send_system(key: str, *, to_email: str, customer_id: Optional[int] = None, v
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
         msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream", filename=name)
     try:
-        email_sender._send_smtp(msg)
+        message_id = email_sender._send_smtp(msg)
     except email_sender.EmailSendError as e:
         db.log_email(customer_id=customer_id, to_email=to_email, kind=key, subject=subject, status="failed", error=str(e))
         raise
-    db.log_email(customer_id=customer_id, to_email=to_email, kind=key, subject=subject, status="sent")
+    db.log_email(customer_id=customer_id, to_email=to_email, kind=key, subject=subject, status="sent", message_id=message_id)
+    return message_id
 
 
 def preview(row, customer=None, **extra) -> tuple[str, str, str]:
