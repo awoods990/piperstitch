@@ -51,14 +51,25 @@ struct StitchTypeClassifierTests {
         #expect(StitchTypeClassifier.classify(shape: hShape, parameters: defaultParams) != .satin)
     }
 
-    /// 1.2mm is below the current 1.5mm minimum satin width but was above
-    /// the old 1.0mm default -- guards the raised default itself, not just
-    /// the classifier logic around it.
-    @Test func widthJustBelowTheRaisedMinimumBecomesTripleRun() {
-        let almostThinEnough = VectorShape(subPaths: [SubPath(points: [
+    /// A rule under a word, a keyline, the bar either side of a logotype:
+    /// 1.2 mm is under the 1.5 mm floor, but the shape is a satin column
+    /// by construction and a triple run down its middle leaves two fifths
+    /// of the artwork bare. The floor asks whether a shape is worth satin
+    /// at all; a bar this regular is, down to the millimetre a recognised
+    /// stroke already gets.
+    @Test func aRegularBarUnderTheFloorIsStillSatin() {
+        let bar = VectorShape(subPaths: [SubPath(points: [
             Point2D(0, 0), Point2D(20, 0), Point2D(20, 1.2), Point2D(0, 1.2),
         ], closed: true)])
-        #expect(StitchTypeClassifier.classify(shape: almostThinEnough, parameters: defaultParams) == .tripleRun)
+        #expect(StitchTypeClassifier.classify(shape: bar, parameters: defaultParams) == .satin)
+    }
+
+    /// Below the millimetre, the thread cannot show a column at all.
+    @Test func aBarThinnerThanThreadCanShowIsStillATripleRun() {
+        let hairline = VectorShape(subPaths: [SubPath(points: [
+            Point2D(0, 0), Point2D(20, 0), Point2D(20, 0.7), Point2D(0, 0.7),
+        ], closed: true)])
+        #expect(StitchTypeClassifier.classify(shape: hairline, parameters: defaultParams) == .tripleRun)
     }
 
     /// The actual regression this fix exists for: a real customer logo's

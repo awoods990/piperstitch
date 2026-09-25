@@ -122,6 +122,24 @@ public enum StitchTypeClassifier {
             let box = shape.boundingBox
             let longer = max(box.width, box.height), shorter = min(box.width, box.height)
             if shape.subPaths.count == 1, longer >= 1.0, shorter >= longer * 0.4, averageWidth >= 0.6 { return .satin }
+            // A rule under a word, a keyline, the bar either side of a
+            // logotype: long, of one width, and a satin column by
+            // construction -- it fails the test above only because that
+            // one is looking for a dot. `minSatinWidthMM` asks whether a
+            // shape is worth satin at all, and a bar this regular is,
+            // down to the millimetre a recognised stroke already gets. A
+            // triple run down the middle of a 1.4 mm bar leaves two
+            // fifths of the artwork bare, which is what the customer sees.
+            // A floor the caller raised on purpose is theirs to keep --
+            // "nothing under 5 mm" means that. This works around the
+            // bluntness of the default, not somebody's deliberate choice.
+            let defaultFloor = StitchGenerationParameters().minSatinWidthMM
+            if parameters.minSatinWidthMM <= defaultFloor,
+               averageWidth >= strokeMinimumSatinWidthMM, shape.subPaths.count == 1 {
+                var asStroke = parameters
+                asStroke.minSatinWidthMM = strokeMinimumSatinWidthMM
+                if SatinColumnGenerator.canRepresentAsSingleSatinColumn(shape: shape, parameters: asStroke) { return .satin }
+            }
             return .tripleRun
         }
         if shape.subPaths.count > 2 {
