@@ -2186,6 +2186,12 @@ def get_outreach_mailbox(mailbox_id: int) -> Optional[sqlite3.Row]:
         return conn.execute("SELECT * FROM outreach_mailboxes WHERE id = ?", (mailbox_id,)).fetchone()
 
 
+def find_outreach_mailbox(host: str, username: str) -> Optional[sqlite3.Row]:
+    with connection() as conn:
+        return conn.execute("SELECT * FROM outreach_mailboxes WHERE host = ? AND username = ?",
+                            (host.strip(), username.strip())).fetchone()
+
+
 def add_outreach_mailbox(*, label: str, host: str, port: int, username: str, password: str,
                          from_email: str, reply_to: str = "", daily_cap: int = 20) -> int:
     with connection() as conn:

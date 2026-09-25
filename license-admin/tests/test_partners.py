@@ -1662,3 +1662,21 @@ def test_the_recruit_page_offers_the_mailboxes_and_remembers_the_choice(isolated
         # and back to the rotation
         client.post(f"/admin/partners/recruit/{pid}/mailbox", data={"mailbox_id": ""}, follow_redirects=False)
         assert db.get_partner_prospect(pid)["mailbox_id"] is None
+
+
+def test_re_entering_the_same_mailbox_updates_it_rather_than_piling_up_copies(isolated_db, test_keypair, fake_smtp):
+    """A credential being refused gets retyped several times. Each attempt
+    used to leave another identical row behind."""
+    from app import outreach_mailbox
+    for attempt in ("first-try", "second-try", "third-try"):
+        outreach_mailbox.save(None, label="Ashley", host="smtp.gmail.com", port=587,
+                              username="hello@piperstitch.co", password=attempt,
+                              from_email="Ashley <hello@piperstitch.co>", reply_to="", daily_cap=20)
+    boxes = outreach_mailbox.mailboxes()
+    assert len(boxes) == 1, f"one mailbox, not {len(boxes)}"
+    assert outreach_mailbox.password_for(boxes[0]["id"]) == "third-try", "the latest attempt is the one kept"
+
+    # A genuinely different mailbox is still its own row.
+    outreach_mailbox.save(None, label="Sam", host="smtp.gmail.com", port=587, username="sam@piperstitch.co",
+                          password="p", from_email="Sam <sam@piperstitch.co>", reply_to="", daily_cap=20)
+    assert len(outreach_mailbox.mailboxes()) == 2

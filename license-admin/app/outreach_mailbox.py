@@ -102,6 +102,14 @@ def save(mailbox_id: Optional[int], *, label: str, host: str, port: int, usernam
     """A blank password keeps the one already stored: editing a reply-to
     should not mean retyping a secret the form never shows back."""
     sealed = documents.seal(password.encode()) if password else None
+    # The same mailbox re-entered is the same mailbox. Without this, every
+    # attempt at a credential that is being refused leaves another identical
+    # row behind, and the list fills with copies of the one thing that is
+    # not working.
+    if not mailbox_id:
+        twin = db.find_outreach_mailbox(host, username)
+        if twin is not None:
+            mailbox_id = twin["id"]
     if mailbox_id:
         fields = {"label": label[:80], "host": host.strip(), "port": port, "username": username.strip(),
                   "from_email": from_email.strip(), "reply_to": reply_to.strip(), "daily_cap": daily_cap}
@@ -163,8 +171,19 @@ def check(mailbox_id: int) -> str:
                    "Microsoft 365 needs SMTP AUTH enabled for this mailbox.")
         db.update_outreach_mailbox(mailbox_id, last_error=problem)
         return problem
-    except (smtplib.SMTPException, OSError) as e:
-        problem = f"Couldn't reach {mailbox['host']}: {e}"
+    except OSError as e:
+        # Errno 101/113: the host cannot open the connection at all. On
+        # Railway that is the platform, not the credential -- outbound SMTP
+        # ports are blocked except on the Pro plan. Saying so here saves
+        # retyping a password that was never the problem.
+        blocked = getattr(e, "errno", None) in (101, 113) or "unreachable" in str(e).lower()
+        problem = (f"Couldn't reach {mailbox['host']}. This server cannot open an SMTP connection at all — on Railway, "
+                   f"outbound SMTP is blocked below the Pro plan, and no password will change that. ({e})"
+                   if blocked else f"Couldn't reach {mailbox['host']}: {e}")
+        db.update_outreach_mailbox(mailbox_id, last_error=problem)
+        return problem
+    except smtplib.SMTPException as e:
+        problem = f"{mailbox['host']} refused it: {e}"
         db.update_outreach_mailbox(mailbox_id, last_error=problem)
         return problem
     db.update_outreach_mailbox(mailbox_id, last_ok_at=db.now_iso(), last_error="")
