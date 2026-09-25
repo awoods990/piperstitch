@@ -2479,8 +2479,8 @@ def admin_partner_resource_announce(resource_id: int):
     return _partners_redirect(message=f"Queued — {waiting} partner{'' if waiting == 1 else 's'} will hear within a few minutes.", anchor="kit")
 
 
-@app.post("/admin/partners/mailbox", dependencies=[Depends(auth.require_admin)])
-def admin_outreach_mailbox_save(mailbox_id: str = Form(""), label: str = Form(""), host: str = Form(""),
+@app.post("/admin/partners/mailbox", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox_save(request: Request, mailbox_id: str = Form(""), label: str = Form(""), host: str = Form(""),
                                 port: str = Form("587"), username: str = Form(""), password: str = Form(""),
                                 from_email: str = Form(""), reply_to: str = Form(""), daily_cap: str = Form("20")):
     """Add or edit one of the mailboxes recruitment goes out of. Set here
@@ -2494,21 +2494,27 @@ def admin_outreach_mailbox_save(mailbox_id: str = Form(""), label: str = Form(""
         port=int(port) if port.strip().isdigit() else 587, username=username, password=password,
         from_email=from_email, reply_to=reply_to,
         daily_cap=int(daily_cap) if daily_cap.strip().isdigit() else 20)
-    problem = outreach_mailbox.check(new_id)
-    if problem:
-        return _partners_redirect(error=f"Saved, but it didn't sign in. {problem}", anchor="mailboxes")
-    return _partners_redirect(message=f"Saved, and {host.strip()} signed in.", anchor="mailboxes")
+    # Saving and testing land on the same page, because "I pressed the
+    # button and nothing happened" was the report both times a result came
+    # back as a flash message on the partners page.
+    return templates.TemplateResponse(request, "mailbox_test.html", {
+        "active_nav": "partners", "r": outreach_mailbox.diagnose(new_id), "mailbox_id": new_id, "saved": True,
+        "tested_at": datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC"),
+    })
 
 
-@app.post("/admin/partners/mailbox/{mailbox_id}/test", dependencies=[Depends(auth.require_admin)])
-def admin_outreach_mailbox_test(mailbox_id: int):
+@app.post("/admin/partners/mailbox/{mailbox_id}/test", response_class=HTMLResponse, dependencies=[Depends(auth.require_admin)])
+def admin_outreach_mailbox_test(request: Request, mailbox_id: int):
     """Sign in without sending, so a wrong password is found here rather
-    than by a prospect never hearing from us."""
-    problem = outreach_mailbox.check(mailbox_id)
-    if problem:
-        return _partners_redirect(error=problem, anchor="mailboxes")
-    row = db.get_outreach_mailbox(mailbox_id)
-    return _partners_redirect(message=f"Signed in to {row['host']} as {row['username']}.", anchor="mailboxes")
+    than by a prospect never hearing from us. The answer comes back as the
+    page itself, not as a redirect carrying a message: a redirect to the
+    partners page put the result inside a panel that closes, under an
+    anchor the browser jumps to, which reads as nothing having happened."""
+    result = outreach_mailbox.diagnose(mailbox_id)
+    return templates.TemplateResponse(request, "mailbox_test.html", {
+        "active_nav": "partners", "r": result, "mailbox_id": mailbox_id,
+        "tested_at": datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC"),
+    })
 
 
 @app.post("/admin/partners/mailbox/{mailbox_id}/active", dependencies=[Depends(auth.require_admin)])

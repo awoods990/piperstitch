@@ -1,0 +1,56 @@
+{% extends "admin_base.html" %}
+{% block title %}Mailbox test — PiperStitch License Admin{% endblock %}
+{% block admin_body %}
+{# A page rather than a flash message. The result of a test was being shown
+   inside a collapsible panel, below the fold, on a page the browser then
+   jumped down; three separate ways for an answer to arrive and look like
+   nothing happening. A whole page cannot be collapsed or scrolled past. #}
+<main>
+  <div class="toolbar">
+    <div><h1 style="margin:0">Mailbox test</h1>
+      <div class="muted small">{{ r.mailbox.label or r.mailbox.username if r.mailbox else 'Mailbox' }}</div></div>
+    <div><a class="btn small" href="/admin/partners#mailboxes">Back to partners</a></div>
+  </div>
+
+  <div class="card" style="border-left:6px solid {{ 'var(--readyBorder)' if r.ok else 'var(--critBorder)' }}">
+    <h2 style="margin:0 0 .35rem">{% if saved %}Saved. {% endif %}{{ 'It works' if r.ok else "It didn't sign in" }}</h2>
+    <p style="margin:0">{{ r.summary }}</p>
+  </div>
+
+  {% if r.steps %}
+  <div class="card">
+    <table>
+      {% for s in r.steps %}
+      <tr>
+        <td style="width:2.2rem; font-size:1.1rem">
+          {% if s.state == 'ok' %}<span style="color:#1a7f37">&check;</span>
+          {% elif s.state == 'failed' %}<span style="color:#b42318">&times;</span>
+          {% else %}<span class="muted">&mdash;</span>{% endif %}
+        </td>
+        <td><strong>{{ s.name }}</strong>
+          {% if s.detail %}<div class="small {{ '' if s.state == 'failed' else 'muted' }}">{{ s.detail }}</div>{% endif %}
+          {% if s.state == 'skipped' %}<div class="muted small">Not reached — the step above it failed first.</div>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {% if r.advice %}
+  <div class="card">
+    <h3 style="margin:0 0 .35rem">What to do</h3>
+    <p style="margin:0">{{ r.advice }}</p>
+  </div>
+  {% endif %}
+
+  {% if not r.gone %}
+  <div class="card">
+    <form method="post" action="/admin/partners/mailbox/{{ mailbox_id }}/test" style="display:inline">
+      <button class="btn">Test again</button>
+    </form>
+    <span class="muted small" style="margin-left:.6rem">Tested {{ tested_at }}.</span>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

@@ -1680,3 +1680,44 @@ def test_re_entering_the_same_mailbox_updates_it_rather_than_piling_up_copies(is
     outreach_mailbox.save(None, label="Sam", host="smtp.gmail.com", port=587, username="sam@piperstitch.co",
                           password="p", from_email="Sam <sam@piperstitch.co>", reply_to="", daily_cap=20)
     assert len(outreach_mailbox.mailboxes()) == 2
+
+
+def test_an_unreachable_mailbox_is_not_reported_as_a_password_problem(isolated_db, monkeypatch):
+    """The failure that cost a day: a blocked outbound port reported as a
+    sign-in error sends you back to retype a password that was never asked
+    for. The network stage has to fail on its own, and say so."""
+    import socket as _socket
+    from app import outreach_mailbox
+    mid = _mailbox()
+
+    def refuse(*a, **k):
+        raise OSError(101, "Network is unreachable")
+    monkeypatch.setattr(outreach_mailbox.socket, "create_connection", refuse)
+
+    result = outreach_mailbox.diagnose(mid)
+    assert result["ok"] is False and result.get("network") is True
+    assert result["steps"][0]["state"] == "failed"
+    assert [s["state"] for s in result["steps"][1:]] == ["skipped", "skipped"], "nothing past the network is asked"
+    assert "no password will change that" in result["steps"][0]["detail"], "it says outright what isn't at fault"
+    assert "Railway" in result["advice"]
+
+    def hang(*a, **k):
+        raise _socket.timeout()
+    monkeypatch.setattr(outreach_mailbox.socket, "create_connection", hang)
+    assert "never answered" in outreach_mailbox.diagnose(mid)["steps"][0]["detail"]
+
+
+def test_testing_a_mailbox_answers_with_a_page_of_its_own(isolated_db, admin_password_configured, monkeypatch):
+    """A result delivered as a flash message on the partners page arrived
+    inside a panel that closes, under an anchor the browser jumps to. Twice
+    that read as nothing happening. The answer is now the whole response."""
+    from app import outreach_mailbox
+    mid = _mailbox()
+    monkeypatch.setattr(outreach_mailbox.socket, "create_connection",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(101, "Network is unreachable")))
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        r = client.post(f"/admin/partners/mailbox/{mid}/test")
+    assert r.status_code == 200, "not a redirect -- the page itself is the answer"
+    assert "Reaching smtp.gmail.com on port 587" in r.text
+    assert "Test again" in r.text and "Back to partners" in r.text

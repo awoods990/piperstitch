@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import smtplib
+import socket
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -143,48 +144,135 @@ def choose(prospect) -> Optional[dict]:
     return max(with_room, key=lambda m: (m["room_today"], -m["id"]))
 
 
-def connect(mailbox: dict) -> smtplib.SMTP:
-    password = password_for(mailbox["id"])
+SMTP_TIMEOUT = 10
+
+
+def _open(mailbox: dict) -> smtplib.SMTP:
     if mailbox["port"] == 465:
-        smtp = smtplib.SMTP_SSL(mailbox["host"], mailbox["port"], timeout=20)
-    else:
-        smtp = smtplib.SMTP(mailbox["host"], mailbox["port"], timeout=20)
-        smtp.starttls()
-    smtp.login(mailbox["username"], password)
+        return smtplib.SMTP_SSL(mailbox["host"], mailbox["port"], timeout=SMTP_TIMEOUT)
+    smtp = smtplib.SMTP(mailbox["host"], mailbox["port"], timeout=SMTP_TIMEOUT)
+    smtp.starttls()
     return smtp
+
+
+def connect(mailbox: dict) -> smtplib.SMTP:
+    smtp = _open(mailbox)
+    smtp.login(mailbox["username"], password_for(mailbox["id"]))
+    return smtp
+
+
+def _reachable(host: str, port: int) -> str:
+    """Open a bare socket, before any SMTP at all. A password cannot be the
+    reason this fails, so when it does the answer is never to retype one.
+    The two failures look different from the outside and mean different
+    things: refused comes back at once and is a server saying no, while
+    silence for the whole timeout is a port being dropped -- which is what
+    a hosting platform blocking outbound SMTP looks like from inside it."""
+    try:
+        with socket.create_connection((host, port), timeout=SMTP_TIMEOUT):
+            return ""
+    except socket.timeout:
+        return (f"{host} never answered on port {port} — {SMTP_TIMEOUT} seconds of silence. Nothing refused the "
+                f"connection; it simply went nowhere. That is what a blocked outbound port looks like from inside "
+                f"a hosting platform.")
+    except socket.gaierror as e:
+        return f"There is no such server as {host} — the name doesn't resolve. ({e})"
+    except OSError as e:
+        if getattr(e, "errno", None) in (101, 113) or "unreachable" in str(e).lower():
+            return (f"This server cannot open a connection to {host}:{port} at all. Outbound SMTP is blocked where "
+                    f"the admin runs, and no password will change that.")
+        return f"Couldn't reach {host} on port {port} — {e}"
+
+
+def diagnose(mailbox_id: int) -> dict:
+    """Three separate questions, asked in order, because they have three
+    different answers. Can this server reach the internet on that port; will
+    the mail server hold an encrypted conversation; and only last, is the
+    password right. Reported as stages so the one that failed is the one
+    you read, rather than a single line that sends you back to the password
+    when the password was never involved."""
+    row = db.get_outreach_mailbox(mailbox_id)
+    if row is None:
+        return {"ok": False, "gone": True, "steps": [], "summary": "That mailbox isn't here any more.", "advice": ""}
+    mailbox = _row_to_dict(row)
+    steps = [{"name": f"Reaching {mailbox['host']} on port {mailbox['port']}", "state": "waiting", "detail": ""},
+             {"name": "Starting an encrypted session", "state": "waiting", "detail": ""},
+             {"name": f"Signing in as {mailbox['username']}", "state": "waiting", "detail": ""}]
+
+    if not (mailbox["host"] and mailbox["username"] and mailbox["has_password"]):
+        for s in steps:
+            s["state"] = "skipped"
+        return {"ok": False, "steps": steps, "mailbox": mailbox,
+                "summary": "This mailbox isn't filled in yet.",
+                "advice": "It needs a server, a username and a password before it can sign in."}
+
+    problem = _reachable(mailbox["host"], mailbox["port"])
+    if problem:
+        steps[0].update(state="failed", detail=problem)
+        steps[1]["state"] = steps[2]["state"] = "skipped"
+        db.update_outreach_mailbox(mailbox_id, last_error=problem)
+        return {"ok": False, "steps": steps, "mailbox": mailbox, "network": True,
+                "summary": "This server can't get out to the mail server.",
+                "advice": "Railway blocks outbound SMTP below the Pro plan, and enabling it can be a per-service "
+                          "setting rather than an account-wide one — check the admin service itself, not only the "
+                          "plan. Until a connection opens here, nothing about the mailbox or its password matters."}
+    steps[0].update(state="ok", detail="The port answered.")
+
+    try:
+        smtp = _open(mailbox)
+    except smtplib.SMTPException as e:
+        steps[1].update(state="failed", detail=f"{mailbox['host']} answered, but wouldn't start an encrypted session: {e}")
+        steps[2]["state"] = "skipped"
+        db.update_outreach_mailbox(mailbox_id, last_error=steps[1]["detail"])
+        return {"ok": False, "steps": steps, "mailbox": mailbox,
+                "summary": "The mail server answered but refused an encrypted session.",
+                "advice": "Port 587 expects STARTTLS and port 465 expects TLS from the first byte. If the port was "
+                          "changed by hand, set it back to 587 for Google and Microsoft."}
+    except OSError as e:
+        steps[1].update(state="failed", detail=f"The connection dropped: {e}")
+        steps[2]["state"] = "skipped"
+        db.update_outreach_mailbox(mailbox_id, last_error=steps[1]["detail"])
+        return {"ok": False, "steps": steps, "mailbox": mailbox, "network": True,
+                "summary": "The connection opened and then died.",
+                "advice": "Something between here and the mail server is closing SMTP connections part-way."}
+    steps[1].update(state="ok", detail="Encrypted.")
+
+    try:
+        with smtp:
+            smtp.login(mailbox["username"], password_for(mailbox["id"]))
+    except smtplib.SMTPAuthenticationError as e:
+        steps[2].update(state="failed", detail=f"{mailbox['host']} refused the sign-in: {e}")
+        db.update_outreach_mailbox(mailbox_id, last_error=steps[2]["detail"])
+        return {"ok": False, "steps": steps, "mailbox": mailbox, "password": True,
+                "summary": "The server is reachable. It's the sign-in that's being refused.",
+                "advice": "For Google this must be a 16-character App Password, not the account password, with "
+                          "2-Step Verification on; paste it without the spaces Google shows it in. The username is "
+                          "the full address. If the address is on a Workspace domain, the admin console must also "
+                          "allow app passwords."}
+    except smtplib.SMTPException as e:
+        steps[2].update(state="failed", detail=f"{mailbox['host']} refused it: {e}")
+        db.update_outreach_mailbox(mailbox_id, last_error=steps[2]["detail"])
+        return {"ok": False, "steps": steps, "mailbox": mailbox,
+                "summary": "The mail server turned the sign-in away.",
+                "advice": "The words above come from the mail server itself."}
+    except OSError as e:
+        steps[2].update(state="failed", detail=f"The connection dropped during sign-in: {e}")
+        db.update_outreach_mailbox(mailbox_id, last_error=steps[2]["detail"])
+        return {"ok": False, "steps": steps, "mailbox": mailbox, "network": True,
+                "summary": "The connection died while signing in.", "advice": ""}
+    steps[2].update(state="ok", detail="Signed in.")
+
+    db.update_outreach_mailbox(mailbox_id, last_ok_at=db.now_iso(), last_error="")
+    return {"ok": True, "steps": steps, "mailbox": mailbox,
+            "summary": f"Signed in to {mailbox['host']} as {mailbox['username']}. This mailbox can send.",
+            "advice": ""}
 
 
 def check(mailbox_id: int) -> str:
     """Sign in without sending. '' when it worked; otherwise words an admin
     can act on. The outcome is kept on the row so the list shows it."""
-    row = db.get_outreach_mailbox(mailbox_id)
-    if row is None:
-        return "That mailbox isn't here any more."
-    mailbox = _row_to_dict(row)
-    if not (mailbox["host"] and mailbox["username"] and mailbox["has_password"]):
-        return "It needs a server, a username and a password before it can sign in."
-    try:
-        with connect(mailbox):
-            pass
-    except smtplib.SMTPAuthenticationError:
-        problem = ("Sign-in refused. Google needs an App Password with 2-Step Verification on the account; "
-                   "Microsoft 365 needs SMTP AUTH enabled for this mailbox.")
-        db.update_outreach_mailbox(mailbox_id, last_error=problem)
-        return problem
-    except OSError as e:
-        # Errno 101/113: the host cannot open the connection at all. On
-        # Railway that is the platform, not the credential -- outbound SMTP
-        # ports are blocked except on the Pro plan. Saying so here saves
-        # retyping a password that was never the problem.
-        blocked = getattr(e, "errno", None) in (101, 113) or "unreachable" in str(e).lower()
-        problem = (f"Couldn't reach {mailbox['host']}. This server cannot open an SMTP connection at all — on Railway, "
-                   f"outbound SMTP is blocked below the Pro plan, and no password will change that. ({e})"
-                   if blocked else f"Couldn't reach {mailbox['host']}: {e}")
-        db.update_outreach_mailbox(mailbox_id, last_error=problem)
-        return problem
-    except smtplib.SMTPException as e:
-        problem = f"{mailbox['host']} refused it: {e}"
-        db.update_outreach_mailbox(mailbox_id, last_error=problem)
-        return problem
-    db.update_outreach_mailbox(mailbox_id, last_ok_at=db.now_iso(), last_error="")
-    return ""
+    result = diagnose(mailbox_id)
+    if result["ok"]:
+        return ""
+    failed = next((s["detail"] for s in result["steps"] if s["state"] == "failed"), "")
+    return failed or result["summary"]
