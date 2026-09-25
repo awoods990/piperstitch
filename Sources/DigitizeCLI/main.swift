@@ -511,24 +511,44 @@ do {
     // KEEP_SMALL_TEXT=1 sews it anyway, for comparison.
     var droppedShapeIndices = Set<Int>()
     var omittedTextLines = 0
+    var rescue = SmallTextRescue.Plan()
     if combined.width > 0 {
         let scale = min(widthMM / combined.width, heightMM / max(1e-9, combined.height))
         let minimum = TextLineFinder.minimumCapHeightMM(for: .wt40)
         let lines = TextLineFinder.find(shapes: rawShapes, fillColors: fillColors, imageHeightPixels: artworkPixelHeight)
+        if ProcessInfo.processInfo.environment["KEEP_SMALL_TEXT"] == nil {
+            rescue = SmallTextRescue.plan(lines: lines, shapes: rawShapes, scaleToMM: scale, minimumCapHeightMM: minimum)
+            droppedShapeIndices = rescue.dropped
+            omittedTextLines = rescue.omittedLines
+        }
+        if let width = SmallTextRescue.widthThatSewsAllText(lines: lines, currentWidthMM: widthMM,
+                                                            scaleToMM: scale, minimumCapHeightMM: minimum) {
+            print(String(format: "  text: at %.0f mm wide some lines are too small to sew; %.1f mm wide would carry them all", widthMM, width))
+        }
         for (k, line) in lines.enumerated() {
             let capMM = line.capHeightPixels * scale
-            let tooSmall = capMM < minimum && line.dropsWhenTooSmall
-            if tooSmall, ProcessInfo.processInfo.environment["KEEP_SMALL_TEXT"] == nil {
-                droppedShapeIndices.formUnion(line.shapeIndices)
-                omittedTextLines += 1
+            let grown = line.shapeIndices.first.flatMap { rescue.growth[$0] }
+            let note: String
+            if let grown = grown {
+                note = String(format: " -- too small, grown %.0f%% to %.1f mm", (grown - 1) * 100, capMM * grown)
+            } else if !line.shapeIndices.isEmpty, rescue.dropped.contains(line.shapeIndices[0]) {
+                note = " -- too small, left out"
+            } else {
+                note = ""
             }
             print(String(format: "  text line %d: %d letters, cap %.1f mm, %.0f deg, %@%@%@", k + 1, line.shapeIndices.count, capMM, line.rotationDegrees,
-                         line.suggestsBold ? "bold" : "regular", line.curved ? ", curved" : "", tooSmall ? " -- too small, left out" : ""))
+                         line.suggestsBold ? "bold" : "regular", line.curved ? ", curved" : "", note))
         }
+    }
+    let shapesToFit = rawShapes.enumerated().map { index, shape -> VectorShape in
+        guard let scale = rescue.growth[index], let centre = rescue.centre[index] else { return shape }
+        return SmallTextRescue.grown(shape, by: scale, about: centre)
     }
 
     var objects: [EmbroideryObject] = []
-    var fittedPieces: [[VectorShape]] = rawShapes.enumerated().map { i, shape in
+    // `combined` stays the artwork's own bounds, so growing a tagline
+    // does not shrink the rest of the logo to make room for it.
+    var fittedPieces: [[VectorShape]] = shapesToFit.enumerated().map { i, shape in
         droppedShapeIndices.contains(i) ? [] : [shape.fitToPhysicalSize(widthMM: widthMM, heightMM: heightMM, within: combined)]
     }
     if isSVG {
