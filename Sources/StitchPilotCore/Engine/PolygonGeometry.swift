@@ -33,6 +33,36 @@ public enum PolygonGeometry {
     /// hole semantics for free: a point inside the outer loop but also
     /// inside a hole loop toggles twice (even = outside), matching the
     /// even-odd fill rule used everywhere else in this codebase.
+    /// How finely a straight connector is checked against a shape. A
+    /// counter, a letter's bowl, the gap between an E's arms: the narrow
+    /// places a connector must not cross are a couple of millimetres wide,
+    /// so the check has to look more often than that.
+    public static let insideSampleSpacingMM = 0.4
+
+    /// Whether the straight line from `a` to `b` stays inside `polygons`
+    /// the whole way (even-odd, so a hole counts as outside). The
+    /// endpoints are excluded deliberately: both sit on the outline by
+    /// construction and say nothing about the path between them.
+    ///
+    /// Sampled by distance, not by a fixed count. Three separate copies of
+    /// this test each took five samples whatever the length, so a 20 mm
+    /// connector was checked every 3.3 mm and stepped straight over a
+    /// 2 mm counter -- which is how a stitch came to run across the gap
+    /// between an E's arms. One implementation now, so it can only be
+    /// wrong in one place.
+    public static func segmentStaysInside(from a: Point2D, to b: Point2D, polygons: [[Point2D]],
+                                          spacingMM: Double = insideSampleSpacingMM) -> Bool {
+        let length = a.distance(to: b)
+        guard length > spacingMM else { return true }
+        let steps = max(6, Int((length / max(0.05, spacingMM)).rounded(.up)))
+        for step in 1..<steps {
+            let t = Double(step) / Double(steps)
+            let point = Point2D(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+            if !pointInPolygons(point, polygons: polygons) { return false }
+        }
+        return true
+    }
+
     public static func pointInPolygons(_ point: Point2D, polygons: [[Point2D]]) -> Bool {
         var inside = false
         for polygon in polygons {

@@ -131,13 +131,7 @@ public enum GlyphColumnExtractor {
         // that leaves it however short. Ordering by distance alone made it
         // worse: the nearest column is often across a counter.
         func walkable(_ from: Point2D, _ to: Point2D) -> Bool {
-            let steps = 8
-            for i in 0...steps {
-                let t = Double(i) / Double(steps)
-                let point = Point2D(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
-                if !PolygonGeometry.pointInPolygons(point, polygons: polygons) { return false }
-            }
-            return true
+            PolygonGeometry.segmentStaysInside(from: from, to: to, polygons: polygons)
         }
         func start(_ c: SatinColumn) -> Point2D { c.railA.first ?? Point2D(0, 0) }
         func end(_ c: SatinColumn) -> Point2D { c.railB.last ?? c.railA.last ?? Point2D(0, 0) }

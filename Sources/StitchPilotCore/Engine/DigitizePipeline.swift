@@ -578,7 +578,6 @@ public enum DigitizePipeline {
         guard !run.isEmpty else { return }
         guard let last = runs.last?.last, let first = run.first else { runs.append(run); return }
         let length = last.distance(to: first)
-        let sampleCount = 5
         var inside = true
         // Run ends sit on the pull-compensated outline, a few tenths of a
         // millimetre outside the digitized one; test against the outline
@@ -587,11 +586,7 @@ public enum DigitizePipeline {
             PolygonGeometry.offsetPolygon(polygon, by: index == 0 ? -joinToleranceMM : joinToleranceMM)
         }
         if length > 1.0 {
-            for step in 1...sampleCount {
-                let t = Double(step) / Double(sampleCount + 1)
-                let sample = Point2D(last.x + (first.x - last.x) * t, last.y + (first.y - last.y) * t)
-                if !PolygonGeometry.pointInPolygons(sample, polygons: tolerant) { inside = false; break }
-            }
+            inside = PolygonGeometry.segmentStaysInside(from: last, to: first, polygons: tolerant)
         }
         if length <= breakThresholdMM, inside {
             runs[runs.count - 1].append(contentsOf: run)

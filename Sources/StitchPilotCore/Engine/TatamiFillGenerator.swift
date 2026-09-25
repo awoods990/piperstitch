@@ -514,13 +514,7 @@ public enum TatamiFillGenerator {
     /// endpoints already sit on real stitched content by construction, so
     /// they're not informative about whether the path *between* them does.
     private static func connectorStaysInsideShape(from a: Point2D, to b: Point2D, polygons: [[Point2D]]) -> Bool {
-        let sampleCount = 5
-        for step in 1...sampleCount {
-            let t = Double(step) / Double(sampleCount + 1)
-            let sample = Point2D(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
-            guard PolygonGeometry.pointInPolygons(sample, polygons: polygons) else { return false }
-        }
-        return true
+        PolygonGeometry.segmentStaysInside(from: a, to: b, polygons: polygons)
     }
 
     /// One scanline row's crossing interval, in rotated space, before
