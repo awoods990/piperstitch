@@ -66,7 +66,10 @@
       Reconnect with <code>PARTNER_OUTREACH_PAUSED=false</code> once the new sender is live &mdash; re-space the due dates first, or everything overdue goes out at once.</div>{% endif %}
     <p class="muted small" style="margin-top:0">Paste a list or upload a CSV and the approach runs itself: {{ outreach_steps|length }} emails over {{ outreach_steps[-1].delay_days }} days &mdash; the offer, how it works, what it adds up to, and one last note &mdash; each carrying their own link into the program details and a one-click way to stop. It stops by itself the moment they apply or say no.</p>
     {% if outreach_paused %}<p class="action-hint" style="margin-bottom:10px"><b>Recruitment is held.</b> Nothing goes out &mdash; not the scheduled follow-ups, not a send from this page &mdash; until <span class="mono">PARTNER_OUTREACH_PAUSED</span> is set to false. Set the mailbox up first, then lift it.</p>{% endif %}
-    <details class="hookset" id="mailboxes"{% if not mailboxes %} open{% endif %}>
+    {# Open when there is nothing yet, and after any save or test: the
+       browser jumps to this anchor, so a collapsed panel here reads as
+       "nothing happened" while the banner sits scrolled off the top. #}
+    <details class="hookset" id="mailboxes"{% if not mailboxes or message or error %} open{% endif %}>
       <summary>Mailboxes recruitment sends from &mdash; {% if mailboxes %}{{ mailboxes|selectattr('active')|list|length }} in the rotation{% else %}none yet{% endif %}</summary>
       <p>Postmark&rsquo;s terms allow only mail people asked for, and one spam complaint in a hundred cold sends is ten
          times their stated limit &mdash; against the account that also carries sign-in codes and proof links. Sending
@@ -76,6 +79,8 @@
          port 587, the mailbox password with SMTP AUTH enabled &mdash; Microsoft turns that off by default at the end of
          December 2026. Use a domain kept apart from piperstitch.com.</p>
 
+      {% if message %}<p class="action-hint" style="background:var(--readyBG);border-color:var(--readyBorder)">{{ message }}</p>{% endif %}
+      {% if error %}<p class="action-hint" style="background:var(--critBG);border-color:var(--critBorder)">{{ error }}</p>{% endif %}
       {% if mailboxes %}
       <table>
         <tr><th>Mailbox</th><th>Sends as</th><th>Today</th><th>Signed in</th><th></th></tr>
