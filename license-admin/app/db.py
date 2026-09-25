@@ -2242,6 +2242,16 @@ def mailbox_usage(day: str) -> dict:
     return {r["mailbox_id"]: r["n"] for r in rows}
 
 
+def mailbox_send_spans() -> dict:
+    """First and last successful send per mailbox. The first dates the
+    warm-up, the last spaces the next one."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT mailbox_id, MIN(created_at) AS first_at, MAX(created_at) AS last_at "
+            "FROM partner_outreach_log WHERE status = 'sent' AND mailbox_id IS NOT NULL GROUP BY mailbox_id").fetchall()
+    return {r["mailbox_id"]: {"first_at": r["first_at"], "last_at": r["last_at"]} for r in rows}
+
+
 def record_email_event(message_id: str, *, kind: str, when: str) -> bool:
     """One open or click reported by Postmark. True when it matched a
     recruitment email we sent.

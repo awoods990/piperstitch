@@ -60,12 +60,20 @@
   <div class="card" id="recruit">
     <div class="toolbar"><h2 style="margin:0">Recruit partners</h2>
       <span class="muted small">{{ recruit_counts.total }} approached &middot; {{ recruit_counts.active }} in progress &middot; {{ recruit_counts.opened }} opened the details &middot; {{ recruit_counts.applied }} applied{% if recruit_counts.opted_out %} &middot; {{ recruit_counts.opted_out }} said no{% endif %}</span></div>
-    {% if outreach_paused %}<div class="callout" style="background:#fdf3e2; border-color:#f0d9ac; margin-top:0"><strong>Recruitment email is disconnected while the sending address is moved.</strong>
-      Nothing goes out &mdash; not the scheduled follow-ups, not a send from a prospect&rsquo;s page, not the first email of a list pasted below, not an invitation.
-      Everyone keeps their place and their due date, and people can still register themselves on the site.
-      Reconnect with <code>PARTNER_OUTREACH_PAUSED=false</code> once the new sender is live &mdash; re-space the due dates first, or everything overdue goes out at once.</div>{% endif %}
+    {# The switch, not an instruction to go and set an environment variable.
+       Stopping recruitment is the thing you want to do at speed. #}
+    <div class="callout" style="margin-top:0; {% if outreach_paused %}background:#fdf3e2; border-color:#f0d9ac{% else %}background:var(--readyBG); border-color:var(--readyBorder){% endif %}">
+      <form method="post" action="/admin/partners/outreach/pause" style="display:flex; gap:.75rem; align-items:baseline; flex-wrap:wrap; margin:0">
+        <input type="hidden" name="paused" value="{{ '0' if outreach_paused else '1' }}">
+        <strong style="flex:1 1 22rem">{% if outreach_paused %}Recruitment is held.
+          Nothing goes out &mdash; not the scheduled follow-ups, not a send from a prospect&rsquo;s page, not the first email of a pasted list.
+          Everyone keeps their place and their due date, and people can still register themselves on the site.
+          {% else %}Recruitment is sending.
+          Follow-ups go out on their own schedule, paced by each mailbox&rsquo;s warm-up.{% endif %}</strong>
+        <button class="btn">{{ 'Start sending' if outreach_paused else 'Hold recruitment' }}</button>
+      </form>
+    </div>
     <p class="muted small" style="margin-top:0">Paste a list or upload a CSV and the approach runs itself: {{ outreach_steps|length }} emails over {{ outreach_steps[-1].delay_days }} days &mdash; the offer, how it works, what it adds up to, and one last note &mdash; each carrying their own link into the program details and a one-click way to stop. It stops by itself the moment they apply or say no.</p>
-    {% if outreach_paused %}<p class="action-hint" style="margin-bottom:10px"><b>Recruitment is held.</b> Nothing goes out &mdash; not the scheduled follow-ups, not a send from this page &mdash; until <span class="mono">PARTNER_OUTREACH_PAUSED</span> is set to false. Set the mailbox up first, then lift it.</p>{% endif %}
     {# Open when there is nothing yet, and after any save or test: the
        browser jumps to this anchor, so a collapsed panel here reads as
        "nothing happened" while the banner sits scrolled off the top. #}
@@ -88,7 +96,11 @@
         <tr{% if not m.active %} class="muted"{% endif %}>
           <td><b>{{ m.label }}</b><br><span class="muted small">{{ m.username }} &middot; {{ m.host }}:{{ m.port }}</span></td>
           <td class="small">{{ m.from_email }}{% if m.reply_to %}<br><span class="muted">replies &rarr; {{ m.reply_to }}</span>{% endif %}</td>
-          <td class="small">{{ m.sent_today }} of {{ m.daily_cap }}{% if m.active and not m.room_today %}<br><span class="pill past_due">full today</span>{% endif %}</td>
+          <td class="small">{{ m.sent_today }} of {{ m.allowance_today }}
+            {%- if m.warming %}<br><span class="pill trialing">warming up</span>
+              <span class="muted">rising to {{ m.daily_cap }}</span>{% endif %}
+            {%- if m.active and not m.room_today %}<br><span class="pill past_due">full today</span>
+            {%- elif m.active and m.wait_minutes %}<br><span class="muted">next in {{ m.wait_minutes }} min</span>{% endif %}</td>
           <td class="small">{% if m.last_error %}<span class="pill ended" title="{{ m.last_error }}">failed</span>{% elif m.last_ok_at %}<span class="pill yes">{{ m.last_ok_at|short_date }}</span>{% else %}<span class="muted">not tested</span>{% endif %}</td>
           <td>
             <div class="actions">

@@ -1412,14 +1412,14 @@ def test_the_hold_disconnects_every_way_recruitment_mail_can_leave(isolated_db, 
 
     with TestClient(app) as client:
         client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
-        assert "disconnected" in client.get(f"/admin/partners/recruit/{kath['id']}").text
+        assert "held" in client.get(f"/admin/partners/recruit/{kath['id']}").text
         for response in (
             client.post(f"/admin/partners/recruit/{kath['id']}/send/1", data={}, follow_redirects=False),
             client.post(f"/admin/partners/recruit/{kath['id']}", data={"action": "send"}, follow_redirects=False),
             client.post("/admin/partners/invite", data={"name": "Dev Patel", "email": "dev@example.com", "note": ""}, follow_redirects=False),
             client.post("/admin/partners/recruit", data={"people": "Mari Okafor <mari@example.com>", "note": ""}, follow_redirects=False),
         ):
-            assert "disconnected" in response.headers["location"], response.headers["location"]
+            assert "held" in response.headers["location"], response.headers["location"]
     assert not fake_smtp.sent
 
     # Nobody moved, and nothing was written down as sent or failed.
@@ -1614,7 +1614,7 @@ def test_without_an_assignment_the_rotation_spreads_the_load(isolated_db, test_k
 
     for n in range(4):
         pid = partners.register_prospect(name=f"Person {n}", email=f"p{n}@example.com", source="recruit")
-        partners.send_outreach_step(db.get_partner_prospect(pid), 1)
+        partners.send_outreach_step(db.get_partner_prospect(pid), 1, spaced=False)
 
     users = [x["user"] for x in FakeSMTPBox.from_mailboxes()]
     assert len(users) == 4
@@ -1721,3 +1721,53 @@ def test_testing_a_mailbox_answers_with_a_page_of_its_own(isolated_db, admin_pas
     assert r.status_code == 200, "not a redirect -- the page itself is the answer"
     assert "Reaching smtp.gmail.com on port 587" in r.text
     assert "Test again" in r.text and "Back to partners" in r.text
+
+
+def test_a_new_mailbox_is_warmed_up_rather_than_opened_at_its_full_cap(isolated_db):
+    """Twenty emails on day one, from an address Google has never seen, is
+    the shape of a bulk sender. The cap its owner set is the ceiling the
+    ramp climbs towards, not the number it starts at."""
+    from datetime import timedelta
+    from app import outreach_mailbox
+    _mailbox(cap=20)
+    now = datetime.now(timezone.utc)
+
+    def allowance(days_old):
+        return outreach_mailbox._allowance(20, (now - timedelta(days=days_old)).isoformat().replace("+00:00", "Z"), now=now)
+
+    assert outreach_mailbox.mailboxes()[0]["allowance_today"] == 5, "never sent: it starts small"
+    assert [allowance(d) for d in (0, 3, 8, 14)] == [5, 8, 16, 20], "and climbs to the cap in the second week"
+    assert outreach_mailbox._allowance(3, None, now=now) == 3, "a cap below the ramp is still the ceiling"
+
+
+def test_the_schedule_spaces_its_sends_but_a_deliberate_one_does_not_wait(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """Five emails in the same minute are five emails from a machine. The
+    pacing is for the schedule running itself; somebody clicking send is
+    not the thing it guards against."""
+    import smtplib
+    from app import partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
+    _mailbox(label="One", username="one@try.example")
+    FakeSMTPBox.sent = []
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTPBox)
+
+    first = partners.register_prospect(name="Ada", email="ada@example.com", source="recruit")
+    assert partners.send_outreach_step(db.get_partner_prospect(first), 1) is True
+    second = partners.register_prospect(name="Kath", email="kath@example.com", source="recruit")
+    with pytest.raises(partners.OutreachHeld):
+        partners.send_outreach_step(db.get_partner_prospect(second), 1)
+    assert partners.send_outreach_step(db.get_partner_prospect(second), 1, spaced=False) is True, "a click goes"
+
+
+def test_recruitment_can_be_held_and_started_from_the_admin(isolated_db, admin_password_configured, monkeypatch):
+    """It used to take an environment variable and a redeploy. Stopping
+    recruitment is the thing you want to do in ten seconds."""
+    from app import partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", True)
+    assert partners.outreach_paused() is True, "the environment decides where it starts"
+    with TestClient(app) as client:
+        client.post("/admin/login", data={"username": "admin", "password": admin_password_configured})
+        client.post("/admin/partners/outreach/pause", data={"paused": "0"})
+        assert partners.outreach_paused() is False, "and the admin decides after that"
+        client.post("/admin/partners/outreach/pause", data={"paused": "1"})
+    assert partners.outreach_paused() is True

@@ -73,13 +73,61 @@ def adopt_legacy() -> None:
                                 from_email=config.PARTNER_OUTREACH_FROM, reply_to=config.PARTNER_OUTREACH_REPLY_TO)
 
 
-def mailboxes(*, active_only: bool = False) -> list[dict]:
+# How many a mailbox may send on each day of its life, until the ramp runs
+# out and its own cap takes over. A mailbox Google has never seen before,
+# sending twenty in one afternoon, is the shape of a bulk sender; single
+# figures for the first days and the full cap in the second week is the
+# ordinary advice for warming one, and it costs only patience.
+WARMUP = ((0, 5), (2, 8), (4, 12), (7, 16), (10, None))
+SEND_WINDOW_HOURS = 9          # a working day, so sends don't land at 3am in a block
+MIN_GAP_MINUTES = 12
+
+
+def _parse(when: str) -> datetime:
+    return datetime.fromisoformat(when.replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+
+
+def _allowance(daily_cap: int, first_at: Optional[str], *, now: datetime) -> int:
+    """Today's ceiling for one mailbox: the warm-up ramp, never above the
+    cap its owner set. Dated from its first send rather than from when the
+    row was made, because a mailbox configured and left alone for a week
+    has still never said anything to Google."""
+    if not first_at:
+        return min(daily_cap, WARMUP[0][1])
+    age = (now - _parse(first_at)).days
+    allowed = WARMUP[0][1]
+    for since, cap in WARMUP:
+        if age >= since:
+            allowed = daily_cap if cap is None else cap
+    return min(daily_cap, allowed)
+
+
+def _gap_minutes(allowance: int) -> int:
+    """Spacing inside the day. Five emails at 9.02, 9.02, 9.03, 9.03 and
+    9.04 are five emails from a machine; the same five across a morning
+    are a person getting through their list."""
+    if allowance <= 1:
+        return 0
+    return max(MIN_GAP_MINUTES, int(SEND_WINDOW_HOURS * 60 / allowance))
+
+
+def mailboxes(*, active_only: bool = False, now: Optional[datetime] = None) -> list[dict]:
+    now = now or datetime.now(timezone.utc)
     usage = db.mailbox_usage(_today())
+    spans = db.mailbox_send_spans()
     out = []
     for row in db.list_outreach_mailboxes(active_only=active_only):
         item = _row_to_dict(row)
+        span = spans.get(row["id"], {})
         item["sent_today"] = usage.get(row["id"], 0)
-        item["room_today"] = max(0, item["daily_cap"] - item["sent_today"])
+        item["allowance_today"] = _allowance(item["daily_cap"], span.get("first_at"), now=now)
+        item["warming"] = item["allowance_today"] < item["daily_cap"]
+        item["room_today"] = max(0, item["allowance_today"] - item["sent_today"])
+        gap = _gap_minutes(item["allowance_today"])
+        last = span.get("last_at")
+        waited = (now - _parse(last)).total_seconds() / 60 if last else gap
+        item["wait_minutes"] = max(0, int(gap - waited))
+        item["ready_now"] = item["room_today"] > 0 and item["wait_minutes"] == 0
         out.append(item)
     return out
 
@@ -123,7 +171,7 @@ def save(mailbox_id: Optional[int], *, label: str, host: str, port: int, usernam
                                    from_email=from_email.strip(), reply_to=reply_to.strip(), daily_cap=daily_cap)
 
 
-def choose(prospect) -> Optional[dict]:
+def choose(prospect, *, spaced: bool = True) -> Optional[dict]:
     """Which mailbox carries this approach.
 
     An explicit assignment wins, because someone chose it on purpose -- but
@@ -137,8 +185,8 @@ def choose(prospect) -> Optional[dict]:
     assigned = prospect["mailbox_id"] if "mailbox_id" in prospect.keys() else None
     if assigned:
         picked = next((m for m in ready if m["id"] == assigned), None)
-        return picked if picked and picked["room_today"] > 0 else None
-    with_room = [m for m in ready if m["room_today"] > 0]
+        return picked if picked and (picked["ready_now"] if spaced else picked["room_today"] > 0) else None
+    with_room = [m for m in ready if (m["ready_now"] if spaced else m["room_today"] > 0)]
     if not with_room:
         return None
     return max(with_room, key=lambda m: (m["room_today"], -m["id"]))

@@ -261,7 +261,7 @@ def register_prospect(*, name: str, email: str, organization: str = "", platform
     # An invitation is outbound recruitment and is held with the rest. A
     # self-registration is the reply to someone's own action on the site,
     # so it still goes.
-    if source != "self" and config.PARTNER_OUTREACH_PAUSED:
+    if source != "self" and outreach_paused():
         raise OutreachHeld
     try:
         email_sender.send_partner_program_email(to_email=email, partner_name=name, url=program_url(prospect_id), invited=(source == "invite"))
@@ -570,11 +570,29 @@ def partner_exists(promoter) -> bool:
 
 
 class OutreachHeld(Exception):
-    """Raised instead of sending while `config.PARTNER_OUTREACH_PAUSED` is
-    set, so a caller says so plainly rather than reporting a mail failure."""
+    """Raised instead of sending while recruitment is held, so a caller
+    says so plainly rather than reporting a mail failure."""
 
 
-def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
+OUTREACH_PAUSE_SETTING = "partner_outreach_paused"
+
+
+def outreach_paused() -> bool:
+    """Held, or sending. The environment decides where it starts; after
+    that the switch lives in the admin. Stopping recruitment is the thing
+    you want to do at speed -- a bad list, a reply that shows the wording
+    is landing wrong -- and it should not need a deploy and four minutes."""
+    saved = db.get_setting(OUTREACH_PAUSE_SETTING)
+    if saved in ("0", "1"):
+        return saved == "1"
+    return config.PARTNER_OUTREACH_PAUSED
+
+
+def set_outreach_paused(paused: bool) -> None:
+    db.set_setting(OUTREACH_PAUSE_SETTING, "1" if paused else "0")
+
+
+def send_outreach_step(prospect, step: int, *, advance: bool = True, spaced: bool = True) -> bool:
     """One recruitment email. Everything is logged, sent or failed. With
     `advance` off it is a plain resend: the same words again, and the
     schedule left exactly where it was.
@@ -585,7 +603,7 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
     all arrive through this function. Held, it sends nothing, writes
     nothing to the log and leaves the schedule untouched.
     """
-    if config.PARTNER_OUTREACH_PAUSED:
+    if outreach_paused():
         raise OutreachHeld
     spec = next((s for s in OUTREACH_STEPS if s["step"] == step), None)
     if spec is None:
@@ -596,7 +614,12 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
     # Microsoft to read us as a sender that works in bursts. With none set
     # up at all it falls through to Postmark, which is where recruitment
     # was before any of this existed.
-    mailbox = outreach_mailbox.choose(prospect)
+    # `spaced` is the difference between the schedule running itself and
+    # a person clicking send. The daily cap binds both -- it is what keeps
+    # a provider from reading us as bulk -- but the minutes between sends
+    # exist so an automatic run doesn't arrive in a block, and somebody
+    # deliberately sending three in a row is not that.
+    mailbox = outreach_mailbox.choose(prospect, spaced=spaced)
     if mailbox is None and outreach_mailbox.configured():
         raise OutreachHeld
     try:
@@ -625,12 +648,12 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True) -> bool:
 def outreach_check(*, now: Optional[datetime] = None) -> int:
     """The scheduler's tick for recruitment: send whatever is due.
 
-    Held entirely while `PARTNER_OUTREACH_PAUSED` is set (see the note
-    there): no send, no state change, so lifting it picks up exactly
-    where this left off. A send from the recruitment page still goes --
+    Held entirely while recruitment is paused (see `outreach_paused`):
+    no send, no state change, so lifting it picks up exactly where this
+    left off. A send from the recruitment page still goes --
     that is a deliberate click, not the schedule running itself.
     """
-    if config.PARTNER_OUTREACH_PAUSED:
+    if outreach_paused():
         return 0                                 # ...and `send_outreach_step` refuses anyway
     sent = 0
     for prospect in db.due_outreach((now or _now()).isoformat(timespec="seconds").replace("+00:00", "Z")):
