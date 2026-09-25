@@ -273,7 +273,10 @@ public enum DigitizePipeline {
         guard let sewable = StitchTypeClassifier.droppingUnsewable(object.shape) else { return hairlineRuns }
         var object = object
         object.shape = sewable
-        let mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM) + hairlineRuns
+        var mainRuns = try rawMainStitchRuns(for: object, breakThresholdMM: breakThresholdMM) + hairlineRuns
+        // Whatever the plan was, check it against the shape it was for and
+        // sew what it missed -- see `CoverageBackstop`.
+        mainRuns += coverageBackstopRuns(for: object, covering: mainRuns, breakThresholdMM: breakThresholdMM)
         guard object.isApplique else { return mainRuns }
         // Placement + tack-down sew first, as their own separate runs --
         // `flattenWithColors` already trims and jumps between an object's
@@ -284,6 +287,43 @@ public enum DigitizePipeline {
         // physically placed/trimmed by hand in between in a real
         // applique workflow.
         return appliqueRuns(for: object.shape, parameters: object.parameters) + mainRuns
+    }
+
+    /// The parts of an object its own stitching never reached, sewn. A
+    /// running stitch is a line and covers nothing by design, so it is not
+    /// asked; everything meant to be solid is.
+    private static func coverageBackstopRuns(for object: EmbroideryObject, covering runs: [[Point2D]],
+                                             breakThresholdMM: Double) -> [[Point2D]] {
+        guard CoverageBackstop.isEnabled, !runs.isEmpty else { return [] }
+        switch object.stitchType {
+        case .runningStitch, .tripleRun: return []
+        case .satin, .tatamiFill: break
+        }
+        // A pocket sits inside stitching that is already there, so the
+        // thread can nearly always walk to it under cover rather than be
+        // cut and restarted. Left as bare runs this turned eighteen small
+        // gaps into eighteen trims, which is a worse machine job than the
+        // gaps were.
+        let polygons = object.shape.subPaths.map { $0.points }
+        var joined = runs
+        let before = joined.count
+        for pocket in CoverageBackstop.missingRegions(in: object.shape, covered: runs) {
+            let mark = joined.count
+            for run in TatamiFillGenerator.generateRuns(for: pocket, parameters: object.parameters,
+                                                        breakThresholdMM: breakThresholdMM) {
+                appendJoiningIfCovered(run, to: &joined, polygons: polygons, breakThresholdMM: breakThresholdMM)
+            }
+            // Reaching this one means cutting the thread and starting
+            // again. A small gap is not worth that: the trim costs the
+            // machine operator more than the gap costs the eye, and a
+            // design's trim count is itself something we report on.
+            let area = pocket.subPaths.first.map { abs(PolygonGeometry.signedArea($0.points)) } ?? 0
+            if joined.count > mark, area < CoverageBackstop.worthATrimMM2 {
+                joined.removeSubrange(mark...)
+            }
+        }
+        guard joined.count >= before else { return [] }
+        return Array(joined.dropFirst(runs.count))
     }
 
     private static func rawMainStitchRuns(for object: EmbroideryObject, breakThresholdMM: Double) throws -> [[Point2D]] {

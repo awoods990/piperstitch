@@ -567,6 +567,7 @@ do {
             parameters.allowBranchingSatin = true
         }
         // UNDERLAY=none (any UnderlayType raw value): force every object's underlay.
+        if ProcessInfo.processInfo.environment["BACKSTOP"] == "off" { CoverageBackstop.isEnabled = false }
         if let raw = ProcessInfo.processInfo.environment["UNDERLAY"], let underlay = UnderlayType(rawValue: raw) {
             parameters.underlayType = underlay
         }
