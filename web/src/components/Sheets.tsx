@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import glossary from "../glossary.json";
 import type { AccountState, Catalog, ColorPresetId, EmbroideryObject, FabricType, ProjectSummary, ProofsState, RGBColor, ThreadColor } from "../types";
 import { LETTERING_FONTS, ensureFontFaces, fontFaceFamily, generateLetteringShapes, type LetteringSpec } from "../lettering";
@@ -88,18 +88,43 @@ export function HelpSheet({ onClose, showProofs }: { onClose: () => void; showPr
 
 // --- Add Lettering --------------------------------------------------------------
 
-export function LetteringSheet({ palette, selectedCount, onClose, onAdd }: {
-  palette: ThreadColor[]; selectedCount: number; onClose: () => void;
+/**
+ * What the sheet already knows when it opens over a selection: the words,
+ * a font that looks like the traced letters, the height and colour they
+ * are now. Everything optional -- reopen a saved project and all that
+ * survives is the selection itself, so the sheet still works, it just
+ * starts emptier.
+ */
+export interface LetteringPrefill {
+  text?: string;
+  fontID?: string;
+  sizeMM?: number;
+  arcRadiusMM?: number | null;
+  hex?: string;
+  /** Shown above the fields: why this sheet opened and what it will do. */
+  note?: string;
+  /** OCR is still reading the words; the field fills itself when it lands. */
+  reading?: boolean;
+}
+
+export function LetteringSheet({ palette, selectedCount, prefill, onClose, onAdd }: {
+  palette: ThreadColor[]; selectedCount: number; prefill?: LetteringPrefill; onClose: () => void;
   onAdd: (spec: LetteringSpec, threadColor: ThreadColor, replaceSelected: boolean) => Promise<void>;
 }) {
-  const [text, setText] = useState("");
-  const [fontID, setFontID] = useState(LETTERING_FONTS[0].id);
-  const [sizeMM, setSizeMM] = useState(20);
+  const [text, setText] = useState(prefill?.text ?? "");
+  const [fontID, setFontID] = useState(prefill?.fontID ?? LETTERING_FONTS[0].id);
+  const [sizeMM, setSizeMM] = useState(prefill?.sizeMM ?? 20);
   const [spacingMM, setSpacingMM] = useState(0);
-  const [curved, setCurved] = useState(false);
-  const [radiusMM, setRadiusMM] = useState(40);
-  const [hex, setHex] = useState("#1144aa");
+  const [curved, setCurved] = useState(!!prefill?.arcRadiusMM);
+  const [radiusMM, setRadiusMM] = useState(prefill?.arcRadiusMM ?? 40);
+  const [hex, setHex] = useState(prefill?.hex ?? "#1144aa");
   const [replace, setReplace] = useState(selectedCount > 0);
+  // OCR finishes after the sheet opens. Fill the box then, but never over
+  // something the customer has started typing.
+  const typed = useRef(false);
+  useEffect(() => {
+    if (!typed.current && prefill?.text && !text) setText(prefill.text);
+  }, [prefill?.text]);
   useEffect(() => { ensureFontFaces().catch(() => { /* picker falls back to the system font */ }); }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,9 +158,12 @@ export function LetteringSheet({ palette, selectedCount, onClose, onAdd }: {
   };
 
   return (
-    <Modal title="Add lettering" onClose={onClose}>
+    <Modal title={prefill ? "Replace with lettering" : "Add lettering"} onClose={onClose}>
       <p className="hint">Clean satin letters generated from the font's own outline — sharp at any size or curve, unlike tracing an image of text.</p>
-      <label className="field">Text<input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Type the text to add" /></label>
+      {prefill?.note && <p className="action-hint">{prefill.note}</p>}
+      <label className="field">Text<input autoFocus value={text}
+        onChange={(e) => { typed.current = true; setText(e.target.value); }}
+        placeholder={prefill?.reading ? "Reading the words from the artwork…" : "Type the text to add"} /></label>
       <div className="field">Font
         <div className="font-picker">
           {groups.map((g) => (
@@ -166,7 +194,7 @@ export function LetteringSheet({ palette, selectedCount, onClose, onAdd }: {
       {selectedCount > 0 && <label className="check"><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> Replace {selectedCount} selected object{selectedCount === 1 ? "" : "s"}</label>}
       <div className="lettering-preview">{preview ? <div dangerouslySetInnerHTML={{ __html: preview }} /> : <span className="hint">Preview appears here</span>}</div>
       {error && <div className="error-text">{error}</div>}
-      <div className="modal-foot"><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !text.trim()} onClick={submit}>{busy ? "Adding…" : "Add"}</button></div>
+      <div className="modal-foot"><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !text.trim()} onClick={submit}>{busy ? (prefill ? "Replacing…" : "Adding…") : (prefill && replace ? "Replace" : "Add")}</button></div>
     </Modal>
   );
 }

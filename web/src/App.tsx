@@ -4,7 +4,7 @@
 // keeps nothing between requests, so everything the Mac app holds in
 // memory lives here instead.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type EditResponse, type PendingMerge } from "./api";
 import { decodeImage, isSVGFile, rasterizeSVG, type DecodedImage } from "./decode";
 import { thumbnailDataURL } from "./render";
@@ -15,17 +15,18 @@ import SetupFlow, { type SetupAnswers } from "./components/SetupFlow";
 import { defaultLaydown } from "./components/Inspector";
 import Editor from "./components/Editor";
 import { AccountMenu, SignIn, SubscribeWall, capturePromoFromURL } from "./components/Account";
-import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, OpenProjectsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal } from "./components/Sheets";
+import { FeedbackSheet, HelpSheet, LetteringSheet, MergeColorsSheet, OpenProjectsSheet, SendSheet, SettingsSheet, ThreadLibrarySheet, Modal, type LetteringPrefill } from "./components/Sheets";
 import type { Tool } from "./components/StitchCanvas";
-import { loadPrefs, savePrefs, withDefaults, type Preferences } from "./prefs";
+import { loadPrefs, rgbHex, savePrefs, withDefaults, type Preferences } from "./prefs";
 import Onboarding from "./components/Onboarding";
 import GetPiper from "./components/GetPiper";
 import { setUpInstall } from "./install";
 import { setDisplayUnits } from "./format";
-import { selectionBounds, transformObject } from "./geometry";
+import { cropLine, readLine } from "./ocr";
+import { selectionBounds, shapeBounds, transformObject } from "./geometry";
 import { CandidateNotice } from "./components/CandidateNotice";
-import { generateLetteringRun, type LetteringRun, type LetteringSpec } from "./lettering";
-import { minimumCapHeightMM, textLinePoint, textLineScale } from "./textLines";
+import { generateLetteringRun, suggestFont, type LetteringRun, type LetteringSpec } from "./lettering";
+import { lineUnderSelection, looksLikeALineOfText, minimumCapHeightMM, textLinePoint, textLineScale } from "./textLines";
 import { blobURLToPNGDataURL, dataURLToBase64, renderDigitizedPNGDataURL, renderSVGPNGDataURL } from "./feedback";
 
 interface Imported {
@@ -512,6 +513,98 @@ export default function App() {
       fontID: spec.fontID, glyphs: run.glyphs, arcRadiusMM: spec.arcRadiusMM, totalWidthMM: run.totalWidthMM });
     applyEdit(r); setTool("select");
   };
+  // --- Replacing traced text with real lettering ---------------------------
+  //
+  // The setup flow asks this once, before the editor exists. Afterwards the
+  // same question is worth asking again: a line of traced letters can be
+  // re-typed in a real font at any point, and the machinery for it was
+  // already here -- `onAddLettering` has always taken `replaceSelected`.
+  // What was missing was a way in, and everything the flow knew about the
+  // line.
+  //
+  // It deliberately does NOT go back through `buildFrom`: that rebuilds the
+  // document from the source artwork and would throw away every edit made
+  // since. This replaces objects in the document that exists.
+  const selectedBoxes = useMemo(
+    () => (document ? document.objects.filter((o) => selectedIDs.has(o.id)).map((o) => shapeBounds(o.shape)) : []),
+    [document, selectedIDs]);
+  /** The text line the current selection sits in, while the import is still in memory. */
+  const selectedTextLine = useMemo(() => {
+    if (!document || !answers || !imported || !selectedIDs.size) return null;
+    const box = selectionBounds(document.objects, selectedIDs);
+    return lineUnderSelection(imported.response.textLines ?? [], box, imported.response.source.bounds, answers.widthMM, answers.heightMM);
+  }, [document, answers, imported, selectedIDs]);
+  // Either the selection is a row of letters on its own, or it sits inside
+  // a line the importer found -- one letter clicked is enough for that,
+  // and clicking one letter is what a person actually does.
+  const selectionLooksLikeText = useMemo(
+    () => looksLikeALineOfText(selectedBoxes) || (!!selectedTextLine && selectedBoxes.length >= 1),
+    [selectedBoxes, selectedTextLine]);
+  const [letteringPrefill, setLetteringPrefill] = useState<LetteringPrefill | undefined>(undefined);
+
+  const onReplaceWithLettering = () => {
+    if (!document || !selectedIDs.size || !answers) return;
+    // Clicking one letter means the line. Take every object sitting in the
+    // line's band, so "replace" replaces the words rather than the R.
+    let ids = selectedIDs;
+    if (selectedTextLine && imported) {
+      const b = selectedTextLine.boundingBoxPixels, src = imported.response.source.bounds;
+      const a1 = textLinePoint(src, answers.widthMM, answers.heightMM, b.minX, b.minY);
+      const a2 = textLinePoint(src, answers.widthMM, answers.heightMM, b.maxX, b.maxY);
+      const inLine = new Set(document.objects.filter((o) => {
+        const s = shapeBounds(o.shape);
+        const cx = (s.minX + s.maxX) / 2, cy = (s.minY + s.maxY) / 2;
+        const tall = s.maxY - s.minY;
+        // Centre inside the band, and no taller than the line itself --
+        // the big decorative R overlaps the words without being one.
+        return cx >= a1.x && cx <= a2.x && cy >= a1.y && cy <= a2.y && tall <= (a2.y - a1.y) * 1.35;
+      }).map((o) => o.id));
+      if (inLine.size >= 2) { ids = inLine; setSelectedIDs(inLine); }
+    }
+    const box = selectionBounds(document.objects, ids);
+    const capMM = Math.max(2, box.maxY - box.minY);
+    // The colour it is now, so the replacement does not arrive in a
+    // different thread than the word it stands in for.
+    const tally = new Map<string, { n: number; rgb: RGBColor }>();
+    for (const o of document.objects) {
+      if (!ids.has(o.id)) continue;
+      const rgb = o.threadColor.rgb, key = `${rgb.r},${rgb.g},${rgb.b}`;
+      tally.set(key, { n: (tally.get(key)?.n ?? 0) + 1, rgb });
+    }
+    const commonest = [...tally.values()].sort((a, b) => b.n - a.n)[0]?.rgb;
+
+    // Everything below here needs the import still in memory. Reopen a
+    // saved project and it is gone -- only the document is stored -- so the
+    // sheet opens with what the selection itself says and the customer
+    // types the words.
+    const line = selectedTextLine;
+    const scale = imported ? textLineScale(imported.response.source.bounds, answers.widthMM, answers.heightMM) : 0;
+    const canRead = !!(line && imported?.decoded);
+    setLetteringPrefill({
+      sizeMM: Math.round(capMM * 10) / 10,
+      hex: commonest ? rgbHex(commonest) : undefined,
+      fontID: line ? suggestFont(line, Math.max(capMM, minimumCapHeightMM(answers.threadWeight, catalog?.minimumCapHeightMM))) : undefined,
+      arcRadiusMM: line?.curved && line.arcRadiusPixels ? line.arcRadiusPixels * scale : null,
+      note: line
+        ? "Replacing the traced letters you selected. The font below is a guess at the one in the artwork — change it if it is wrong."
+        : "Replacing the shapes you selected. Type the words as they should read; the height and colour come from what you selected.",
+      reading: canRead,
+    });
+    setSheet("lettering");
+
+    if (canRead && line && imported?.decoded) {
+      const k = imported.imageUnitsToPixels;
+      const b = line.boundingBoxPixels;
+      const pixelBox = { minX: b.minX * k, minY: b.minY * k, maxX: b.maxX * k, maxY: b.maxY * k };
+      readLine(cropLine(imported.decoded, pixelBox, line.rotationDegrees)).then((guess) => {
+        // OCR's one habitual slip on capitals is I read as l.
+        const text = line.mixedCase === false ? guess.text.replace(/l/g, "I").toUpperCase() : guess.text;
+        setLetteringPrefill((prev) => prev && text && guess.confidence >= 55
+          ? { ...prev, text, reading: false } : prev && { ...prev, reading: false });
+      }).catch(() => setLetteringPrefill((prev) => prev && { ...prev, reading: false }));
+    }
+  };
+
   const onGlobalSatin = (mm: number) => { setGlobalSatin(mm); if (!document) return; commit({ ...document, objects: document.objects.map((o) => o.stitchType === "satin" ? { ...o, parameters: { ...o.parameters, satinDensityMM: mm } } : o) }); };
   /** C5: stitch count is ~proportional to 1/spacing, so scale every satin/fill spacing by current/target (clamped 0.2-1.0 mm). */
   const onTargetStitchCount = (target: number) => {
@@ -709,7 +802,8 @@ export default function App() {
         <ThreadLibrarySheet library={prefs.threadLibrary} onChange={(lib) => setPrefs({ ...prefs, threadLibrary: lib })}
           suppliers={prefs.threadSuppliers} onSuppliersChange={(ids) => setPrefs({ ...prefs, threadSuppliers: ids })} onClose={() => setSheet(null)} />
       )}
-      {sheet === "lettering" && document && <LetteringSheet palette={palette} selectedCount={selectedIDs.size} onClose={() => setSheet(null)} onAdd={onAddLettering} />}
+      {sheet === "lettering" && document && <LetteringSheet palette={palette} selectedCount={selectedIDs.size} prefill={letteringPrefill}
+        onClose={() => { setSheet(null); setLetteringPrefill(undefined); }} onAdd={onAddLettering} />}
       {sheet === "mergeColors" && document && <MergeColorsSheet objects={document.objects} palette={palette} onClose={() => setSheet(null)} onMerge={onMergeColors} />}
       {sheet === "feedback" && feedbackImages && document && (
         <FeedbackSheet originalImage={feedbackImages.original} digitizedImage={feedbackImages.digitized} designName={document.name}
@@ -770,6 +864,7 @@ export default function App() {
           prefs={prefs} palette={palette} selectedIDs={selectedIDs} tool={tool} canUndo={undoStack.length > 0}
           hoop={answers.hoop} fabric={answers.fabric} colorPreset={answers.colorPreset} isVector={imported?.isVector ?? true} hasSource={!!imported}
           matchToThreadLibrary={matchToThreadLibrary} globalSatinDensityMM={globalSatin} globalFillSpacingMM={globalFill}
+          selectionLooksLikeText={selectionLooksLikeText} onReplaceWithLettering={onReplaceWithLettering}
           previewURL={imported?.decoded?.previewURL ?? null} accountMenu={accountMenu} canSave={me.authEnabled} savedAt={savedAt}
           canSendToProofs={canSendToProofs && !returnTo} onSendToProofs={onSendToProofs}
           onTool={setTool} onPrefs={setPrefs} onSelect={onSelect} onTranslate={onTranslate} onScale={onScale} onStroke={onStroke}

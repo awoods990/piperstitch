@@ -36,6 +36,9 @@ export interface InspectorProps {
   onObject: (id: string, update: (o: EmbroideryObject) => EmbroideryObject) => void;
   onDeleteSelected: () => void;
   onMergeShapes: () => void;
+  /** The selection reads as a row of letters, so re-typing it is worth offering. */
+  selectionLooksLikeText: boolean;
+  onReplaceWithLettering: () => void;
   onResize: (widthMM: number, heightMM: number, lockAspect: boolean) => void;
   onHoop: (hoop: CatalogSize | null) => void;
   onColorPreset: (preset: ColorPresetId) => void;
@@ -65,6 +68,13 @@ export default function Inspector(p: InspectorProps) {
   return (
     <aside className="sidebar">
       {selected.length === 1 && <ObjectSection object={selected[0]} p={p} />}
+      {selected.length === 1 && p.selectionLooksLikeText && (
+        <section className="panel selected">
+          <h3>This is part of a line of text</h3>
+          <button className="btn small" onClick={p.onReplaceWithLettering} disabled={p.busy}>Replace the line with lettering</button>
+          <span className="hint">Re-types the whole line in a real font — satin built from the font's own outline, which reads far better at small sizes than letters traced from a picture.</span>
+        </section>
+      )}
       {selected.length > 1 && <MultiSection count={selected.length} p={p} />}
       <SizeSection p={p} />
       <DensitySection p={p} />
@@ -169,9 +179,11 @@ function MultiSection({ count, p }: { count: number; p: InspectorProps }) {
       <h3>Selected objects <small>{count}</small></h3>
       <div className="btn-row">
         <button className="btn small" onClick={p.onMergeShapes} disabled={p.busy}>Merge shapes</button>
+        {p.selectionLooksLikeText && <button className="btn small" onClick={p.onReplaceWithLettering} disabled={p.busy}>Replace with lettering</button>}
         <button className="btn small danger" onClick={p.onDeleteSelected} disabled={p.busy}>Delete</button>
       </div>
       <span className="hint">Merge joins these outlines into one shape — fixes a letter or detail that came in as several disconnected fragments.</span>
+      {p.selectionLooksLikeText && <span className="hint">These look like a row of letters. Replacing them re-types the words in a real font — satin built from the font's own outline, which reads far better at small sizes than anything traced from a picture of text.</span>}
     </section>
   );
 }
