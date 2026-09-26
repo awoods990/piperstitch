@@ -11,3 +11,11 @@ dist/
 # Wilcom manual taught the engine is written down in our own words in
 # docs/WILCOM_MANUAL_REVIEW.md, which is tracked.
 Reference Manuals*/
+
+# Reference artwork kept on this machine rather than versioned: tens of
+# megabytes of binaries that never change, against a 91 MB repository.
+# Adding them later is one command; taking them out again means rewriting
+# history, so the default is out.
+#   git add -f "TestArtwork/Professional Files"
+TestArtwork/Professional Files/
+Logo/Test Logos for Training/
