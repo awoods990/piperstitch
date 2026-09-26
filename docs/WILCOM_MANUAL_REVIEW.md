@@ -1,6 +1,8 @@
 # Wilcom EmbroideryStudio Reference Manual — review against the PiperStitch engine
 
-Source: `TestArtwork/Reference Manuals General/Wilcom Reference Manual.pdf`
+Source: Wilcom EmbroideryStudio Reference Manual, kept outside the repo at
+`~/Desktop/PiperStitch General Files/Reference Manuals/` -- proprietary, and
+172 MB, so it is not tracked. This document is what it taught the engine.
 (EmbroideryStudio 2025, 1,549 pages). Reviewed 2026-09-15. Chapters read:
 Stitch Types (p219–243), Digitizing Shapes (p244–277), Working with
 fabrics (p285–291), Sequencing (p334–343), Embroidery Reinforcement

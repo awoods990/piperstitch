@@ -5,3 +5,9 @@ DerivedData/
 .DS_Store
 *.dst.tmp
 dist/
+
+# Reference manuals: proprietary, and hundreds of megabytes. Kept on disk
+# at ~/Desktop/PiperStitch General Files/Reference Manuals. What the
+# Wilcom manual taught the engine is written down in our own words in
+# docs/WILCOM_MANUAL_REVIEW.md, which is tracked.
+Reference Manuals*/
