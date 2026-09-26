@@ -1771,3 +1771,44 @@ def test_recruitment_can_be_held_and_started_from_the_admin(isolated_db, admin_p
         assert partners.outreach_paused() is False, "and the admin decides after that"
         client.post("/admin/partners/outreach/pause", data={"paused": "1"})
     assert partners.outreach_paused() is True
+
+
+def test_the_page_says_why_recruitment_is_quiet(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    """"Nothing is going out" had its answer spread across an environment
+    variable, a mailbox's daily allowance, the minutes since its last send
+    and an empty queue. Each gate now says so in its own words."""
+    import smtplib
+    from app import partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", True)
+    assert "held" in partners.outreach_why_quiet()
+
+    partners.set_outreach_paused(False)
+    assert "nowhere to leave" in partners.outreach_why_quiet(), "no mailbox at all"
+
+    _mailbox(label="One", username="one@try.example")
+    assert "Nobody is waiting" in partners.outreach_why_quiet(), "a mailbox, but an empty queue"
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTPBox)
+    FakeSMTPBox.sent = []
+    pid = partners.register_prospect(name="Ada", email="ada@example.com", source="recruit")
+
+    # Waiting, but their next email is days off.
+    from datetime import datetime, timedelta, timezone
+    later = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    db.set_prospect_outreach(pid, outreach_status="active", outreach_next_at=later)
+    assert "none due yet" in partners.outreach_why_quiet()
+
+    # Due now, but the mailbox has just sent and spaces itself across the day.
+    db.set_prospect_outreach(pid, outreach_status="active", outreach_next_at=db.now_iso())
+    partners.send_outreach_step(db.get_partner_prospect(pid), 1, spaced=False)
+    db.set_prospect_outreach(pid, outreach_status="active", outreach_next_at=db.now_iso())
+    assert "minutes" in partners.outreach_why_quiet(), partners.outreach_why_quiet()
+
+
+def test_nothing_is_quiet_when_it_is_actually_sending(isolated_db, test_keypair, fake_smtp, monkeypatch):
+    from app import partners
+    monkeypatch.setattr(config, "PARTNER_OUTREACH_PAUSED", False)
+    _mailbox(label="One", username="one@try.example")
+    pid = partners.register_prospect(name="Ada", email="ada@example.com", source="recruit")
+    db.set_prospect_outreach(pid, outreach_status="active", outreach_next_at=db.now_iso())
+    assert partners.outreach_why_quiet() == "", "a due prospect and a ready mailbox is not quiet"

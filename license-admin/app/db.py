@@ -2220,6 +2220,23 @@ def due_outreach(now_iso: str, limit: int = 50) -> list[sqlite3.Row]:
             "AND outreach_next_at IS NOT NULL AND outreach_next_at <= ? ORDER BY outreach_next_at LIMIT ?", (now_iso, limit)).fetchall()
 
 
+def outreach_queue(now_iso: str) -> dict:
+    """What the recruitment schedule is holding: how many are waiting, and
+    when the soonest is due. For answering "why is nothing going out"."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS waiting, MIN(outreach_next_at) AS soonest FROM partner_prospects "
+            "WHERE outreach_status = 'active' AND applied_at IS NULL AND opted_out_at IS NULL "
+            "AND outreach_next_at IS NOT NULL", ()).fetchone()
+        due = conn.execute(
+            "SELECT COUNT(*) FROM partner_prospects WHERE outreach_status = 'active' AND applied_at IS NULL "
+            "AND opted_out_at IS NULL AND outreach_next_at IS NOT NULL AND outreach_next_at <= ?", (now_iso,)).fetchone()[0]
+        sent_today = conn.execute(
+            "SELECT COUNT(*) FROM partner_outreach_log WHERE status = 'sent' AND direction = 'out' AND created_at >= ?",
+            (now_iso[:10],)).fetchone()[0]
+    return {"waiting": row["waiting"] or 0, "soonest": row["soonest"], "due_now": due, "sent_today": sent_today}
+
+
 def list_recruits(limit: int = 300) -> list[sqlite3.Row]:
     with connection() as conn:
         return conn.execute(

@@ -2605,6 +2605,7 @@ def admin_partner_recruit_detail(request: Request, prospect_id: int, message: st
         "active_nav": "partners", "p": prospect, "plan": partners.outreach_plan(prospect), "timeline": partners.recruit_timeline(prospect),
         "program_link": partners.program_url(prospect_id), "promoter": promoter, "program": partners,
         "engagement": db.outreach_engagement(prospect_id), "mailboxes": outreach_mailbox.mailboxes(), "outreach_paused": partners.outreach_paused(),
+        "outreach_quiet": partners.outreach_why_quiet(),
         "message": message or None, "error": error or None,
     })
 

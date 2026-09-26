@@ -73,6 +73,13 @@
         <button class="btn">{{ 'Start sending' if outreach_paused else 'Hold recruitment' }}</button>
       </form>
     </div>
+    {# "Nothing is going out" used to have its answer spread across an
+       environment variable, a mailbox's daily allowance, the minutes since
+       its last send and an empty queue. It is one sentence now, on the
+       page where the question gets asked. #}
+    {% if outreach_quiet and not outreach_paused %}
+    <p class="action-hint" style="margin-bottom:10px"><b>Nothing is sending right now.</b> {{ outreach_quiet }}</p>
+    {% endif %}
     <p class="muted small" style="margin-top:0">Paste a list or upload a CSV and the approach runs itself: {{ outreach_steps|length }} emails over {{ outreach_steps[-1].delay_days }} days &mdash; the offer, how it works, what it adds up to, and one last note &mdash; each carrying their own link into the program details and a one-click way to stop. It stops by itself the moment they apply or say no.</p>
     {# Open when there is nothing yet, and after any save or test: the
        browser jumps to this anchor, so a collapsed panel here reads as

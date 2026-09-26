@@ -645,6 +645,47 @@ def send_outreach_step(prospect, step: int, *, advance: bool = True, spaced: boo
     return True
 
 
+def outreach_why_quiet(*, now: Optional[datetime] = None) -> str:
+    """Why recruitment is not sending anything, in one sentence, or "" when
+    it is.
+
+    Every gate the tick passes through, in the order it meets them. Without
+    this the answer to "nothing is going out" is somewhere between an
+    environment variable, a mailbox's daily allowance, the minutes since
+    its last send, and an empty queue -- and none of it is visible from
+    the page where the question gets asked.
+    """
+    if outreach_paused():
+        return "Recruitment is held. Nothing sends until you start it, with the switch above."
+    boxes = outreach_mailbox.mailboxes(active_only=True)
+    if not boxes:
+        return "No mailbox is set up to send from, so recruitment has nowhere to leave. Add one below."
+    ready = [m for m in boxes if m["host"] and m["username"] and m["from_email"] and m["has_password"]]
+    if not ready:
+        return "Every mailbox is missing something — a server, a username, a sender or a password. Test one below to see which."
+    signed_in = [m for m in ready if m["last_ok_at"] or not m["last_error"]]
+    if not signed_in:
+        return "No mailbox has managed to sign in. Test one below; it will say which of the three stages fails."
+
+    queue = db.outreach_queue((now or _now()).isoformat(timespec="seconds").replace("+00:00", "Z"))
+    if queue["waiting"] == 0:
+        return "Nobody is waiting to be written to. Add prospects below, or restart someone's sequence."
+    if queue["due_now"] == 0:
+        when = (queue["soonest"] or "")[:16].replace("T", " ")
+        return f"{queue['waiting']} waiting, none due yet — the next is due {when}."
+
+    with_room = [m for m in ready if m["room_today"] > 0]
+    if not with_room:
+        allowance = sum(m["allowance_today"] for m in ready)
+        return (f"{queue['due_now']} due, but every mailbox has sent its day's worth — {queue['sent_today']} of "
+                f"{allowance} today. They carry on tomorrow; a new mailbox starts at five a day and climbs.")
+    waiting = min(m["wait_minutes"] for m in with_room)
+    if waiting > 0:
+        return (f"{queue['due_now']} due, and the next goes in about {waiting} minutes — a mailbox spaces its sends "
+                f"across the day rather than firing them in a block. {queue['sent_today']} have gone today.")
+    return ""
+
+
 def outreach_check(*, now: Optional[datetime] = None) -> int:
     """The scheduler's tick for recruitment: send whatever is due.
 
