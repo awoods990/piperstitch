@@ -289,6 +289,53 @@ public enum DigitizePipeline {
         return appliqueRuns(for: object.shape, parameters: object.parameters) + mainRuns
     }
 
+    /// How much of `shape` these runs leave bare, in mm². The same
+    /// measurement the backstop makes, used here to choose a plan rather
+    /// than to patch one.
+    private static func bareArea(of runs: [[Point2D]], in shape: VectorShape) -> Double {
+        CoverageBackstop.missingRegions(in: shape, covered: runs).reduce(0.0) { total, pocket in
+            total + (pocket.subPaths.first.map { abs(PolygonGeometry.signedArea($0.points)) } ?? 0)
+        }
+    }
+
+    /// Satin columns read off a letter's own outline, as typed lettering
+    /// does — see `GlyphColumnExtractor`.
+    ///
+    /// A traced letter arrives as one shape with a junction in it, and the
+    /// branching plan sews it from a skeleton: on an R or an E that plan
+    /// crosses itself and leaves voids inside the letter. It is the same
+    /// failure that had typed glyphs carrying 86% of themselves, and the
+    /// same answer works — except that here the shape came from pixels, so
+    /// the reading is not automatically better and has to earn its place
+    /// by covering more of the letter.
+    ///
+    /// Only offered for letter-sized shapes. The reading walks the outline
+    /// casting a ray from every sample, which is worth its cost on a
+    /// 10 mm letter and not on a 60 mm illustration.
+    private static func outlineColumnRuns(for object: EmbroideryObject, breakThresholdMM: Double) -> [[Point2D]]? {
+        guard CoverageBackstop.isEnabled else { return nil }
+        let box = object.shape.boundingBox
+        guard max(box.width, box.height) <= letterSizedMM else { return nil }
+        let points = object.shape.subPaths.reduce(0) { $0 + $1.points.count }
+        guard points <= outlineReadPointLimit else { return nil }
+        let columns = GlyphColumnExtractor.columns(for: object.shape)
+        guard columns.count >= 2 else { return nil }
+        let polygons = object.shape.subPaths.map { $0.points }
+        var runs: [[Point2D]] = []
+        for run in SatinColumnGenerator.columnUnderlayRuns(columns, parameters: object.parameters, polygons: polygons) {
+            appendJoiningIfCovered(run, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false)
+        }
+        let satin = SatinColumnGenerator.sewColumns(columns, parameters: object.parameters, polygons: polygons)
+        guard let first = satin.first else { return nil }
+        appendJoiningIfCovered(first, to: &runs, polygons: polygons, breakThresholdMM: breakThresholdMM, allowWaypoints: false)
+        runs.append(contentsOf: satin.dropFirst())
+        return runs.isEmpty ? nil : runs
+    }
+
+    /// Bigger than this and the shape is an illustration, not a letter.
+    private static let letterSizedMM = 30.0
+    private static let outlineReadPointLimit = 1500
+
     /// The parts of an object its own stitching never reached, sewn. A
     /// running stitch is a line and covers nothing by design, so it is not
     /// asked; everything meant to be solid is.
@@ -463,7 +510,29 @@ public enum DigitizePipeline {
                 // The underlay follows the branching skeleton, not the
                 // single column's principal axis -- see
                 // `branchingCenterRunUnderlay`.
-                return joinBranchingUnderlay(to: branchingRuns, firstRun: firstRun, object: object, breakThresholdMM: breakThresholdMM)
+                let fromSkeleton = joinBranchingUnderlay(to: branchingRuns, firstRun: firstRun, object: object, breakThresholdMM: breakThresholdMM)
+                // ...unless reading the columns off the outline covers the
+                // letter better. Measured, not assumed: the shape came from
+                // pixels and the skeleton is sometimes right about it.
+                if let fromOutline = outlineColumnRuns(for: object, breakThresholdMM: breakThresholdMM) {
+                    let skeletonBare = bareArea(of: fromSkeleton, in: object.shape)
+                    let outlineBare = bareArea(of: fromOutline, in: object.shape)
+                    // Coverage alone is the wrong rule. Reading the
+                    // outline tends to make more, smaller columns, and a
+                    // column the thread cannot walk to is a trim -- which
+                    // costs the operator time and the design its readiness
+                    // score. So the reading has to cover better *and* not
+                    // cost a cut, unless what it recovers is large enough
+                    // to be worth one.
+                    let gain = skeletonBare - outlineBare
+                    let extraCuts = fromOutline.count - fromSkeleton.count
+                    if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil {
+                        print(String(format: "    satin plan: outline leaves %.1f mm2 bare, skeleton %.1f (gain %.1f, %+d runs)",
+                                     outlineBare, skeletonBare, gain, extraCuts))
+                    }
+                    if gain > 0.5, extraCuts <= 0 || (gain >= 3.0 && extraCuts <= 1) { return fromOutline }
+                }
+                return fromSkeleton
             }
             do {
                 let crossings = try SatinColumnGenerator.generatePartial(for: object.shape, parameters: object.parameters)
