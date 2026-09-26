@@ -289,6 +289,16 @@ public enum DigitizePipeline {
         return appliqueRuns(for: object.shape, parameters: object.parameters) + mainRuns
     }
 
+    /// Thread laid, in millimetres — the other half of the question the
+    /// coverage measure asks. Bare fabric shows; so does thread piled on
+    /// thread, and the second is what a sew-out feels like rather than
+    /// what a screen shows.
+    private static func threadLength(_ runs: [[Point2D]]) -> Double {
+        runs.reduce(0.0) { total, run in
+            total + zip(run, run.dropFirst()).reduce(0.0) { $0 + $1.0.distance(to: $1.1) }
+        }
+    }
+
     /// How much of `shape` these runs leave bare, in mm². The same
     /// measurement the backstop makes, used here to choose a plan rather
     /// than to patch one.
@@ -526,11 +536,21 @@ public enum DigitizePipeline {
                     // to be worth one.
                     let gain = skeletonBare - outlineBare
                     let extraCuts = fromOutline.count - fromSkeleton.count
+                    // Thread, not just coverage. A stitched-out sample of
+                    // this logo came back with a clump on its letters:
+                    // measured, the worst square millimetre carried 24 mm
+                    // of thread against a median of 4. Filling the last
+                    // bare patch by laying half as much thread again is
+                    // not a better letter, it is a stiffer one -- and the
+                    // needle has to go somewhere, so it goes on top of
+                    // what is already there.
+                    let outlineThread = threadLength(fromOutline), skeletonThread = threadLength(fromSkeleton)
                     if ProcessInfo.processInfo.environment["DEBUG_COLUMNS"] != nil {
-                        print(String(format: "    satin plan: outline leaves %.1f mm2 bare, skeleton %.1f (gain %.1f, %+d runs)",
-                                     outlineBare, skeletonBare, gain, extraCuts))
+                        print(String(format: "    satin plan: outline %.1f mm2 bare / %.0f mm thread, skeleton %.1f / %.0f (gain %.1f, %+d runs)",
+                                     outlineBare, outlineThread, skeletonBare, skeletonThread, gain, extraCuts))
                     }
-                    if gain > 0.5, extraCuts <= 0 || (gain >= 3.0 && extraCuts <= 1) { return fromOutline }
+                    let affordable = outlineThread <= skeletonThread * 1.12
+                    if gain > 0.5, affordable, extraCuts <= 0 || (gain >= 3.0 && extraCuts <= 1) { return fromOutline }
                 }
                 return fromSkeleton
             }

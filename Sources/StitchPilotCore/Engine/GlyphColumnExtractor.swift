@@ -107,7 +107,7 @@ public enum GlyphColumnExtractor {
             // laid a second set of stitches across an E's bar at its own
             // angle, and the letter came out banded.
             let fresh = middles.filter { m in !claimed.contains { abs($0.x - m.x) < reach && abs($0.y - m.y) < reach } }
-            if Double(fresh.count) < Double(middles.count) * 0.5 { continue }
+            if Double(fresh.count) < Double(middles.count) * 0.7 { continue }
             out.append(SatinColumn(railA: run.map { $0.a }, railB: run.map { $0.b }))
             claimed.append(contentsOf: middles)
         }
