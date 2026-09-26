@@ -2075,7 +2075,16 @@ def admin_step_test(step_id: int, to_email: str = Form(...)):
 @app.post("/admin/emails/run-now", dependencies=[Depends(auth.require_admin)])
 def admin_emails_run_now():
     result = emails.run_scheduled_work()
-    return _emails_redirect(message=f"Ran the scheduler: {result['sent']} email(s) sent, {result['winback']} win-back(s) started.")
+    # Recruitment was missing from this line, which made the one button
+    # that proves the scheduler works unable to answer the one question
+    # being asked of it.
+    sent = f"Ran the scheduler: {result['sent']} email(s) sent, {result['winback']} win-back(s) started"
+    outreach = result.get("outreach") or 0
+    sent += f", {outreach} recruitment email{'' if outreach == 1 else 's'}."
+    quiet = partners.outreach_why_quiet()
+    if not outreach and quiet:
+        sent += f" Recruitment sent nothing: {quiet}"
+    return _emails_redirect(message=sent)
 
 
 # per-customer sequence controls (on the customer page)
